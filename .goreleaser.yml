@@ -98,17 +98,17 @@ archives:
         dst: share/icons/hicolor/256x256/apps/io.github.rubiojr.whereami.png
       - src: ui/icons/hicolor/512x512/apps/io.github.rubiojr.whereami.png
         dst: share/icons/hicolor/512x512/apps/io.github.rubiojr.whereami.png
-      # Retina (@2x) icons
-      - src: ui/icons/hicolor/16x16@2x/apps/io.github.rubiojr.whereami.png
-        dst: share/icons/hicolor/16x16@2x/apps/io.github.rubiojr.whereami.png
-      - src: ui/icons/hicolor/24x24@2x/apps/io.github.rubiojr.whereami.png
-        dst: share/icons/hicolor/24x24@2x/apps/io.github.rubiojr.whereami.png
-      - src: ui/icons/hicolor/32x32@2x/apps/io.github.rubiojr.whereami.png
-        dst: share/icons/hicolor/32x32@2x/apps/io.github.rubiojr.whereami.png
-      - src: ui/icons/hicolor/48x48@2x/apps/io.github.rubiojr.whereami.png
-        dst: share/icons/hicolor/48x48@2x/apps/io.github.rubiojr.whereami.png
-      - src: ui/icons/hicolor/64x64@2x/apps/io.github.rubiojr.whereami.png
-        dst: share/icons/hicolor/64x64@2x/apps/io.github.rubiojr.whereami.png
+      # Retina (@2) icons
+      - src: ui/icons/hicolor/16x16@2/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/16x16@2/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/24x24@2/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/24x24@2/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/32x32@2/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/32x32@2/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/48x48@2/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/48x48@2/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
 
 # Checksum configuration
 checksum:
@@ -274,33 +274,33 @@ nfpms:
         file_info:
           mode: 0644
 
-      # Retina (@2x) icons
-      - src: ui/icons/hicolor/16x16@2x/apps/io.github.rubiojr.whereami.png
-        dst: /usr/share/icons/hicolor/16x16@2x/apps/io.github.rubiojr.whereami.png
+      # Retina (@2) icons
+      - src: ui/icons/hicolor/16x16@2/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/16x16@2/apps/io.github.rubiojr.whereami.png
         type: file
         file_info:
           mode: 0644
 
-      - src: ui/icons/hicolor/24x24@2x/apps/io.github.rubiojr.whereami.png
-        dst: /usr/share/icons/hicolor/24x24@2x/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/24x24@2/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/24x24@2/apps/io.github.rubiojr.whereami.png
         type: file
         file_info:
           mode: 0644
 
-      - src: ui/icons/hicolor/32x32@2x/apps/io.github.rubiojr.whereami.png
-        dst: /usr/share/icons/hicolor/32x32@2x/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/32x32@2/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/32x32@2/apps/io.github.rubiojr.whereami.png
         type: file
         file_info:
           mode: 0644
 
-      - src: ui/icons/hicolor/48x48@2x/apps/io.github.rubiojr.whereami.png
-        dst: /usr/share/icons/hicolor/48x48@2x/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/48x48@2/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/48x48@2/apps/io.github.rubiojr.whereami.png
         type: file
         file_info:
           mode: 0644
 
-      - src: ui/icons/hicolor/64x64@2x/apps/io.github.rubiojr.whereami.png
-        dst: /usr/share/icons/hicolor/64x64@2x/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
         type: file
         file_info:
           mode: 0644
