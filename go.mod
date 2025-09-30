@@ -5,7 +5,6 @@ go 1.25.1
 require (
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/mappu/miqt v0.11.2
-	github.com/muesli/gominatim v0.1.0
 	modernc.org/sqlite v1.33.0
 )
 

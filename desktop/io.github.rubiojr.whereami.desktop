@@ -2,7 +2,7 @@
 Version=1.0
 Type=Application
 Name=WhereAmI
-Comment=View, manage and bookmark GPX waypoints with map display
+Comment=View, manage and bookmark GPX waypoints
 Exec=whereami
 Icon=io.github.rubiojr.whereami
 # StartupNotify=true
@@ -14,7 +14,6 @@ Keywords=GPS;GPX;Waypoint;Map;Location;Bookmarks;
 # X-GNOME uses only fallback fields here; no special desktop environment keys yet
 StartupWMClass=whereami
 X-GNOME-SingleWindow=true
-DBusActivatable=true
 # Note: DBusActivatable + X-GNOME-SingleWindow are hints; real single-instance
 # enforcement is handled inside the application (e.g. QLocalServer). Exec left
 # simple; can be extended later: Exec=whereami %u

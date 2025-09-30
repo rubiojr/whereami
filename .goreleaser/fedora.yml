@@ -106,11 +106,10 @@ nfpms:
     homepage: "https://github.com/rubiojr/whereami"
     maintainer: "Sergio Rubio <rubiojr@frameos.org>"
     description: |
-      WhereAmI - A Qt6/QML mapping application with waypoint management
+      WhereAmI - View, manage and bookmark GPX waypoints with map display
 
       WhereAmI is a desktop mapping application that provides offline map viewing,
       waypoint management, GPX import/export, and location services integration.
-      It uses Qt6 and QML for the user interface with a Go backend.
 
     license: "MIT"
 
