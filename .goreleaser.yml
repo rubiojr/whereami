@@ -297,7 +297,7 @@ nfpms:
 
 # Snapshot configuration for development builds
 snapshot:
-  version_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}"
 
 # Release configuration
 release:
