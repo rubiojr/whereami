@@ -112,11 +112,8 @@ nfpms:
     file_name_template: >-
       {{ .PackageName }}-
       {{- .Version }}-
-      {{- if .Prerelease }}0.{{ .Prerelease }}.{{ end }}
-      {{- .Release }}.
       {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "arm64" }}aarch64
-      {{- else if eq .Arch "386" }}i686
+      {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
 
     vendor: "WhereAmI Contributors"
@@ -153,6 +150,7 @@ nfpms:
       - qt6-qtlocation >= 6.2.0
       - qt6-qtpositioning >= 6.2.0
       - qt6-qtsvg >= 6.2.0
+      - PackageKit-gtk3-module
 
       # System libraries
       - glibc >= 2.28
