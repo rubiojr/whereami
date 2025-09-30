@@ -14,8 +14,8 @@ A lightweight desktop waypoint & GPX viewer for exploring and managing your loca
 - **Themes**: Multiple UI themes including dark mode
 - **Keyboard Shortcuts**: Efficient navigation with hotkeys
 
-> [!WARN]
-> WhereAmI is Beta quality software
+> [!WARNING]
+> WhereAmI is Beta quality software. Tested in a Fedora Workstation environment only.
 
 ## Installation
 
