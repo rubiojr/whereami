@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/muesli/gominatim"
+	"github.com/rubiojr/whereami/pkg/gominatim"
 	"github.com/rubiojr/whereami/pkg/logger"
 	_ "modernc.org/sqlite"
 )

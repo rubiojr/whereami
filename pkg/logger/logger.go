@@ -30,7 +30,7 @@ func Info(format string, args ...interface{}) {
 
 // Error logs an error message
 func Error(format string, args ...interface{}) {
-	errorLogger.Printf(format, args...)
+	errorLogger.Printf("[ERROR] "+format, args...)
 }
 
 // Debug logs a debug message if debug logging is enabled
