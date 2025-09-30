@@ -109,6 +109,10 @@ archives:
         dst: share/icons/hicolor/48x48@2/apps/io.github.rubiojr.whereami.png
       - src: ui/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
         dst: share/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/128x128@2/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/128x128@2/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/256x256@2/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/256x256@2/apps/io.github.rubiojr.whereami.png
 
 # Checksum configuration
 checksum:
@@ -301,6 +305,18 @@ nfpms:
 
       - src: ui/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
         dst: /usr/share/icons/hicolor/64x64@2/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/128x128@2/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/128x128@2/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/256x256@2/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/256x256@2/apps/io.github.rubiojr.whereami.png
         type: file
         file_info:
           mode: 0644
