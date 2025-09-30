@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -2107,4 +2109,51 @@ func RegisterAPI(mux *http.ServeMux, bookmarksPath string, debug bool) {
 	mux.HandleFunc("GET /api/suggest", handleGetSuggest)
 	mux.HandleFunc("GET /api/recent_suggest", handleGetRecentSuggest)
 	mux.HandleFunc("POST /api/history", handlePostHistory)
+
+	// Version info
+	mux.HandleFunc("GET /api/version", handleGetVersion)
+}
+
+// handleGetVersion returns runtime version information
+func handleGetVersion(w http.ResponseWriter, r *http.Request) {
+	corsHeaders(w)
+
+	versionInfo := map[string]interface{}{
+		"go_version": runtime.Version(),
+		"go_os":      runtime.GOOS,
+		"go_arch":    runtime.GOARCH,
+	}
+
+	// Try to get build info
+	if buildInfo, ok := debug.ReadBuildInfo(); ok {
+		versionInfo["go_module"] = buildInfo.Path
+		if buildInfo.Main.Version != "" && buildInfo.Main.Version != "(devel)" {
+			versionInfo["app_version"] = buildInfo.Main.Version
+		}
+
+		// Extract build settings
+		settings := make(map[string]string)
+		for _, setting := range buildInfo.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				settings["commit"] = setting.Value
+				if len(setting.Value) > 7 {
+					settings["commit_short"] = setting.Value[:7]
+				}
+			case "vcs.time":
+				settings["build_time"] = setting.Value
+			case "vcs.modified":
+				settings["dirty"] = setting.Value
+			}
+		}
+		if len(settings) > 0 {
+			versionInfo["build_info"] = settings
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(versionInfo); err != nil {
+		logger.Error("Failed to encode version info: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
 }

@@ -39,12 +39,17 @@ Item {
     property bool showShortcuts: false
     property string appName: "whereami"
     property string tagLine: "Lightweight desktop waypoint & GPX viewer"
-    property string version: "0.1.0 (dev)"
+    property string version: "loading..."
     property string author: "Sergio Rubio"
     property string sourceUrl: "https://github.com/rubiojr/whereami"
     property string licenseText: "MIT"
     // Optional injected theme (ThemeLoader item). If null, internal loader supplies one.
     property var theme: null
+    // Optional API service for fetching version info
+    property var api: null
+
+    // Runtime version info from Go
+    property var versionInfo: null
 
     signal requestClose
 
@@ -74,6 +79,10 @@ Item {
         root.opacity = 0.0;
         appear.start();
         root.forceActiveFocus();
+        // Fetch version info when opening
+        if (root.api && typeof root.api.getVersion === "function") {
+            root.api.getVersion();
+        }
     }
 
     function close() {
@@ -180,6 +189,16 @@ Item {
                     font.pixelSize: root.scale(2)
                 }
                 Text {
+                    text: "Go: " + (root.versionInfo ? root.versionInfo.go_version : "unknown")
+                    color: "#DDDDDD"
+                    font.pixelSize: root.scale(2)
+                }
+                Text {
+                    text: "Platform: " + (root.versionInfo ? (root.versionInfo.go_os + "/" + root.versionInfo.go_arch) : "unknown")
+                    color: "#DDDDDD"
+                    font.pixelSize: root.scale(2)
+                }
+                Text {
                     text: "Author: " + root.author
                     color: "#DDDDDD"
                     font.pixelSize: root.scale(2)
@@ -249,6 +268,33 @@ Item {
             to: 1.0
             duration: 180
             easing.type: Easing.OutCubic
+        }
+    }
+
+    // Handle version fetch results
+    Connections {
+        target: root.api
+        function onVersionFetched(versionInfo) {
+            root.versionInfo = versionInfo;
+            // Build a comprehensive version string
+            var versionStr = "unknown";
+            if (versionInfo) {
+                if (versionInfo.app_version) {
+                    versionStr = versionInfo.app_version;
+                } else if (versionInfo.build_info && versionInfo.build_info.commit_short) {
+                    versionStr = "dev-" + versionInfo.build_info.commit_short;
+                    if (versionInfo.build_info.dirty === "true") {
+                        versionStr += "-dirty";
+                    }
+                } else {
+                    versionStr = "development";
+                }
+            }
+            root.version = versionStr;
+        }
+        function onVersionFetchFailed(error) {
+            console.warn("Failed to fetch version info:", error);
+            root.version = "unknown";
         }
     }
     ParallelAnimation {

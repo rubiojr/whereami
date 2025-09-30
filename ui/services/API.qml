@@ -164,6 +164,11 @@ QtObject {
     signal recentSearchEntriesFetched(var entries, int limit)     // entries: array of objects { query, lat?, lon? } (new enriched form)
     signal recentSearchesFetchFailed(string errorMessage, int limit)
 
+    // --- Version Info ---
+    signal versionFetchStarted
+    signal versionFetched(var versionInfo)
+    signal versionFetchFailed(string errorMessage)
+
     // ------------- Public Convenience API -------------
 
     // Load all waypoints/bookmarks
@@ -740,6 +745,40 @@ QtObject {
             if (options && options.onError)
                 options.onError(err, ctx);
         }, timeout, ctx);
+    }
+
+    // Get version information
+    function getVersion() {
+        if (api.apiPort < 0) {
+            api.versionFetchStarted();
+            var fallbackVersion = {
+                go_version: "unknown (offline)",
+                go_os: "unknown",
+                go_arch: "unknown"
+            };
+            api.versionFetched(fallbackVersion);
+            api.requestSucceeded("GET /api/version (offline)", fallbackVersion, null);
+            return;
+        }
+        api.versionFetchStarted();
+        _xhr("GET", "/api/version", null, function (txt) {
+            var versionInfo = {};
+            try {
+                versionInfo = JSON.parse(txt);
+            } catch (e) {
+                console.error("Failed to parse version info:", e, txt);
+                versionInfo = {
+                    go_version: "parse error",
+                    go_os: "unknown",
+                    go_arch: "unknown"
+                };
+            }
+            api.versionFetched(versionInfo);
+            api.requestSucceeded("GET /api/version", versionInfo, null);
+        }, function (err) {
+            api.versionFetchFailed(err);
+            api.requestFailed("GET /api/version", err, null);
+        });
     }
 
     // ------------- Internal Helpers -------------

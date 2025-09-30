@@ -1465,6 +1465,7 @@ ApplicationWindow {
         id: aboutOverlay
         anchors.fill: parent
         theme: theme
+        api: api
         onRequestClose:
         // helpVisible is now bound to aboutOverlay.visible, no need to set manually
         {}
