@@ -1,8 +1,14 @@
-# Building whereami
+# Building WhereAmI
 
 This document describes how to build the whereami application from source.
 
-## Prerequisites
+## The easy way
+
+If you have [Fedora Toolbox](https://containertoolbx.org) installed, simply run `script/build-toolbox.sh`.
+
+## The hard way
+
+### Prerequisites
 
 - Go 1.24 or higher
 - Qt 6.5 or higher
@@ -17,7 +23,7 @@ sudo dnf install golang qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtpositioni
 
 Use `script/build.sh --check-deps` to verify all deps are in place.
 
-## Installing miqt-rcc
+### Installing miqt-rcc
 
 The `miqt-rcc` tool is required to compile QML resources into the binary:
 
@@ -27,17 +33,15 @@ go install github.com/mappu/miqt/cmd/miqt-rcc@latest
 
 Make sure `$GOBIN` or `~/go/bin` is in your PATH.
 
-## Building
+### Building
 
-### 1. Build the Application
+#### 1. Build the Application
 
 ```bash
 make build
 ```
 
-## Development Workflow
-
-### Build Errors
+#### Build Errors
 
 If the build fails:
 1. Ensure miqt-rcc is installed and in your PATH
