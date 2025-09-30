@@ -1,0 +1,43 @@
+<RCC>
+  <qresource prefix="/">
+    <file>components/MapView.qml</file>
+    <file>components/AddWaypointDialog.qml</file>
+    <file>components/Knobs.qml</file>
+    <file>components/MapControlButton.qml</file>
+    <file>components/CustomToolTip.qml</file>
+    <file>components/MapStatusBar.qml</file>
+    <file>components/MapToolBar.qml</file>
+    <file>components/SearchBox.qml</file>
+    <file>components/SnackBar.qml</file>
+    <file>themes/Theme.qml</file>
+    <file>components/WaypointInfoCard.qml</file>
+    <file>components/AboutOverlay.qml</file>
+    <file>components/HelpOverlay.qml</file>
+    <file>components/MapControls.qml</file>
+    <file>components/LogoOverlay.qml</file>
+    <file>components/WaypointTable.qml</file>
+    <file>services/API.qml</file>
+    <file>services/ShortcutsController.qml</file>
+    <file>lib/SearchBoxLogic.js</file>
+    <file>lib/MapViewLogic.js</file>
+    <file>tests/tst_SearchBoxLogic.qml</file>
+    <file>icons/magnifier.svg</file>
+    <file>icons/folder.svg</file>
+    <file>icons/info.svg</file>
+    <file>icons/help.svg</file>
+    <file>icons/target.svg</file>
+    <file>icons/table.svg</file>
+    <file>icons/quit.svg</file>
+    <file>themes/GreenTheme.qml</file>
+    <file>icons/io.github.rubiojr.whereami.svg</file>
+    <file>themes/PurpleTheme.qml</file>
+    <file>themes/AdwaitaDarkTheme.qml</file>
+    <file>themes/NordPolarTheme.qml</file>
+    <file>themes/NordFrostTheme.qml</file>
+    <file>themes/ThemeLoader.qml</file>
+    <file>themes/Fonts.qml</file>
+    <file>components/qmldir</file>
+    <file>themes/qmldir</file>
+    <file>services/qmldir</file>
+  </qresource>
+</RCC>

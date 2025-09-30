@@ -1,0 +1,243 @@
+# whereami/.rules
+#
+# Guidance for LLM assistants and human contributors working on the `whereami` project.
+# Purpose:
+#  - Capture recurring gotchas, best practices and specific patterns that keep this codebase
+#    robust and consistent (especially for QML + Go integration).
+#  - Provide actionable checks and commands to run locally / in CI before committing.
+#
+# Format: free-form human-readable guidance. Use backticks for file, directory, function and
+# QML/Go identifiers.
+
+-----------------------------------------------------------------------
+1. High-level principles
+-----------------------------------------------------------------------
+- Prefer Qt / QML native facilities instead of inventing new IPC or rendering hacks.
+  - Use `Qt`/`QtQuick`/`QtQuick.Controls`/`QtLocation` constructs where appropriate for UI.
+  - Keep business logic in Go; keep UI-only logic in QML. Keep the bridge surface small (JSON models, signals).
+
+- Validate QML using the project's lint tool on every change:
+  - Run: `qmllint-qt6 ui/**/*qml`
+  - Fix warnings where straightforward; treat many qmllint warnings as errors in PRs.
+
+- Keep UI updates observable by QML:
+  - JS array mutation (e.g. `arr.push(...)`) is not always observed; prefer reassignments:
+    - `var arr = waypoints.slice(); arr.push(newWp); waypoints = arr`
+  - For heavier interactive lists consider a `ListModel` / `QAbstractListModel` in Go for reliable updates.
+
+- Use typed/defensive access in QML:
+  - Qualify parent property access to avoid "unqualified access" warnings.
+    - Prefer: `statusBar.mouseCoordinates` or `root.waypoint` instead of fragile unqualified names.
+
+-----------------------------------------------------------------------
+2. Avoiding qmllint issues (common patterns)
+-----------------------------------------------------------------------
+- Imports:
+  - Remove unused imports. (`Unused import` is common.)
+  - Import `QtQuick.Controls` only when you actually use controls from it.
+
+- Layout-managed items:
+  - Do NOT set `width`/`height` on items that are managed by `RowLayout`, `ColumnLayout`, etc.
+  - Use:
+    - `Layout.preferredWidth`, `Layout.preferredHeight` (for layouts)
+    - `implicitWidth`, `implicitHeight` for fixed intrinsic sizing
+    - `Layout.fillWidth`/`Layout.fillHeight` to expand
+  - Example:
+    - Bad: `Rectangle { width: 1; Layout.fillHeight: true }`
+    - Good: `Rectangle { implicitWidth: 1; Layout.fillHeight: true }`
+
+- Unqualified access:
+  - Prefix property references with the element id to avoid ambiguous lookup.
+  - Example:
+    - Bad: `text: mouseCoordinates !== "" ? mouseCoordinates : "Move"`
+    - Good: `text: statusBar.mouseCoordinates !== "" ? statusBar.mouseCoordinates : "Move"`
+
+- Boolean coercion:
+  - Ensure boolean expressions are true/false, not undefined.
+  - Use `!!(...)` where necessary:
+    - `visible: !!(root.waypoint && root.waypoint.desc)`
+
+- QML types availability:
+  - Not every Qt installation includes optional modules (e.g. `QtGraphicalEffects` / `DropShadow`).
+  - Prefer portable styles:
+    - If `DropShadow` is unavailable, emulate with a faint background rectangle or omit.
+
+-----------------------------------------------------------------------
+3. Running qmllint and pre-commit habits
+-----------------------------------------------------------------------
+- Run locally before committing:
+  - `qmllint-qt6 ui/**/*qml || true`
+- CI recommendation:
+  - Add a step that runs `qmllint-qt6` and fails on warnings (or at least errors).
+  - Example GitHub Action step:
+    - name: Lint QML
+      run: qmllint-qt6 ui/**/*qml
+
+- When fixing files, re-run `qmllint-qt6` until it reports success.
+
+-----------------------------------------------------------------------
+4. QML vs Dialog/Popup pitfalls
+-----------------------------------------------------------------------
+- `Dialog` in `QtQuick.Controls` may not support `flags` or some window flags across platforms.
+  - Use `closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside` for consistent behavior.
+  - If you need a frameless or custom window flag, use a `Popup` or a custom window and test on all target platforms.
+
+- Positioning dialogs:
+  - Keep dialogs at a top-level visual context so they can be positioned explicitly relative to the window.
+  - Avoid nesting a `Dialog` inside a control that constrains its location unexpectedly.
+
+-----------------------------------------------------------------------
+5. QML model / selection behavior
+-----------------------------------------------------------------------
+- Keep a single authoritative source for waypoints in QML: `property var waypoints`.
+- When selecting an item:
+  - Set `selectedWaypointIndex` and `selectedWaypoint` together for consistent UI state.
+  - When zooming/panning, center on `selectedWaypoint` if present:
+    - `map.center = QtPositioning.coordinate(selectedWaypoint.lat, selectedWaypoint.lon)`
+
+-----------------------------------------------------------------------
+6. Go side (backend) best practices observed in this project
+-----------------------------------------------------------------------
+- Resource compilation with miqt-rcc:
+  - QML files are compiled into Qt resources using `miqt-rcc -Qt6`
+  - Resources are loaded from `qrc:/` URLs instead of filesystem paths
+  - Run `go generate` to regenerate resources after QML changes
+  - Generated files (`resources_gen.go`, `resources_gen.rcc`) are gitignored
+  - The `ui/resources.qrc` file lists all QML resources with paths relative to ui/
+
+- Concurrency and file writes:
+  - Use a mutex for concurrent writes to `bookmarks.gpx`:
+    - `var bookmarkMu sync.Mutex`
+  - Use atomic replace for file writes:
+    - Write to `path + ".tmp"` and `os.Rename(tmp, path)` to avoid partial files.
+  - Check for duplicates before appending (name + lat/lon within epsilon).
+  - Mark bookmark waypoints with a `Bookmark` flag in JSON to allow different styling on the map.
+
+- Server vs in-process callbacks:
+  - Local HTTP server is acceptable and simple for QML → Go (via `XMLHttpRequest`).
+  - Use `net.Listen("127.0.0.1:0")` to avoid port conflicts and inject the chosen port into QML.
+  - Run `http.Serve(listener, nil)` in a goroutine to avoid blocking main thread.
+
+- Parsing GPX:
+  - Parse with `encoding/xml` into typed structs. Normalize times to RFC3339 where possible.
+
+- Error handling:
+  - Return meaningful HTTP codes:
+    - 201 Created for successful POST
+    - 409 Conflict for duplicates
+    - 404 Not Found for delete misses
+  - In QML, handle failures: revert optimistic UI changes and show console or Snackbar.
+
+-----------------------------------------------------------------------
+7. QML-to-Go integration guidance
+-----------------------------------------------------------------------
+- If you want direct in-process calls (no HTTP), options:
+  - Expose `QObject` or `QQmlPropertyMap` and set `engine.RootContext().SetContextProperty("service", obj.QObject)`.
+  - MIQT supports `On<Signal>` hooks for C++ signals on known types. Creating new invokable methods from pure Go may require
+    a C++ shim or generated binding.
+- The HTTP approach is the pragmatic default: small, cross-platform and easy to test (curl).
+
+-----------------------------------------------------------------------
+8. Specific classes of bugs we've fixed before and how to avoid them
+-----------------------------------------------------------------------
+- Duplicate `Component.onCompleted` in a single element:
+  - QML disallows setting the same property twice. Consolidate logic into a single `Component.onCompleted`.
+  - Rule: search for multiple `Component.onCompleted` in the same element and merge them.
+
+- Using `flags` on `Dialog`:
+  - Not available in Controls 2 cross-builds. Use `closePolicy` or `Popup`.
+
+- `DropShadow` not available:
+  - Detect availability (`QtGraphicalEffects`) or use a fallback (background rectangle offset with lowered opacity).
+
+- QML unqualified access warnings:
+  - Always prefix with element id when referencing properties that might be ambiguous (e.g. `root.waypoint`).
+
+- JS-array mutation not triggering view update:
+  - Reassign the array rather than mutate it inline (see "QML model / selection behavior").
+
+- Dialog wrongly positioned / nested in a button:
+  - Keep modal/popups at a root or stable overlay layer, set `x`/`y` explicitly and clamp to window bounds.
+
+- Corrupt `bookmarks.gpx` on write:
+  - Use `tmp -> atomic rename` and protect with a mutex.
+
+-----------------------------------------------------------------------
+9. Commands / snippets
+-----------------------------------------------------------------------
+- Run QML lint:
+  - qmllint-qt6 ui/**/*qml
+
+- Build & run:
+  - cd `whereami`
+  - `go generate` (regenerates Qt resources from QML)
+  - `go build -ldflags '-s -w'` (or `~/sdk/gotip/bin/go build` if using go tip)
+  - `./whereami`
+
+- Quick test of bookmark API (when running):
+  - POST:
+    - curl -X POST -H 'Content-Type: application/json' -d '{"name":"X","lat":12.34,"lon":-56.78}' http://127.0.0.1:<port>/api/bookmarks
+  - DELETE:
+    - curl -X DELETE 'http://127.0.0.1:<port>/api/bookmarks?name=X&lat=12.34&lon=-56.78'
+
+-----------------------------------------------------------------------
+10. Style & code-review checklist
+-----------------------------------------------------------------------
+- QML:
+  - `qmllint-qt6` passes with zero warnings (preferred) or at least no critical layout/unqualified-access issues.
+  - No `width/height` on layout-managed children, use `implicit*`/`Layout.*`.
+  - Avoid building UI with fixed pixel positions except for small overlays (use anchors & layouts).
+  - Qualify parent references with IDs.
+
+- Go:
+  - File writes use `tmp + rename` pattern, guarded by mutex where concurrent accesses exist.
+  - Errors are returned and surfaced to QML (HTTP error codes or signals).
+  - `parseGPXFile` normalizes times to RFC3339.
+
+-----------------------------------------------------------------------
+11. Adding new UI components
+-----------------------------------------------------------------------
+- Put new QML components in `ui/components/`.
+- Name components with PascalCase and give them an `id` when used.
+- Add the new component to `ui/resources.qrc`:
+  - `<file>components/NewComponent.qml</file>`
+- Run `go generate` to regenerate resources
+- Add `qmllint-qt6` run to validate the new file before commit.
+
+-----------------------------------------------------------------------
+12. CI / Automation recommendations
+-----------------------------------------------------------------------
+- Add a lint job that runs:
+  - `qmllint-qt6 ui/**/*qml`
+  - `go generate` (ensure resources are up to date)
+  - `go vet` and `go build -ldflags '-s -w'`
+- Fail the job on any qmllint warnings (optional but recommended).
+- Ensure `miqt-rcc` is available in CI environment
+
+-----------------------------------------------------------------------
+13. Troubleshooting quick reference
+-----------------------------------------------------------------------
+- QML: "Property set multiple times" -> search for duplicate handlers (e.g., `Component.onCompleted`).
+- QML: "Type X unavailable" -> check if the QML type belongs to an optional module (GraphicalEffects, etc).
+- QML: "Cannot assign [undefined] to bool" -> ensure `visible`/`enabled` get true/false (`!!(...)`).
+- Go: file write corruption -> confirm atomic rename used.
+
+-----------------------------------------------------------------------
+14. Example: safe bookmark append (pseudocode)
+-----------------------------------------------------------------------
+- Acquire `bookmarkMu`.
+- Read existing `bookmarks.gpx` via `parseGPXFile`.
+- Check duplicate with epsilon (1e-6) for coordinates + exact name match.
+- Append new waypoint (set `Time` if empty).
+- `writeBookmarks(path, wps)` writes to tmp and renames atomically.
+- Release mutex.
+
+-----------------------------------------------------------------------
+15. Where to update these rules
+-----------------------------------------------------------------------
+- Update `whereami/.rules` when new recurring issues are identified or when project practices evolve.
+- Keep this file short, search-friendly and actionable.
+
+-----------------------------------------------------------------------
+End of file
+-----------------------------------------------------------------------

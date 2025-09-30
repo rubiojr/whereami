@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="whereami" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>WhereAmI Default Bookmarks</name>
+    <desc>Default bookmark locations for WhereAmI application</desc>
+    <time>2024-01-01T00:00:00Z</time>
+  </metadata>
+
+  <wpt lat="40.7128" lon="-74.0060">
+    <name>New York City</name>
+    <desc>The Big Apple - One of the world's major commercial, financial and cultural centers</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,usa</tags>
+    </extensions>
+  </wpt>
+
+  <wpt lat="51.5074" lon="-0.1278">
+    <name>London</name>
+    <desc>Capital city of England and the United Kingdom</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,uk</tags>
+    </extensions>
+  </wpt>
+
+  <wpt lat="48.8566" lon="2.3522">
+    <name>Paris</name>
+    <desc>City of Light - Capital of France</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,france</tags>
+    </extensions>
+  </wpt>
+
+  <wpt lat="35.6762" lon="139.6503">
+    <name>Tokyo</name>
+    <desc>Capital of Japan and one of the world's most populous metropolitan areas</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,japan</tags>
+    </extensions>
+  </wpt>
+
+  <wpt lat="-15.7975" lon="-47.8919">
+    <name>Brasília</name>
+    <desc>Capital city of Brazil and a UNESCO World Heritage Site</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,brazil</tags>
+    </extensions>
+  </wpt>
+
+  <wpt lat="-33.8688" lon="151.2093">
+    <name>Sydney</name>
+    <desc>Largest city in Australia, famous for its Opera House and Harbour Bridge</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,australia</tags>
+    </extensions>
+  </wpt>
+
+  <wpt lat="47.8864" lon="106.9057">
+    <name>Ulaanbaatar</name>
+    <desc>Capital and largest city of Mongolia</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,mongolia</tags>
+    </extensions>
+  </wpt>
+
+  <wpt lat="55.7558" lon="37.6176">
+    <name>Moscow</name>
+    <desc>Capital and largest city of Russia, home to the Kremlin and Red Square</desc>
+    <time>2024-01-01T00:00:00Z</time>
+    <type>City</type>
+    <extensions>
+      <tags>city,landmark,russia</tags>
+    </extensions>
+  </wpt>
+</gpx>

@@ -1,0 +1,373 @@
+# .goreleaser.yml
+# GoReleaser configuration for whereami
+#
+# This configuration builds the whereami application and packages it as RPM
+# with all necessary Qt6 runtime dependencies.
+
+version: 2
+
+# Set environment variables for the build
+env:
+  - CGO_ENABLED=1
+  - PATH={{ .Env.PATH }}:/usr/lib64/qt6/libexec
+
+# Run go generate before building
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+# Build configuration
+builds:
+  - id: whereami
+    main: .
+    binary: whereami
+
+    # Build flags
+    flags:
+      - -trimpath
+
+    # Linker flags to reduce binary size
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+
+    # Target platforms
+    goos:
+      - linux
+
+    goarch:
+      - amd64
+
+    # Environment variables for each build
+    env:
+      - CGO_ENABLED=1
+      - CC=gcc
+      - CXX=g++
+
+    # Specific environment for different architectures
+    overrides:
+      - goos: linux
+        goarch: arm64
+        env:
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
+
+# Archive configuration
+archives:
+  - id: whereami-archive
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+
+    # Use default format (tar.gz for linux, zip for windows)
+    # format_overrides is deprecated, relying on defaults
+
+    # Files to include in the archive
+    files:
+      - src: README.md
+        dst: README.md
+      - src: LICENSE
+        dst: LICENSE
+      - src: desktop/io.github.rubiojr.whereami.desktop
+        dst: share/applications/io.github.rubiojr.whereami.desktop
+      - src: ui/icons/io.github.rubiojr.whereami.svg
+        dst: share/icons/hicolor/scalable/apps/io.github.rubiojr.whereami.svg
+      - src: ui/icons/hicolor/16x16/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/16x16/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/22x22/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/22x22/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/24x24/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/24x24/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/32x32/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/32x32/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/48x48/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/48x48/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/64x64/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/64x64/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/128x128/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/128x128/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/256x256/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/256x256/apps/io.github.rubiojr.whereami.png
+      - src: ui/icons/hicolor/512x512/apps/io.github.rubiojr.whereami.png
+        dst: share/icons/hicolor/512x512/apps/io.github.rubiojr.whereami.png
+
+# Checksum configuration
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# RPM package configuration
+nfpms:
+  - id: whereami-rpm
+
+    package_name: whereami
+    file_name_template: >-
+      {{ .PackageName }}-
+      {{- .Version }}-
+      {{- if .Prerelease }}0.{{ .Prerelease }}.{{ end }}
+      {{- .Release }}.
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else if eq .Arch "386" }}i686
+      {{- else }}{{ .Arch }}{{ end }}
+
+    vendor: "WhereAmI Contributors"
+    homepage: "https://github.com/rubiojr/whereami"
+    maintainer: "Sergio Rubio <rubiojr@frameos.org>"
+    description: |
+      WhereAmI - A Qt6/QML mapping application with waypoint management
+
+      WhereAmI is a desktop mapping application that provides offline map viewing,
+      waypoint management, GPX import/export, and location services integration.
+      It uses Qt6 and QML for the user interface with a Go backend.
+
+    license: "MIT"
+
+    formats:
+      - rpm
+
+    # RPM specific configuration
+    rpm:
+      summary: "Qt6/QML mapping application with waypoint management"
+      group: "Applications/Productivity"
+      compression: xz
+
+      # Signature configuration (optional)
+      # signature:
+      #   key_file: "{{ .Env.GPG_KEY_FILE }}"
+
+    # Dependencies based on actual Fedora package names
+    # These are the essential Qt6 and system libraries
+    dependencies:
+      # Core Qt6 libraries (QML imports are bundled within these)
+      - qt6-qtbase >= 6.2.0
+      - qt6-qtdeclarative >= 6.2.0
+      - qt6-qtlocation >= 6.2.0
+      - qt6-qtpositioning >= 6.2.0
+      - qt6-qtsvg >= 6.2.0
+
+      # System libraries
+      - glibc >= 2.28
+      - libstdc++ >= 8.0
+      - libgcc >= 8.0
+      - zlib >= 1.2.11
+      - fontconfig
+      - freetype
+      - libpng
+      - harfbuzz
+      - libX11
+      - libxcb
+      - libxkbcommon
+      - mesa-libGL
+      - mesa-libEGL
+      - dbus-libs
+      - systemd-libs
+      - pcre2
+      - openssl-libs >= 3.0
+      - libproxy
+      - glib2
+      - libxml2
+      - bzip2-libs
+      - libzstd
+      - brotli
+
+      # ICU for internationalization
+      - icu >= 65
+
+      # Kerberos/GSSAPI (for network features)
+      - krb5-libs
+
+    # Recommended packages (not required but enhance functionality)
+    recommends:
+      - qt6-qttranslations
+      - qt6-qtimageformats
+      - geoclue2
+
+    # Suggested packages
+    suggests:
+      - gpsbabel
+
+    # File contents
+    contents:
+      # Desktop file
+      - src: desktop/io.github.rubiojr.whereami.desktop
+        dst: /usr/share/applications/io.github.rubiojr.whereami.desktop
+        type: file
+        file_info:
+          mode: 0644
+
+      # Icon files - SVG scalable
+      - src: ui/icons/io.github.rubiojr.whereami.svg
+        dst: /usr/share/icons/hicolor/scalable/apps/io.github.rubiojr.whereami.svg
+        type: file
+        file_info:
+          mode: 0644
+
+      # Icon files - PNG raster sizes
+      - src: ui/icons/hicolor/16x16/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/16x16/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/22x22/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/22x22/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/24x24/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/24x24/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/32x32/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/32x32/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/48x48/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/48x48/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/64x64/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/64x64/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/128x128/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/128x128/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/256x256/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/256x256/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: ui/icons/hicolor/512x512/apps/io.github.rubiojr.whereami.png
+        dst: /usr/share/icons/hicolor/512x512/apps/io.github.rubiojr.whereami.png
+        type: file
+        file_info:
+          mode: 0644
+
+      # Documentation
+      - src: README.md
+        dst: /usr/share/doc/whereami/README.md
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: LICENSE
+        dst: /usr/share/doc/whereami/LICENSE
+        type: file
+        file_info:
+          mode: 0644
+
+      # Create required directories
+      - dst: /usr/share/whereami
+        type: dir
+        file_info:
+          mode: 0755
+
+      - dst: /usr/share/doc/whereami
+        type: dir
+        file_info:
+          mode: 0755
+
+    # Scripts to run during installation
+    scripts:
+      postinstall: scripts/postinstall.sh
+      postremove: scripts/postremove.sh
+
+# Snapshot configuration for development builds
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+# Release configuration
+release:
+  # GitHub release settings
+  github:
+    owner: rubiojr
+    name: whereami
+
+  # Release notes
+  footer: |
+    ## Installation
+
+    ### RPM-based distributions (Fedora, RHEL, openSUSE, etc.)
+    ```bash
+    sudo rpm -i whereami-*.rpm
+    # or with dnf/yum
+    sudo dnf install ./whereami-*.rpm
+    ```
+
+    ### From source
+    ```bash
+    tar xzf whereami-*.tar.gz
+    cd whereami-*/
+    sudo make install
+    ```
+
+    ## Requirements
+    - Qt6 runtime libraries (>= 6.2.0)
+    - Qt Location and Positioning modules
+    - System libraries (automatically resolved by package manager)
+
+  # Draft release by default
+  draft: true
+
+  # Prerelease mode
+  prerelease: auto
+
+  # Mode for release notes
+  mode: append
+
+  # Name template
+  name_template: "{{.ProjectName}}-v{{.Version}}"
+
+# Changelog generation
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^build:"
+      - "^style:"
+      - "^refactor:"
+      - "^perf:"
+      - "^Merge"
+  groups:
+    - title: "Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Performance Improvements"
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "Other changes"
+      order: 999
+
+# Announce releases (optional)
+announce:
+  skip: true

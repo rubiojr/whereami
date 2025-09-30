@@ -1,0 +1,20 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=WhereAmI
+Comment=View, manage and bookmark GPX waypoints with map display
+Exec=whereami
+Icon=io.github.rubiojr.whereami
+# StartupNotify=true
+Categories=Education;Maps;
+Keywords=GPS;GPX;Waypoint;Map;Location;Bookmarks;
+# Prefer Wayland if available; fallback to X11 automatically
+# PrefersNonDefaultGPU=false
+# If you later add translation (.desktop.in), wrap Name/Comment in gettext domains
+# X-GNOME uses only fallback fields here; no special desktop environment keys yet
+StartupWMClass=whereami
+X-GNOME-SingleWindow=true
+DBusActivatable=true
+# Note: DBusActivatable + X-GNOME-SingleWindow are hints; real single-instance
+# enforcement is handled inside the application (e.g. QLocalServer). Exec left
+# simple; can be extended later: Exec=whereami %u

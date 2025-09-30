@@ -1,0 +1,25 @@
+# Local QML directory registry for components.
+# Provides explicit type listings so qmllint / engine can resolve
+# custom component types when using `import "."` or (optionally) a
+# named module import if you later add `module Components`.
+#
+# NOTE: Existing local imports remain supported.
+module Components
+
+WaypointMarker 1.0 WaypointMarker.qml
+MapControls 1.0 MapControls.qml
+LogoOverlay 1.0 LogoOverlay.qml
+CurrentLocationMarker 1.0 CurrentLocationMarker.qml
+SearchResultMarker 1.0 SearchResultMarker.qml
+MapControlButton 1.0 MapControlButton.qml
+AddWaypointDialog 1.0 AddWaypointDialog.qml
+WaypointInfoCard 1.0 WaypointInfoCard.qml
+WaypointTable 1.0 WaypointTable.qml
+SnackBar 1.0 SnackBar.qml
+SearchBox 1.0 SearchBox.qml
+MapToolBar 1.0 MapToolBar.qml
+MapStatusBar 1.0 MapStatusBar.qml
+AboutOverlay 1.0 AboutOverlay.qml
+HelpOverlay 1.0 HelpOverlay.qml
+Knobs 1.0 Knobs.qml
+MapView 1.0 MapView.qml

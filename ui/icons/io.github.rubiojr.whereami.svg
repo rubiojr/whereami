@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  io.github.rubiojr.whereami - Application Icon (Placeholder)
+  Format: SVG (Scalable)
+  Dimensions: 512x512 viewBox (renders cleanly down to 32x32)
+
+  Design goals:
+    - Simple, recognizable silhouette: map pin + star (bookmark)
+    - Works on dark or light backgrounds
+    - Flat style, no raster effects, minimal gradients for easy theming
+    - Constrained palette for future recolor / branding
+
+  Colors:
+    Base Blue      #1976D2
+    Accent Orange  #F57C00
+    Soft Outline   #0F4A80
+    Inner Circle   #E3F2FD
+    Star Fill      #FFC107
+
+  This is a placeholder and can be replaced with a professionally designed icon later.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  version="1.1"
+  role="img"
+  aria-labelledby="title desc">
+  <title id="title">WhereAmI Icon</title>
+  <desc id="desc">A blue map pin with an orange star indicating bookmarked waypoint.</desc>
+
+  <!-- Background circle (optional). Comment out if you need transparent backdrop -->
+  <circle cx="256" cy="256" r="248" fill="#ffffff" opacity="0.0"/>
+
+  <!-- Pin shadow (subtle) -->
+  <ellipse cx="256" cy="448" rx="94" ry="28" fill="#000000" opacity="0.10"/>
+
+  <!-- Map Pin Group -->
+  <g>
+    <!-- Outer Pin Shape -->
+    <path
+      d="M256 64c-92.4 0-167.5 75.1-167.5 167.5 0 30.2 8.1 59.4 23.4 84.9 2.4 4 5 7.9 7.8 11.7l0.2 0.3c0.7 1 1.4 1.9 2.1 2.9 2.8 3.7 5.7 7.5 8.7 11.2l0.5 0.6 111.2 146.4c3.6 4.7 8.9 7.5 14.6 7.5s11-2.8 14.6-7.5l111.2-146.4 0.5-0.6c3-3.7 5.9-7.5 8.7-11.2 0.7-1 1.4-1.9 2.1-2.9l0.2-0.3c2.8-3.9 5.4-7.7 7.8-11.7 15.3-25.5 23.4-54.7 23.4-84.9C423.5 139.1 348.4 64 256 64z"
+      fill="#1976D2"
+      stroke="#0F4A80"
+      stroke-width="8"
+      stroke-linejoin="round"/>
+
+    <!-- Inner circle (focus region) -->
+    <circle
+      cx="256"
+      cy="232"
+      r="96"
+      fill="#E3F2FD"
+      stroke="#0F4A80"
+      stroke-width="6"/>
+
+    <!-- Directional / path arcs (subtle map-like hint) -->
+    <path
+      d="M188 232c0-37.6 30.4-68 68-68 17.8 0 34.1 6.7 46.4 17.7"
+      fill="none"
+      stroke="#1976D2"
+      stroke-width="10"
+      stroke-linecap="round"
+      opacity="0.25"/>
+
+    <path
+      d="M324 232c0 37.6-30.4 68-68 68-17.8 0-34.1-6.7-46.4-17.7"
+      fill="none"
+      stroke="#1976D2"
+      stroke-width="10"
+      stroke-linecap="round"
+      opacity="0.25"/>
+  </g>
+
+  <!-- Bookmark Star (foreground) -->
+  <g transform="translate(256 232)">
+    <!-- Star shadow -->
+    <path
+      d="M0 -78 L18 -18 78 -18 30 18 48 74 0 42 -48 74 -30 18 -78 -18 -18 -18 Z"
+      fill="#000000"
+      opacity="0.18"
+      transform="translate(6 10) scale(0.72)"/>
+
+    <!-- Star core -->
+    <path
+      d="M0 -78 L18 -18 78 -18 30 18 48 74 0 42 -48 74 -30 18 -78 -18 -18 -18 Z"
+      fill="#FFC107"
+      stroke="#F57C00"
+      stroke-width="8"
+      stroke-linejoin="round"
+      transform="scale(0.72)"/>
+  </g>
+
+  <!-- Accent ring (subtle) -->
+  <circle
+    cx="256"
+    cy="232"
+    r="118"
+    fill="none"
+    stroke="#F57C00"
+    stroke-width="6"
+    stroke-dasharray="4 18"
+    stroke-linecap="round"
+    opacity="0.55"/>
+</svg>

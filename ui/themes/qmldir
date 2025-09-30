@@ -1,0 +1,6 @@
+# qmldir for themes directory
+# Declares the Fonts singleton so qmllint stops warning about
+# "Type Fonts not declared as singleton in qmldir but using pragma Singleton".
+# Additional theme QML files are auto-discovered; only the singleton needs explicit declaration.
+
+singleton Fonts 1.0 Fonts.qml

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <title>Quit</title>
+  <!-- Application / door frame -->
+  <rect x="3" y="3" width="11" height="18" rx="2" ry="2"/>
+  <!-- Inner divider (suggests panel / door edge) -->
+  <line x1="7" y1="3" x2="7" y2="21"/>
+  <!-- Arrow shaft pointing outward -->
+  <line x1="14" y1="12" x2="21" y2="12"/>
+  <!-- Arrow head -->
+  <line x1="18" y1="9" x2="21" y2="12"/>
+  <line x1="18" y1="15" x2="21" y2="12"/>
+</svg>

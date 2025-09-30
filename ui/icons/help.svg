@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- help.svg
+     Vector help / shortcuts icon for toolbar.
+     Style matches existing icons (stroke only, currentColor).
+     Viewbox: 24x24 (scales cleanly to typical 16/20/24/32 sizes).
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round">
+
+  <title>Help</title>
+
+  <!-- Outer circle -->
+  <circle cx="12" cy="12" r="9"/>
+
+  <!-- Stylized question mark: hook + dot -->
+  <path d="M12 16v0"/>          <!-- dot (stroke renders as a point) -->
+  <path d="M12 12.2c0-1.25 2-1.25 2-3
+           0-1.4-1.15-2.2-2.35-2.2-1.08 0-1.95.55-2.4 1.55"/>
+</svg>
