@@ -20,14 +20,12 @@ Download the latest release for your platform from the [releases page](https://g
 
 ### From Source
 
-Requirements: Go 1.25+, Qt 6.5+
+Requirements: Go 1.24+, Qt 6.5+
 
 ```bash
 git clone https://github.com/rubiojr/whereami.git
-cd whereami
-go generate
-go build
-./whereami
+make
+bin/whereami
 ```
 
 See [BUILD.md](BUILD.md) for detailed build instructions.
