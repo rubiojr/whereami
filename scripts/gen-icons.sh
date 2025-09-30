@@ -22,9 +22,9 @@ if [[ ! -f "ui/icons/io.github.rubiojr.whereami.svg" ]]; then
     exit 1
 fi
 
-# Check if ImageMagick is available
-if ! command -v magick &> /dev/null; then
-    echo -e "${RED}Error: ImageMagick 'magick' command not found. Please install ImageMagick.${NC}"
+# Check if Inkscape is available
+if ! command -v inkscape &> /dev/null; then
+    echo -e "${RED}Error: Inkscape command not found. Please install Inkscape.${NC}"
     exit 1
 fi
 
@@ -43,7 +43,11 @@ for size in "${SIZES[@]}"; do
     target_file="${target_dir}/${ICON_NAME}"
 
     echo "  ${size}x${size} -> ${target_file}"
-    magick "${SVG_SOURCE}" -background transparent -resize "${size}x${size}" "${target_file}"
+    inkscape "${SVG_SOURCE}" \
+        --export-filename="${target_file}" \
+        --export-width=${size} \
+        --export-height=${size} \
+        --export-background-opacity=0
 done
 
 echo
@@ -60,7 +64,11 @@ for base_size in "${RETINA_BASE_SIZES[@]}"; do
     target_file="${target_dir}/${ICON_NAME}"
 
     echo "  ${base_size}x${base_size}@2 (${actual_size}x${actual_size}) -> ${target_file}"
-    magick "${SVG_SOURCE}" -background transparent -resize "${actual_size}x${actual_size}" "${target_file}"
+    inkscape "${SVG_SOURCE}" \
+        --export-filename="${target_file}" \
+        --export-width=${actual_size} \
+        --export-height=${actual_size} \
+        --export-background-opacity=0
 done
 
 echo
