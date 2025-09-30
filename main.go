@@ -119,7 +119,12 @@ func main() {
 	if themeVariant != "" {
 		qtArgs = append(qtArgs, "--theme="+themeVariant)
 	}
+
+	// Set Material theme to dark mode
+	os.Setenv("QT_QUICK_CONTROLS_STYLE", "Material")
+	os.Setenv("QT_QUICK_CONTROLS_MATERIAL_THEME", "Dark")
 	qt.QCoreApplication_SetApplicationName("io.github.rubiojr.whereami")
+
 	qt.NewQApplication(qtArgs)
 	engine := qml.NewQQmlApplicationEngine()
 
