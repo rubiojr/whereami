@@ -15,6 +15,8 @@ For Fedora:
 sudo dnf install golang qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtpositioning-devel qt6-qtlocation-devel
 ```
 
+Use `script/build.sh --check-deps` to verify all deps are in place.
+
 ## Installing miqt-rcc
 
 The `miqt-rcc` tool is required to compile QML resources into the binary:
