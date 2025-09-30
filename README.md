@@ -1,6 +1,8 @@
-# whereami
+# Where Am I 
 
 A lightweight desktop waypoint & GPX viewer for exploring and managing your location data.
+
+![](/docs/screenshots/whereami.png)
 
 ## Features
 
