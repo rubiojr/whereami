@@ -114,10 +114,6 @@ func main() {
 	allWaypoints = initial
 	allWaypointsMu.Unlock()
 
-	// Ensure Qt Quick Controls configuration path
-	confPath := filepath.Join(configDir, "qtquickcontrols2.conf")
-	_ = os.Setenv("QT_QUICK_CONTROLS_CONF", confPath)
-
 	// Prepare arguments for Qt; append a synthetic --theme=<variant> so QML can always detect it
 	qtArgs := os.Args
 	if themeVariant != "" {
