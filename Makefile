@@ -176,12 +176,12 @@ uninstall:
 # Build (no install) into $(FLATPAK_BUILDDIR)
 flatpak-build:
 	@echo "==> Flatpak build (no install)"
-	flatpak-builder --force-clean $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
+	flatpak-builder --ccache $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
 
 # Build + install into user repo
 flatpak-install:
 	@echo "==> Flatpak build + install (user)"
-	flatpak-builder --user --install --force-clean $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
+	flatpak-builder --user --install --ccache $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
 
 # Run installed Flatpak
 flatpak-run:
@@ -193,8 +193,22 @@ flatpak-clean:
 	@echo "==> Cleaning Flatpak build dirs"
 	rm -rf $(FLATPAK_BUILDDIR) $(FLATPAK_EXPORTDIR)
 
-# Clean + build + install
-flatpak-rebuild: flatpak-clean flatpak-install
+# Clean + build + install (forces fresh build)
+flatpak-rebuild:
+	@echo "==> Cleaning and rebuilding Flatpak"
+	flatpak-builder --user --install --force-clean --ccache $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
+
+# Export and create a distributable .flatpak bundle
+flatpak-bundle:
+	@echo "==> Creating Flatpak bundle"
+	@if [ ! -d "$(FLATPAK_BUILDDIR)" ]; then \
+		echo "Build directory not found. Run 'make flatpak-build' first."; \
+		exit 1; \
+	fi
+	@mkdir -p $(FLATPAK_EXPORTDIR)
+	flatpak-builder --repo=$(FLATPAK_EXPORTDIR) --force-clean $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
+	flatpak build-bundle $(FLATPAK_EXPORTDIR) $(APP_ID).flatpak $(APP_ID)
+	@echo "==> Flatpak bundle created: $(APP_ID).flatpak"
 
 ########################################
 # GoReleaser targets for releases and RPMs

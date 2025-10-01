@@ -1,0 +1,112 @@
+[
+  {
+    "dest": "vendor",
+    "path": "modules.txt",
+    "type": "file"
+  },
+  {
+    "dest": "vendor/github.com/godbus/dbus/v5",
+    "sha256": "03dfa8e71089a6f477310d15c4d3a036d82d028532881b50fee254358e782ad9",
+    "strip-components": 4,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/godbus/dbus/v5/@v/v5.1.0.zip"
+  },
+  {
+    "dest": "vendor/github.com/mappu/miqt",
+    "sha256": "b4bea0440932ef2785565fc8b68fbd2a1b377f1a31363752de749b18ba0eaa69",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/mappu/miqt/@v/v0.11.2.zip"
+  },
+  {
+    "dest": "vendor/modernc.org/sqlite",
+    "sha256": "fe8b4b92a382c82a6b1ad5ddf97daa3f2e1b503153bd3b159a7d70e09897f4e9",
+    "strip-components": 2,
+    "type": "archive",
+    "url": "https://proxy.golang.org/modernc.org/sqlite/@v/v1.33.0.zip"
+  },
+  {
+    "dest": "vendor/github.com/dustin/go-humanize",
+    "sha256": "319404ea84c8a4e2d3d83f30988b006e7dd04976de3e1a1a90484ad94679fa46",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/dustin/go-humanize/@v/v1.0.1.zip"
+  },
+  {
+    "dest": "vendor/github.com/google/uuid",
+    "sha256": "d0f02f377217f42702e259684e06441edbf5140dddcc34ba9bea56038b38a6ed",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/google/uuid/@v/v1.6.0.zip"
+  },
+  {
+    "dest": "vendor/github.com/hashicorp/golang-lru/v2",
+    "sha256": "2eb92ff13970bccd460efae14255bfc03bb51474da0137e477a60f95561acc30",
+    "strip-components": 4,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/hashicorp/golang-lru/v2/@v/v2.0.7.zip"
+  },
+  {
+    "dest": "vendor/github.com/mattn/go-isatty",
+    "sha256": "f2d5f89ca451577e17464b9bb596dc0d0ecececb5eaa63622c41b57cd0b7b8cc",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/mattn/go-isatty/@v/v0.0.20.zip"
+  },
+  {
+    "dest": "vendor/github.com/ncruces/go-strftime",
+    "sha256": "3c46ee9c9db8fde8ce93c768a8701fa01f630bab0cfff338481cde768fe561ac",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/ncruces/go-strftime/@v/v0.1.9.zip"
+  },
+  {
+    "dest": "vendor/github.com/remyoudompheng/bigfft",
+    "sha256": "9be16c32c384d55d0f7bd7b03f1ff1e9a4e4b91b000f0aa87a567a01b9b82398",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/github.com/remyoudompheng/bigfft/@v/v0.0.0-20230129092748-24d4a6f8daec.zip"
+  },
+  {
+    "dest": "vendor/golang.org/x/sys",
+    "sha256": "2434299f530b049a5c8121d6465751ce58bd62f939afde34c442f79c88e9033c",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/golang.org/x/sys/@v/v0.22.0.zip"
+  },
+  {
+    "dest": "vendor/modernc.org/gc/v3",
+    "sha256": "d533e65369fe0dfcd19c725226a30e47b184092603ec7ee38dd5d056a2ad1474",
+    "strip-components": 3,
+    "type": "archive",
+    "url": "https://proxy.golang.org/modernc.org/gc/v3/@v/v3.0.0-20240107210532-573471604cb6.zip"
+  },
+  {
+    "dest": "vendor/modernc.org/mathutil",
+    "sha256": "3a9e2065897e172b4c092c3098e15a2d66bc2700432f88ba6812c1b6b0acf2b2",
+    "strip-components": 2,
+    "type": "archive",
+    "url": "https://proxy.golang.org/modernc.org/mathutil/@v/v1.6.0.zip"
+  },
+  {
+    "dest": "vendor/modernc.org/memory",
+    "sha256": "ab7bdfef46277868ae06d2aac01f3a64f30365a95bed4065c32c6399a3454c1c",
+    "strip-components": 2,
+    "type": "archive",
+    "url": "https://proxy.golang.org/modernc.org/memory/@v/v1.8.0.zip"
+  },
+  {
+    "dest": "vendor/modernc.org/strutil",
+    "sha256": "1ea20b81cf3fd6efad4bb1b791255cc2fd486111d5e9f2cb0e551e9d39aa3f8f",
+    "strip-components": 2,
+    "type": "archive",
+    "url": "https://proxy.golang.org/modernc.org/strutil/@v/v1.2.0.zip"
+  },
+  {
+    "dest": "vendor/modernc.org/token",
+    "sha256": "3efaa49e9fb10569da9e09e785fa230cd5c0f50fcf605f3b5439dfcd61577c58",
+    "strip-components": 2,
+    "type": "archive",
+    "url": "https://proxy.golang.org/modernc.org/token/@v/v1.1.0.zip"
+  }
+]

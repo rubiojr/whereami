@@ -3,3 +3,5 @@ resources_gen.go
 resources_gen.rcc
 dist/
 /bin
+/build-dir
+/export-dir
