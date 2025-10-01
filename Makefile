@@ -196,7 +196,8 @@ flatpak-clean:
 # Clean + build + install (forces fresh build)
 flatpak-rebuild:
 	@echo "==> Cleaning and rebuilding Flatpak"
-	flatpak-builder --user --install --force-clean --ccache $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
+	flatpak-builder --user --force-clean --ccache $(FLATPAK_BUILDDIR) $(FLATPAK_MANIFEST)
+	flatpak build-bundle $(FLATPAK_EXPORTDIR) $(APP_ID).flatpak $(APP_ID)
 
 # Export and create a distributable .flatpak bundle
 flatpak-bundle:
