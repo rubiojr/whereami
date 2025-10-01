@@ -126,7 +126,8 @@ nfpms:
     package_name: whereami
     file_name_template: >-
       {{ .PackageName }}-
-      {{- .Version }}-
+      {{- .Version }}-1.fc
+      {{- if .Env.FEDORA_VERSION }}{{ .Env.FEDORA_VERSION }}{{ else }}42{{ end }}.
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}

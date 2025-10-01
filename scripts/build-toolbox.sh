@@ -253,7 +253,7 @@ DEPS_EOF
 
 # Function to run the build
 run_build() {
-    print_info "Running make release-rpm in toolbox..."
+    print_info "Running goreleaser in toolbox..."
 
     # Check if project is under home directory
     if [[ "$PROJECT_ROOT" != "$HOME"* ]]; then
@@ -263,7 +263,7 @@ run_build() {
 
     # Run build in toolbox (home directory is automatically mounted)
     if ! toolbox run --container "$TOOLBOX_NAME" \
-         bash -c "cd '$PROJECT_ROOT' && source ~/.bashrc && make release-rpm"; then
+         bash -c "cd '$PROJECT_ROOT' && source ~/.bashrc && FEDORA_VERSION=\$(rpm -E %fedora) goreleaser release --config .goreleaser.yml --snapshot --clean"; then
         print_error "Build failed in toolbox"
         exit 1
     fi

@@ -268,9 +268,15 @@ release-snapshot: check-release-deps
 	goreleaser release --snapshot --clean
 
 # Build RPMs using the generic configuration
-release-rpm: check-release-deps
-	@echo "==> Building RPMs with GoReleaser"
-	goreleaser release --config .goreleaser.yml --snapshot --clean
+release-rpm:
+	@echo "==> Building RPMs with build-toolbox.sh"
+	@if [ ! -x scripts/build-toolbox.sh ]; then \
+		echo "Error: scripts/build-toolbox.sh not found or not executable"; \
+		exit 1; \
+	fi
+	./scripts/build-toolbox.sh
+
+
 
 # Create a full release (requires git tag)
 release: check-release-deps
@@ -305,9 +311,10 @@ help:
 	@echo "  flatpak-run       Run installed Flatpak"
 	@echo "  flatpak-clean     Remove Flatpak build dirs"
 	@echo "  flatpak-rebuild   Clean + build + install"
+	@echo "  flatpak-bundle    Create distributable .flatpak file"
+	@echo "  flatpak-release   Upload .flatpak to latest GitHub release"
 	@echo "  release-snapshot  Build snapshot release with GoReleaser"
-	@echo "  release-rpm       Build generic RPMs with GoReleaser"
-	@echo "  release-rpm-fedora Build Fedora-specific RPMs"
+	@echo "  release-rpm       Build RPMs using build-toolbox.sh"
 	@echo "  release           Create full release (requires git tag)"
 	@echo "  print-vars        Show variable values"
 	@echo "  help              This message"
@@ -325,7 +332,9 @@ help:
 	@echo ""
 	@echo "Release examples:"
 	@echo "  make release-snapshot    # Test build without publishing"
-	@echo "  make release-rpm         # Build RPMs for distribution"
+	@echo "  make release-rpm         # Build RPMs in Fedora toolbox"
+	@echo "  make flatpak-bundle      # Create .flatpak file"
+	@echo "  make flatpak-release     # Upload .flatpak to GitHub"
 	@echo "  git tag -a v1.0.0 -m 'Release v1.0.0'"
 	@echo "  make release             # Create GitHub release"
 	@echo ""
