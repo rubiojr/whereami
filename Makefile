@@ -210,6 +210,38 @@ flatpak-bundle:
 	flatpak build-bundle $(FLATPAK_EXPORTDIR) $(APP_ID).flatpak $(APP_ID)
 	@echo "==> Flatpak bundle created: $(APP_ID).flatpak"
 
+# Upload flatpak bundle to latest GitHub release
+flatpak-release:
+	@echo "==> Uploading Flatpak bundle to latest GitHub release"
+	@if [ ! -f "$(APP_ID).flatpak" ]; then \
+		echo "Error: $(APP_ID).flatpak not found. Run 'make flatpak-bundle' first."; \
+		exit 1; \
+	fi
+	@if ! command -v gh >/dev/null 2>&1; then \
+		echo "Error: gh (GitHub CLI) not found!"; \
+		echo "Install from: https://cli.github.com/"; \
+		exit 1; \
+	fi
+	@echo "Finding latest release..."
+	@LATEST_TAG=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName'); \
+	if [ -z "$$LATEST_TAG" ]; then \
+		echo "Error: No releases found"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "Release: $$LATEST_TAG"; \
+	echo "File:    $(APP_ID).flatpak"; \
+	echo ""; \
+	read -p "Upload to this release? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ ! $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "Upload cancelled."; \
+		exit 1; \
+	fi; \
+	echo "Uploading to release $$LATEST_TAG..."; \
+	gh release upload "$$LATEST_TAG" "$(APP_ID).flatpak" --clobber
+	@echo "==> Upload complete!"
+
 ########################################
 # GoReleaser targets for releases and RPMs
 ########################################
