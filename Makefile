@@ -270,12 +270,12 @@ release-snapshot: check-release-deps
 
 # Build RPMs using the generic configuration
 release-rpm:
-	@echo "==> Building RPMs with build-toolbox.sh"
-	@if [ ! -x scripts/build-toolbox.sh ]; then \
-		echo "Error: scripts/build-toolbox.sh not found or not executable"; \
+	@echo "==> Building RPMs with build-podman"
+	@if [ ! -x scripts/build-podman ]; then \
+		echo "Error: scripts/build-podman not found or not executable"; \
 		exit 1; \
 	fi
-	./scripts/build-toolbox.sh
+	./scripts/build-podman
 
 
 
@@ -315,7 +315,7 @@ help:
 	@echo "  flatpak-bundle    Create distributable .flatpak file"
 	@echo "  flatpak-release   Upload .flatpak to latest GitHub release"
 	@echo "  release-snapshot  Build snapshot release with GoReleaser"
-	@echo "  release-rpm       Build RPMs using build-toolbox.sh"
+	@echo "  release-rpm       Build RPMs using build-podman"
 	@echo "  release           Create full release (requires git tag)"
 	@echo "  print-vars        Show variable values"
 	@echo "  help              This message"
@@ -333,7 +333,7 @@ help:
 	@echo ""
 	@echo "Release examples:"
 	@echo "  make release-snapshot    # Test build without publishing"
-	@echo "  make release-rpm         # Build RPMs in Fedora toolbox"
+	@echo "  make release-rpm         # Build RPMs in Fedora container"
 	@echo "  make flatpak-bundle      # Create .flatpak file"
 	@echo "  make flatpak-release     # Upload .flatpak to GitHub"
 	@echo "  git tag -a v1.0.0 -m 'Release v1.0.0'"

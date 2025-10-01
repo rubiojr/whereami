@@ -4,7 +4,7 @@ This document describes how to build the whereami application from source.
 
 ## The easy way
 
-If you have [Fedora Toolbox](https://containertoolbx.org) installed, simply run `script/build-toolbox.sh`.
+If you have [Podman](https://podman.io), simply run `make release-rpm`.
 
 ## The hard way
 
