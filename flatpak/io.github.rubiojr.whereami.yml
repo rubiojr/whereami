@@ -22,7 +22,7 @@ finish-args:
   - --filesystem=xdg-documents/whereami:create
 
 build-options:
-  append-path: /usr/lib/sdk/golang/bin:/usr/libexec
+  append-path: /usr/lib/sdk/golang/bin:/usr/lib/libexec
   env:
     GOPATH: /run/build/whereami/gopath
 
