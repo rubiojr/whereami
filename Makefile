@@ -272,12 +272,6 @@ release-rpm: check-release-deps
 	@echo "==> Building RPMs with GoReleaser"
 	goreleaser release --config .goreleaser.yml --snapshot --clean
 
-# Build RPMs using Fedora-specific configuration
-release-rpm-fedora: check-release-deps
-	@echo "==> Building Fedora RPMs with GoReleaser"
-	FEDORA_VERSION=$$(rpm -E %fedora 2>/dev/null || echo 39) \
-	goreleaser release --config .goreleaser/fedora.yml --snapshot --clean
-
 # Create a full release (requires git tag)
 release: check-release-deps
 	@echo "==> Creating release with GoReleaser"
