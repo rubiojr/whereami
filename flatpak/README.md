@@ -28,9 +28,8 @@ Before building, ensure you have the required dependencies:
 # Add the Flathub repository if you haven't already
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-# Install the KDE Platform and SDK (version 6.7)
-flatpak install flathub org.kde.Platform//6.7
-flatpak install flathub org.kde.Sdk//6.7
+# Install the KDE Platform and SDK (version 6.9)
+flatpak install flathub org.kde.Platform//6.9 org.kde.Sdk//6.9
 
 # The Golang SDK extension should already be available
 # but you can verify with:
@@ -105,7 +104,7 @@ These are defined in the `finish-args` section of the manifest.
 ## Troubleshooting
 
 **"Can't find ref..." error**
-- Ensure you have installed the correct KDE Platform/SDK version (6.7)
+- Ensure you have installed the correct KDE Platform/SDK version (6.9)
 - Run: `flatpak list | grep org.kde`
 
 **Build failures with "rcc not found"**
