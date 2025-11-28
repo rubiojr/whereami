@@ -58,7 +58,7 @@ modules:
       - type: git
         url: https://github.com/rubiojr/whereami.git
         tag: v0.1.10
-        commit: 815cd105ec2df8f8a16c4abea1951f247ba0be60 
+        commit: 0d08f4a3c4b6285f8b03635cd0693888287bc799
       - type: file
         path: modules.txt
       - go.mod.json
