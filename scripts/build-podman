@@ -303,7 +303,6 @@ run_build() {
     # Copy project files to container (excluding .git, build artifacts, etc.)
     print_info "Copying project files to container..."
     if ! tar -C "$PROJECT_ROOT" -czf - \
-         --exclude='.git' \
          --exclude='build-dir' \
          --exclude='export-dir' \
          --exclude='dist' \
