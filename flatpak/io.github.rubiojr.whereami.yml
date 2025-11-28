@@ -57,7 +57,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/rubiojr/whereami.git
-        tag: v0.1.7
+        tag: v0.1.10
         commit: ec69dab0a8d827b83ecd88a6e9470c4c87b75842
       - type: file
         path: modules.txt
