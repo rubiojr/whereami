@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/godbus/dbus/v5 v5.1.0
-	github.com/mappu/miqt v0.12.0
+	github.com/mappu/miqt v0.13.0
 	modernc.org/sqlite v1.40.1
 )
 
