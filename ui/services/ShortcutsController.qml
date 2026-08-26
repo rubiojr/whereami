@@ -188,7 +188,7 @@ QtObject {
             }
         },
 
-        // Zoom to selected waypoint at level 18 with Ctrl+G
+        // Zoom to the selected waypoint at the configured search zoom with Ctrl+G
         Shortcut {
             sequence: "Ctrl+G"
             onActivated: {

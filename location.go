@@ -19,17 +19,15 @@ import (
 GeoClue (geoclue2) location integration.
 
 Overview:
-  - On startup call:
-        err := InitLocationTracking("whereami.desktop")
-    This will:
-      * Ensure a matching .desktop file exists (writes one into
+  - The first GET /api/location request calls InitLocationTracking through
+    handleGetLocation. Initialization:
+      * Ensure a .desktop file with the requested desktop ID exists (writes one into
         ~/.local/share/applications if missing).
       * Spawn a goroutine that connects to GeoClue on the system bus,
         creates a client, sets accuracy & thresholds, starts updates,
         and listens for property changes to keep the in‑memory location
         fresh.
-  - Optionally call RegisterLocationAPI(http.DefaultServeMux) to expose
-        GET /api/location  (200 JSON or 204 if unknown)
+  - GET /api/location returns 200 JSON or 204 if no fix is available.
 
 Data exposed:
   currentLocation   (guarded by locationMu)
@@ -47,8 +45,6 @@ Security / Permissions:
   - Without it you'll usually get org.freedesktop.DBus.Error.AccessDenied
     or the Start call will silently not produce locations.
 
-Adding dependency:
-  - Ensure go.mod has:  require github.com/godbus/dbus/v5 latest
 */
 
 const (

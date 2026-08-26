@@ -181,7 +181,7 @@ ToolBar {
             icon.color: hovered ? theme.toolbarIconHover : theme.toolbarIcon
             // Styled tooltip consistent with MapControlButton
             CustomToolTip {
-                tooltipText: "Open GPX files"
+                tooltipText: "Import GPX directory"
                 visible: openFileButton.hovered
                 position: "bottom"
             }

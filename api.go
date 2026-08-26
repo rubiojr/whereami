@@ -40,7 +40,7 @@ import (
 //   Location: locationMu, locationValid, currentLocation, InitLocationTracking(...)
 //
 
-// -------- Tile proxy configuration & metrics (globals retained for backward compatibility) -----
+// -------- Tile proxy configuration and metrics -----
 
 var locationOnce sync.Once
 
@@ -257,21 +257,21 @@ func (p *tileProxy) pruneLoop() {
 }
 
 func (p *tileProxy) pruneDisk() {
-	if p.diskDir == "" || p.diskTTL == 0 {
-		return // No disk cache or never expire
+	if p.diskDir == "" {
+		return
 	}
-	// Remove expired
-	_ = filepath.WalkDir(p.diskDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if info, err := d.Info(); err == nil {
-			if time.Since(info.ModTime()) > p.diskTTL {
+	if p.diskTTL > 0 {
+		// Remove expired entries before enforcing count and size limits.
+		_ = filepath.WalkDir(p.diskDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if info, err := d.Info(); err == nil && time.Since(info.ModTime()) > p.diskTTL {
 				_ = os.Remove(path)
 			}
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 	// Collect paths
 	var paths []string
 	_ = filepath.WalkDir(p.diskDir, func(path string, d os.DirEntry, err error) error {
@@ -1051,8 +1051,6 @@ func initGeocodeDB() {
 			logger.Error("geocode cache open failed: %v", err)
 			return
 		}
-		// Index to support potential pruning / ordering by fetched_at (query already PRIMARY KEY)
-		_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_geocode_cache_fetched_at ON geocode_cache(fetched_at)`)
 		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS geocode_cache (
 			query TEXT PRIMARY KEY,
 			json  TEXT NOT NULL,
@@ -1062,6 +1060,7 @@ func initGeocodeDB() {
 			_ = db.Close()
 			return
 		}
+		_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_geocode_cache_fetched_at ON geocode_cache(fetched_at)`)
 		geoDB = db
 	})
 }
@@ -1191,17 +1190,8 @@ func fetchGeocodeCached(q string, limit int) []suggestResult {
 	return out
 }
 
-// handleGetSuggest now returns structured suggestions:
-// [
-//
-//	{ "name": "...", "lat": ..., "lon": ..., "source": "bookmark|waypoint|geocode", "class": "...", "type": "..." },
-//
-// Tags are not included in suggestions (would require extra lookups); clients can fetch via /api/tags.
-//
-//	...
-//
-// ]
-// Combined limit: 8 (first waypoints/bookmarks, then geocode).
+// handleGetSuggest returns an object containing the original query and up to
+// eight structured suggestions. Tags are not included in suggestion objects.
 func handleGetSuggest(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
@@ -1424,8 +1414,6 @@ func handleGetSuggest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// (Removed stray duplicate code after handleGetSuggest)
-
 // Recent search queries (distinct, most recent first). Returns legacy string list plus
 // enriched entries with optional lat/lon:
 //
@@ -1549,10 +1537,9 @@ func handlePostHistory(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ---------------- RegisterAPI (public) ----------------
+// ---------------- Tag database ----------------
 
-// RegisterAPI wires all HTTP endpoints using Go 1.22 method-aware patterns.
-// initTagDB opens (and creates if needed) the tag database in dataDir.
+// initTagDB opens and creates the tag database in the effective data directory.
 func initTagDB() {
 	tagDBOnce.Do(func() {
 		dir := effectiveDataDir()
@@ -1651,9 +1638,7 @@ func deleteTag(name string, lat, lon float64, tag string) error {
 	return err
 }
 
-// Handlers for tag API (rewritten with backend enrichment & distinct mode)
-//
-// New modes:
+// Tag API modes:
 //   GET /api/tags?name=&lat=&lon=&emoji=true        (per-waypoint, optional enrichment)
 //   GET /api/tags?distinct=true&emoji=true          (global distinct tag list)
 //   POST /api/tags?emoji=true                       (returns enriched list when requested)
@@ -1810,11 +1795,8 @@ func enrichTag(raw string) TagDTO {
 	}
 }
 
-// normalizeTagKey produces a canonical comparison key:
-//   - lowercase
-//   - replace emoji equivalents with their symbolic form (⭐->*, 💲->$)
-//   - collapse repeated symbol runs (*+, $+) to a single character
-//   - trim surrounding whitespace
+// normalizeTagKey lowercases and trims a tag and replaces known emoji with
+// their canonical keys. Repeated symbols remain distinct.
 func normalizeTagKey(s string) string {
 	if s == "" {
 		return ""
@@ -2067,6 +2049,7 @@ func handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// RegisterAPI wires all HTTP endpoints using method-aware ServeMux patterns.
 func RegisterAPI(mux *http.ServeMux, bookmarksPath string, debug bool) {
 	if mux == nil {
 		mux = http.DefaultServeMux

@@ -4,14 +4,12 @@ import "qrc:/themes" as Themes
 /*
     ThemeLoader.qml
 
-    Simple theme loader that allows compile-time theme switching.
-
-    To change theme, modify the THEME_VARIANT constant below:
-    - "orange" (default)
+    Runtime theme loader. Select a variant with --theme=<name>:
+    - "orange"
     - "green"
     - "purple"
     - "adwaita-dark"
-    - "nord-polar"
+    - "nord-polar" (default)
     - "nord-frost"
 
     Usage in components:
@@ -27,7 +25,6 @@ import "qrc:/themes" as Themes
 Loader {
     id: themeLoader
 
-    // ============ CHANGE THIS TO SWITCH THEMES ============
     // Theme can be selected at runtime via --theme flag (forms: --theme=value or --theme value).
     // Allowed variants: orange, green, purple, adwaita-dark, nord-polar, nord-frost
     property string themeVariant: computeThemeVariant()
@@ -63,8 +60,6 @@ Loader {
         }
         return fallback;
     }
-    // ======================================================
-
     source: {
         switch (themeVariant) {
         case "green":

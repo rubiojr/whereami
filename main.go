@@ -1,11 +1,10 @@
 package main
 
-// NOTE: Location tracking desktop file id updated to io.github.rubiojr.whereami.desktop (actual InitLocationTracking call now lives in api.go)
-
 import (
 	_ "embed"
 	"flag"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,7 +26,6 @@ var configDir string
 var cacheDir string
 
 // Global live waypoint store (bookmarks + other GPX waypoints).
-// Waypoint type & persistence helpers now live in storage.go.
 var allWaypoints []Waypoint
 var allWaypointsMu sync.RWMutex
 
@@ -45,7 +43,7 @@ func main() {
 	// Set debug logging
 	logger.SetDebug(debug)
 
-	// Hardcoded API port (as requested)
+	// Fixed loopback API port shared with the QML configuration.
 	const apiPort = 43098
 
 	// Determine data directory for persistent app storage (bookmarks, imported GPX, databases).
@@ -90,22 +88,8 @@ func main() {
 		}
 	}
 
-	// Legacy bookmark migration removed; using only XDG dataDir location now.
-
-	// Register HTTP API handlers (moved to api.go)
+	// Register HTTP API handlers.
 	RegisterAPI(http.DefaultServeMux, bookmarksPath, debug)
-
-	// /api/location endpoint moved to api.go (lazy initialization handled there)
-
-	// (Removed HTTP /qml/ handler — using local temp materialization instead)
-
-	// Start server on fixed port 43098
-	go func() {
-		addr := "127.0.0.1:43098"
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			logger.Error("Bookmark API server error on %s: %v", addr, err)
-		}
-	}()
 
 	// Build initial waypoint list (bookmarks + imported GPX) using centralized dedupe helper.
 	initial := RebuildAllWaypoints(bookmarksPath, dataDir)
@@ -113,6 +97,18 @@ func main() {
 	allWaypointsMu.Lock()
 	allWaypoints = initial
 	allWaypointsMu.Unlock()
+
+	// Bind before starting Qt so a conflicting instance cannot leave a broken UI running.
+	addr := "127.0.0.1:43098"
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		logger.Fatalf("Bookmark API server bind error on %s: %v", addr, err)
+	}
+	go func() {
+		if err := http.Serve(listener, nil); err != nil {
+			logger.Error("Bookmark API server error on %s: %v", addr, err)
+		}
+	}()
 
 	// Prepare arguments for Qt; append a synthetic --theme=<variant> so QML can always detect it
 	qtArgs := os.Args

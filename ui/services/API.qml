@@ -2,16 +2,14 @@ import QtQuick 2.15
 
 /*
   API.qml
-  Centralized HTTP API service (thin wrapper around XMLHttpRequest) that unifies all
-  backend interactions currently scattered across QML components (`MapView.qml`,
-  `SearchBox.qml`, `WaypointService.qml`, etc).
+  Centralized HTTP API service and thin XMLHttpRequest wrapper for semantic
+  backend operations used by QML components.
 
   Goals:
-    - Provide a single surface for network I/O (easy to evolve / refactor to in‑process bridge later).
+    - Provide a single surface for semantic XHR operations.
     - Emit semantic signals (no direct UI mutation; consumers decide optimistic updates / rollbacks).
     - Offer both specialized convenience methods (addWaypoint, getWaypoints, etc) and a generic
       low-level `request()` escape hatch for future endpoints.
-    - Replace `WaypointService.qml` incrementally (that file can stay until migration completes).
 
   Design notes:
     - All methods respect `apiPort`. If `apiPort < 0`, most mutating operations become no-ops
@@ -21,12 +19,8 @@ import QtQuick 2.15
     - Errors are surfaced as human-readable strings (status code + response tail where possible).
     - The service never mutates external arrays or objects; it only emits signals / returns via callbacks.
 
-  Migration strategy (example):
-    - Replace usages of `WaypointService.addWaypoint` with `api.addWaypoint`.
-    - Move clustered fetch logic to `api.getClusters`.
-    - Replace manual XHR in `SearchBox.qml` with `api.suggest`.
-    - Move tag + rename logic from `WaypointInfoCard` into here, then refactor the card to be passive.
-    - Gradually delete legacy service once no code imports it.
+  QtLocation tile requests are configured directly in MapView.qml and do not
+  pass through this service.
 
   Signals overview (extended):
     Generic:
@@ -83,21 +77,27 @@ import QtQuick 2.15
       suggestResults(resultObj, query)
       suggestFailed(error, query)
 
+    Recent searches:
+      recentSearchesFetchStarted(limit)
+      recentSearchesFetched(queries, limit)
+      recentSearchEntriesFetched(entries, limit)
+      recentSearchesFetchFailed(error, limit)
+
+    Version:
+      versionFetchStarted()
+      versionFetched(versionInfo)
+      versionFetchFailed(error)
+
   Generic request context:
     - `kind` is a short string (e.g. "GET /api/waypoints").
     - `context` is an arbitrary object the caller can use to correlate.
-
-  Future enhancements:
-    - Rate limiting / dedupe (e.g. in-flight suggest queries).
-    - Retry/backoff policy.
-    - Switch to Go-exposed QObject invokables (no HTTP) without changing higher-level UI code.
 
 */
 
 QtObject {
     id: api
 
-    // Port injected by the root / main view (e.g. MapView)
+    // Fixed loopback API port shared with main.go and MapView.qml.
     property int apiPort: 43098
 
     // Default timeout (ms) for requests
@@ -158,7 +158,7 @@ QtObject {
     signal suggestFailed(string errorMessage, string query)
 
     // --- Recent Searches ---
-    // Emitted when requesting recent search queries (stored in geocode cache DB)
+    // Emitted when requesting recent search queries (stored in history.sqlite)
     signal recentSearchesFetchStarted(int limit)
     signal recentSearchesFetched(var queries, int limit)          // queries: array of strings (most recent first, legacy)
     signal recentSearchEntriesFetched(var entries, int limit)     // entries: array of objects { query, lat?, lon? } (new enriched form)
@@ -436,7 +436,7 @@ QtObject {
         });
     }
 
-    // Fetch recent search queries (from backend geocode cache).
+    // Fetch recent search queries from the backend history database.
     // limit: optional (defaults to 10; capped server-side).
     function getRecentSearches(limit) {
         var lim = (typeof limit === "number" && limit > 0) ? limit : 10;

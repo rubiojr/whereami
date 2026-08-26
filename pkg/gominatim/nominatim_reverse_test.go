@@ -43,7 +43,7 @@ func Test_ReverseQueryWithoutServer(t *testing.T) {
 	rqry.Lon = "13.3888599"
 	_, err := rqry.buildQuery()
 	if err != nil {
-		if !(err.Error() == "Server is not set. Set via gominatim.SetServer(srv string)") {
+		if err.Error() != "server is not set; set it via gominatim.SetServer" {
 			t.Error("Expecting error about unset server. Received" + err.Error())
 		}
 	} else {
@@ -60,7 +60,7 @@ func Test_OSMType(t *testing.T) {
 	rqry.OsmType = "V"
 	_, err := rqry.buildQuery()
 	if err != nil {
-		if !(err.Error() == "OsmType must be 'N', 'W' or 'R'") {
+		if err.Error() != "osm_type must be 'N', 'W' or 'R'" {
 			t.Error("Expecting error about Wrong OSMType. Received" + err.Error())
 		}
 	} else {
@@ -71,9 +71,13 @@ func Test_OSMType(t *testing.T) {
 	rqry.Lat = "52.5170365"
 	rqry.Lon = "13.3888599"
 	rqry.OsmType = "R"
-	_, err = rqry.buildQuery()
+	rqry.OsmId = "1234"
+	query, err := rqry.buildQuery()
 	if err != nil {
 		t.Error("Expecting no error. Got " + err.Error())
+	}
+	if !strings.Contains(query, "osm_type=R") || !strings.Contains(query, "osm_id=1234") {
+		t.Errorf("query does not contain OSM type and ID: %s", query)
 	}
 }
 
@@ -84,7 +88,7 @@ func Test_LatLon(t *testing.T) {
 	rqry.Lon = "13.3888599"
 	_, err := rqry.buildQuery()
 	if err != nil {
-		if !(err.Error() == "Cannot search without a latitude. Set field Lat") {
+		if err.Error() != "cannot search without a latitude; set field Lat" {
 			t.Error("Expecting error about missing latitude. Received" + err.Error())
 		}
 	} else {
@@ -95,7 +99,7 @@ func Test_LatLon(t *testing.T) {
 	rqry.Lat = "52.5170365"
 	_, err = rqry.buildQuery()
 	if err != nil {
-		if !(err.Error() == "Cannot search without a longitude. Set field Lon") {
+		if err.Error() != "cannot search without a longitude; set field Lon" {
 			t.Error("Expecting error about missing longitude. Received" + err.Error())
 		}
 	} else {
@@ -112,7 +116,7 @@ func Test_Zoom(t *testing.T) {
 	rqry.Zoom = 1337
 	_, err := rqry.buildQuery()
 	if err != nil {
-		if !(err.Error() == "Zoom must be within 0 and 18. 1337 is out of range") {
+		if err.Error() != "zoom must be within 0 and 18; 1337 is out of range" {
 			t.Error("Expecting error about wrong Zoomfactor. Received" + err.Error())
 		}
 	} else {

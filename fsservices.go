@@ -79,15 +79,6 @@ func effectiveDataDir() string {
 	return ""
 }
 
-// effectiveConfigDir resolves the configuration directory used for app settings.
-// It prefers the explicit global `configDir` if set; otherwise it derives a XDG fallback.
-func effectiveConfigDir() string {
-	if configDir != "" {
-		return configDir
-	}
-	return filepath.Join(xdgConfigDir(), "whereami")
-}
-
 // effectiveCacheDir resolves the cache directory used for temporary files.
 // It prefers the explicit global `cacheDir` if set; otherwise it derives a XDG fallback.
 func effectiveCacheDir() string {

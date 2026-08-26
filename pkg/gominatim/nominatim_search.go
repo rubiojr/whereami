@@ -23,14 +23,14 @@ package gominatim
 import (
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 )
 
 type searchResultError struct {
-	error string `json:"error"`
+	Error string `json:"error"`
 }
 
 type SearchResult struct {
@@ -46,7 +46,7 @@ type SearchResult struct {
 	Class         string     `json:"class"`
 	Type          string     `json:"type"`
 	Address       Address    `json:"address"`
-	Importance    float32    `json:"importance""`
+	Importance    float32    `json:"importance"`
 }
 
 type SearchQuery struct {
@@ -78,7 +78,7 @@ func (q *SearchQuery) specificFieldsUsed() bool {
 
 func (q *SearchQuery) buildQuery() (string, error) {
 	if server == "" {
-		return "", errors.New("Server is not set. Set via gominatim.SetServer(srv string)")
+		return "", errors.New("server is not set; set it via gominatim.SetServer")
 	}
 	s := server
 	s = s + "/search?format=json"
@@ -112,10 +112,10 @@ func (q *SearchQuery) buildQuery() (string, error) {
 				s += "&postalcode=" + url.QueryEscape(q.Postalcode)
 			}
 		} else {
-			return "", errors.New("You must use either Q or one or more of Street, City, County, State, Postalcode. The latter will be ignored if the further is used.")
+			return "", errors.New("use Q or one or more of Street, City, County, State, and Postalcode; Q takes precedence")
 		}
 	}
-	if q.Countrycodes != nil && len(q.Countrycodes) > 0 {
+	if len(q.Countrycodes) > 0 {
 		als := ""
 		first := true
 		for i := range q.Countrycodes {
@@ -150,7 +150,7 @@ func (q *SearchQuery) buildQuery() (string, error) {
 	if q.Email != "" {
 		s += "&email=" + url.QueryEscape(q.Email)
 	}
-	if q.ExcludePlaceIds != nil && len(q.ExcludePlaceIds) > 0 {
+	if len(q.ExcludePlaceIds) > 0 {
 		als := ""
 		first := true
 		for i := range q.ExcludePlaceIds {
@@ -203,7 +203,7 @@ func (q *SearchQuery) Get() ([]SearchResult, error) {
 
 	// Check HTTP status code first
 	if resp.StatusCode != http.StatusOK {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		bodyStr := string(body)
 		if len(bodyStr) > 200 {
 			bodyStr = bodyStr[:200] + "..."
@@ -211,7 +211,7 @@ func (q *SearchQuery) Get() ([]SearchResult, error) {
 		return nil, errors.New("HTTP " + strconv.Itoa(resp.StatusCode) + " " + resp.Status + ": " + bodyStr)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, errors.New("failed to read response body: " + err.Error())
 	}
@@ -225,10 +225,10 @@ func (q *SearchQuery) Get() ([]SearchResult, error) {
 	err = json.Unmarshal(body, &result)
 	if err != nil {
 		// Try to parse as error object first
-		err_obj := new(searchResultError)
-		errParseErr := json.Unmarshal(body, err_obj)
-		if errParseErr == nil && err_obj.error != "" {
-			return nil, errors.New("nominatim error: " + err_obj.error)
+		errObj := new(searchResultError)
+		errParseErr := json.Unmarshal(body, errObj)
+		if errParseErr == nil && errObj.Error != "" {
+			return nil, errors.New("nominatim error: " + errObj.Error)
 		}
 
 		// If JSON parsing failed, provide more context
@@ -239,7 +239,7 @@ func (q *SearchQuery) Get() ([]SearchResult, error) {
 		return nil, errors.New("JSON parse error: " + err.Error() + " (response: " + bodyStr + ")")
 	}
 	if len(result) == 0 {
-		return nil, errors.New("Nothing found; sorry :/")
+		return nil, errors.New("nothing found")
 	}
 	return result, nil
 }

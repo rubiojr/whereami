@@ -2,10 +2,10 @@
 #
 # Provides convenience targets for:
 #  - Local Go build / run / lint
-#  - Flatpak build, install, run, clean
 #  - Local desktop install (binary + .desktop + icon)
+#  - GoReleaser snapshots, releases, and containerized RPM builds
 #
-# Requirements (host, outside Flatpak):
+# Requirements (host):
 #  - Go toolchain (matching go.mod version)
 #  - qmllint-qt6 (for QML lint target) optional
 #
@@ -44,7 +44,7 @@ HOST_ARCH := $(shell uname -m)
 
 .PHONY: all build run clean lint fmt vet tidy qml-test \
         install uninstall print-vars help \
-        release release-snapshot release-rpm release-rpm-fedora check-release-deps
+        release release-snapshot release-rpm check-release-deps
 
 all: build
 
@@ -52,9 +52,6 @@ print-vars:
 	@echo "HOST_OS=$(HOST_OS)"
 	@echo "HOST_ARCH=$(HOST_ARCH)"
 	@echo "APP_ID=$(APP_ID)"
-	@echo "FLATPAK_MANIFEST=$(FLATPAK_MANIFEST)"
-	@echo "FLATPAK_BUILDDIR=$(FLATPAK_BUILDDIR)"
-	@echo "FLATPAK_EXPORTDIR=$(FLATPAK_EXPORTDIR)"
 	@echo "INSTALL_PREFIX=$(INSTALL_PREFIX)"
 	@echo "BIN_INSTALL_DIR=$(BIN_INSTALL_DIR)"
 	@echo "DESKTOP_FILE_DEST=$(DESKTOP_FILE_DEST)"
@@ -94,7 +91,7 @@ tidy:
 lint-qml:
 	@echo "==> QML lint (non-fatal if tool not present)"
 	@if command -v $(QML_LINT) >/dev/null 2>&1; then \
-		$(QML_LINT) ui/*.qml ui/components/*.qml ui/services/*.qml || true; \
+		$(QML_LINT) ui/components/*.qml ui/services/*.qml ui/themes/*.qml ui/tests/*.qml || true; \
 	else \
 		echo "Skipping QML lint: $(QML_LINT) not found"; \
 	fi
@@ -223,13 +220,6 @@ help:
 	@echo "  qml-test          Run QML JS test suite"
 	@echo "  install           Install binary, desktop file & icon to ~/.local"
 	@echo "  uninstall         Remove installed binary/desktop/icon"
-	@echo "  flatpak-build     Flatpak build (no install)"
-	@echo "  flatpak-install   Flatpak build + install (user)"
-	@echo "  flatpak-run       Run installed Flatpak"
-	@echo "  flatpak-clean     Remove Flatpak build dirs"
-	@echo "  flatpak-rebuild   Clean + build + install"
-	@echo "  flatpak-bundle    Create distributable .flatpak file"
-	@echo "  flatpak-release   Upload .flatpak to latest GitHub release"
 	@echo "  release-snapshot  Build snapshot release with GoReleaser"
 	@echo "  release-rpm       Build RPMs using build-podman"
 	@echo "  release           Create full release (requires git tag)"
@@ -239,19 +229,13 @@ help:
 	@echo "Examples:"
 	@echo "  make build"
 	@echo "  make install"
-	@echo "  make flatpak-install"
-	@echo "  make flatpak-run"
 	@echo ""
-	@echo "Adjust FLATPAK_BUILDDIR or other vars:"
-	@echo "  make FLATPAK_BUILDDIR=out/fp flatpak-build"
 	@echo "Override install prefix:"
 	@echo "  make INSTALL_PREFIX=/opt/local install"
 	@echo ""
 	@echo "Release examples:"
 	@echo "  make release-snapshot    # Test build without publishing"
 	@echo "  make release-rpm         # Build RPMs in Fedora container"
-	@echo "  make flatpak-bundle      # Create .flatpak file"
-	@echo "  make flatpak-release     # Upload .flatpak to GitHub"
 	@echo "  git tag -a v1.0.0 -m 'Release v1.0.0'"
 	@echo "  make release             # Create GitHub release"
 	@echo ""

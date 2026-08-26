@@ -12,7 +12,7 @@ import "../themes"
     - Centered panel (default 420x540) with scroll (Flickable + ScrollBar).
     - Public API: open(), close(), toggle(), addShortcut(line).
     - Accepts externally injected theme (ThemeLoader item); falls back to its own ThemeLoader.
-    - Esc key, backdrop click, or Close button dismisses the overlay.
+    - Backdrop click or the Close button dismisses the overlay.
     - Smooth fade + scale animations.
     - Safe if created once and reused (model only initialized on first open).
 
@@ -25,9 +25,6 @@ import "../themes"
       // Show: helpOverlay.open()
       // Toggle: helpOverlay.toggle()
 
-  NOTE:
-    The global Escape shortcut in MapView should close this first; however this
-    component is self‑sufficient (handles Esc internally) so it also works standalone.
 */
 
 Item {
@@ -41,7 +38,7 @@ Item {
     property var theme: null
 
     // Default shortcut lines (append only – do not modify order in code paths relying on index)
-    readonly property var defaultShortcuts: ["+ / Ctrl++ : Zoom In", "- / Ctrl+- : Zoom Out", "Ctrl+0 : Reset View", "Ctrl+F : Toggle Search Overlay", "Ctrl+T : Toggle Waypoints Table", "Ctrl+I : Toggle Waypoint Info Card", "Ctrl+? / Ctrl+/ : Toggle Help Overlay", "Ctrl+B : Toggle Bookmark-Only Mode", "Ctrl+Enter / Ctrl+Return : Add Waypoint", "Delete : Delete Selected Bookmark", "Ctrl+L : Go to Current Location", "Escape : Close Add Waypoint Dialog / Clear Selection / Hide Search / Close Table / Close Help", "Ctrl+Q : Quit Application", "Double Click Map : Center & Zoom In"]
+    readonly property var defaultShortcuts: ["Ctrl++ / Ctrl+= : Zoom In", "Ctrl+- : Zoom Out", "Ctrl+0 : Reset View", "Ctrl+F : Toggle Search Overlay", "Ctrl+T : Toggle Waypoints Table", "Ctrl+I : Toggle Waypoint Info Card", "Ctrl+? / Ctrl+/ : Toggle Help Overlay", "Ctrl+B : Toggle Bookmark-Only Mode", "Ctrl+G : Zoom to Selected Waypoint", "Ctrl+Enter / Ctrl+Return : Add Selected or Searched Location", "Delete : Delete Selected Bookmark", "Ctrl+L : Go to Current Location", "Escape : Close Add Waypoint Dialog / Clear Selection / Hide Search / Close Table", "Ctrl+Q : Quit Application", "Double Click Map : Center & Zoom In"]
 
     // Internal shortcut items (mirrors + dynamic user additions)
     ListModel {

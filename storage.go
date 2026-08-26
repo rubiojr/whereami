@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,9 +35,6 @@ import (
 // Duplicate detection:
 //   - Name equality + lat/lon within epsilon (1e-6) is considered a duplicate.
 //
-// NOTE: After moving these helpers here, remove their counterparts from main.go
-// to avoid duplicate symbol compilation errors.
-
 // Sentinel error for duplicate bookmarks.
 var ErrDuplicate = errors.New("duplicate bookmark")
 
@@ -120,7 +118,13 @@ func writeBookmarks(path string, wps []Waypoint) error {
 		if e.Deleted {
 			continue
 		}
-		fmt.Fprintf(&b, "  <wpt lat=\"%f\" lon=\"%f\">\n", e.Lat, e.Lon)
+		lat := strconv.FormatFloat(e.Lat, 'f', -1, 64)
+		lon := strconv.FormatFloat(e.Lon, 'f', -1, 64)
+		fmt.Fprintf(&b, "  <wpt lat=\"%s\" lon=\"%s\">\n", lat, lon)
+		if e.Ele != 0 {
+			ele := strconv.FormatFloat(e.Ele, 'f', -1, 64)
+			fmt.Fprintf(&b, "    <ele>%s</ele>\n", ele)
+		}
 		if e.Time != "" {
 			fmt.Fprintf(&b, "    <time>%s</time>\n", e.Time)
 		}
@@ -156,9 +160,13 @@ func appendBookmark(bookmarksPath string, wp Waypoint) (Waypoint, error) {
 
 	var existing []Waypoint
 	if fi, err := os.Stat(bookmarksPath); err == nil && fi.Size() > 0 {
-		if wps, err := parseGPXFile(bookmarksPath); err == nil {
-			existing = wps
+		wps, err := parseGPXFile(bookmarksPath)
+		if err != nil {
+			return wp, fmt.Errorf("parse existing bookmarks: %w", err)
 		}
+		existing = wps
+	} else if err != nil && !os.IsNotExist(err) {
+		return wp, fmt.Errorf("stat bookmarks: %w", err)
 	}
 
 	const eps = 1e-6

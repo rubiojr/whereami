@@ -5,7 +5,7 @@
 # particularly for Qt resource generation with miqt-rcc.
 #
 # Usage:
-#   ./scripts/build.sh [--check-deps] [--generate-resources] [--build]
+#   ./scripts/build.sh [--check-deps] [--generate] [--build]
 #
 # Environment variables:
 #   MIQT_RCC_PATH - Path to miqt-rcc binary (default: searches in PATH and common locations)
@@ -214,17 +214,6 @@ build_application() {
     # Set build flags
     local ldflags="-s -w"
 
-    # Add version information if available
-    if [ -n "${VERSION}" ]; then
-        ldflags="${ldflags} -X main.version=${VERSION}"
-    fi
-    if [ -n "${COMMIT}" ]; then
-        ldflags="${ldflags} -X main.commit=${COMMIT}"
-    fi
-    if [ -n "${DATE}" ]; then
-        ldflags="${ldflags} -X main.date=${DATE}"
-    fi
-
     # Build the application
     print_msg "${GREEN}" "    Building with flags: ${ldflags}"
 
@@ -268,14 +257,10 @@ show_usage() {
     echo "  MIQT_RCC_PATH      Path to miqt-rcc binary"
     echo "  QT_VERSION         Qt version to use (default: 6)"
     echo "  BUILD_DIR          Build output directory (default: ./bin)"
-    echo "  VERSION            Version string to embed"
-    echo "  COMMIT             Git commit to embed"
-    echo "  DATE               Build date to embed"
-    echo ""
     echo "Examples:"
     echo "  $0 --check-deps                    # Check dependencies only"
     echo "  $0 --generate --build               # Generate resources and build"
-    echo "  VERSION=1.0.0 $0 --all             # Build with version info"
+    echo "  $0 --all                            # Check, generate, and build"
 }
 
 # Main script logic

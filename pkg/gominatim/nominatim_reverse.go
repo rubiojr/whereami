@@ -24,7 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 )
@@ -59,7 +59,7 @@ type ReverseQuery struct {
 
 func (r *ReverseQuery) buildQuery() (string, error) {
 	if server == "" {
-		return "", errors.New("Server is not set. Set via gominatim.SetServer(srv string)")
+		return "", errors.New("server is not set; set it via gominatim.SetServer")
 	}
 	s := server
 	s = s + "/reverse?format=json"
@@ -68,23 +68,23 @@ func (r *ReverseQuery) buildQuery() (string, error) {
 	}
 	if r.OsmType != "" {
 		if r.OsmType != "N" && r.OsmType != "W" && r.OsmType != "R" {
-			return "", errors.New("OsmType must be 'N', 'W' or 'R'")
+			return "", errors.New("osm_type must be 'N', 'W' or 'R'")
 		}
 		s = s + "&osm_type=" + r.OsmType
 	}
 	if r.OsmId != "" {
-		s = s + "&osm_id=" + r.OsmType
+		s = s + "&osm_id=" + r.OsmId
 	}
 	if r.Lat == "" {
-		return "", errors.New("Cannot search without a latitude. Set field Lat")
+		return "", errors.New("cannot search without a latitude; set field Lat")
 	}
 	s = s + "&lat=" + r.Lat
 	if r.Lon == "" {
-		return "", errors.New("Cannot search without a longitude. Set field Lon")
+		return "", errors.New("cannot search without a longitude; set field Lon")
 	}
 	s = s + "&lon=" + r.Lon
 	if r.Zoom > 18 || r.Zoom < 0 {
-		return "", errors.New(fmt.Sprintf("Zoom must be within 0 and 18. %d is out of range", r.Zoom))
+		return "", fmt.Errorf("zoom must be within 0 and 18; %d is out of range", r.Zoom)
 	}
 	s = s + fmt.Sprintf("&zoom=%d", r.Zoom)
 	if r.AddressDetails {
@@ -108,7 +108,7 @@ func (r *ReverseQuery) Get() (*ReverseResult, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}

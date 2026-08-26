@@ -8,12 +8,8 @@ import (
 	"github.com/rubiojr/whereami/pkg/logger"
 )
 
-// waypointEpsilon defines the coordinate precision threshold for considering two
-// waypoints identical. Keep this consistent across add/delete/rename/dedupe logic.
-const waypointEpsilon = 1e-6
-
 // waypointKeyPrecision is the number of decimal places we normalize to when
-// constructing a stable dedupe key. Chosen to align with waypointEpsilon.
+// constructing a stable dedupe key.
 const waypointKeyPrecision = 6
 
 // waypointKey returns a stable identity key for a waypoint combining name and
@@ -31,9 +27,9 @@ func roundTo(v float64, places int) float64 {
 	return math.Round(v*p) / p
 }
 
-// DedupeWaypoints returns a new slice with duplicate waypoints (same name +
-// coordinates within waypointEpsilon) removed, preserving the first occurrence
-// order. The input slice is not modified.
+// DedupeWaypoints returns a new slice with duplicate waypoints (same name and
+// coordinates rounded to waypointKeyPrecision) removed, preserving the first
+// occurrence order. The input slice is not modified.
 func DedupeWaypoints(in []Waypoint) []Waypoint {
 	if len(in) <= 1 {
 		// Nothing to dedupe.
@@ -68,8 +64,7 @@ func MergeAndDedupe(slices ...[]Waypoint) []Waypoint {
 
 // RebuildAllWaypoints reconstructs the in-memory waypoint store from persistent
 // sources (bookmarks file + all GPX files under dataDir) applying the unified
-// deduplication logic. This centralizes the logic currently mirrored in main.go
-// and intended to be invoked from the /api/import handler.
+// deduplication logic.
 //
 // NOTE: This function does not mutate global state directly; callers should
 // acquire allWaypointsMu and assign the returned slice.
@@ -99,13 +94,3 @@ func RebuildAllWaypoints(bookmarksPath, dataDir string) []Waypoint {
 
 	return MergeAndDedupe(bookmarks, others)
 }
-
-// And in main.go (startup) similarly switch to:
-//
-//   initial := RebuildAllWaypoints(bookmarksPath, dataDir)
-//   allWaypointsMu.Lock()
-//   allWaypoints = initial
-//   allWaypointsMu.Unlock()
-//
-// This consolidates deduplication logic in one place and ensures consistent behavior
-// between startup and on-demand imports.

@@ -3,7 +3,6 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import "../themes"
-import QtPositioning 6.5
 
 /*
   WaypointTable.qml
@@ -30,7 +29,7 @@ import QtPositioning 6.5
             // Parent should:
             //  - set window.selectedWaypoint = wp
             //  - resolve selectedWaypointIndex
-            //  - center & zoom similar to search suggestion double-click
+            //  - center and zoom to the activated waypoint
         }
     }
 
@@ -46,7 +45,7 @@ import QtPositioning 6.5
     property int  selectedWaypointIndex
 
     readonly property var visibleWaypoints   // array (viewport + filter processed)
-    signal waypointActivated(var waypoint)   // emitted on double-click / Enter
+    signal waypointActivated(var waypoint)   // emitted on single-click / Enter
 
   Behavior:
     - Hidden by default (open=false).
@@ -58,8 +57,8 @@ import QtPositioning 6.5
     - For clustering: only entries with type === "waypoint" are listed.
     - Selection highlighting:
         * Row showing `selectedWaypoint` (coordinate + name match) is tinted.
-    - Double-click row:
-        * Emits waypointActivated(modelData).
+    - Single-click row:
+        * Emits selectionRequested(modelData) and waypointActivated(modelData).
     - Keyboard:
         * Up/Down to move current row highlight.
         * Enter / Return activates current row.

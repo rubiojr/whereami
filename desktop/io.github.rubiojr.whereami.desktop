@@ -8,12 +8,12 @@ Icon=io.github.rubiojr.whereami
 # StartupNotify=true
 Categories=Education;Maps;
 Keywords=GPS;GPX;Waypoint;Map;Location;Bookmarks;
+X-Geoclue-2-Client=true
+X-Geoclue-2-Access-Fine=true
 # Prefer Wayland if available; fallback to X11 automatically
 # PrefersNonDefaultGPU=false
 # If you later add translation (.desktop.in), wrap Name/Comment in gettext domains
-# X-GNOME uses only fallback fields here; no special desktop environment keys yet
 StartupWMClass=whereami
 X-GNOME-SingleWindow=true
-# Note: DBusActivatable + X-GNOME-SingleWindow are hints; real single-instance
-# enforcement is handled inside the application (e.g. QLocalServer). Exec left
-# simple; can be extended later: Exec=whereami %u
+# X-GNOME-SingleWindow is a desktop-shell hint. The application does not
+# enforce a single instance.

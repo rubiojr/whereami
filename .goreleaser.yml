@@ -30,10 +30,6 @@ builds:
     # Linker flags to reduce binary size
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-      - -X main.builtBy=goreleaser
 
     # Target platforms
     goos:
@@ -47,14 +43,6 @@ builds:
       - CGO_ENABLED=1
       - CC=gcc
       - CXX=g++
-
-    # Specific environment for different architectures
-    overrides:
-      - goos: linux
-        goarch: arm64
-        env:
-          - CC=aarch64-linux-gnu-gcc
-          - CXX=aarch64-linux-gnu-g++
 
 # Archive configuration
 archives:
@@ -138,8 +126,8 @@ nfpms:
     description: |
       WhereAmI - View, manage and bookmark GPX waypoints with map display
 
-      WhereAmI is a desktop mapping application that provides offline map viewing,
-      waypoint management, GPX import/export, and location services integration.
+      WhereAmI is a desktop mapping application that provides map viewing,
+      waypoint management, GPX directory import, and location services integration.
 
     license: "MIT"
 
@@ -373,11 +361,10 @@ release:
     sudo dnf install ./whereami-*.rpm
     ```
 
-    ### From source
+    ### Portable archive
     ```bash
     tar xzf whereami-*.tar.gz
-    cd whereami-*/
-    sudo make install
+    ./whereami
     ```
 
     ## Requirements

@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# build-toolbox.sh - Build whereami RPMs using Fedora toolbox
+# build-podman - Build whereami RPMs using a Fedora Podman container
 #
 # This script creates a Fedora container, installs all necessary
 # dependencies, and runs the RPM build process inside the isolated environment.
 #
 # Usage:
-#   ./scripts/build-toolbox.sh [OPTIONS]
+#   ./scripts/build-podman [OPTIONS]
 #
 # Options:
 #   --fedora-version VERSION  Fedora version to use (default: 43)
@@ -16,7 +16,7 @@
 #
 # Requirements:
 #   - podman installed
-#   - Git repository with proper tags for versioning
+#   - Git repository
 #
 # Environment variables:
 #   FEDORA_VERSION   - Override default Fedora version
@@ -94,7 +94,7 @@ ENVIRONMENT VARIABLES:
 
 REQUIREMENTS:
     - podman installed
-    - Git repository with proper tags for versioning
+    - Git repository
     - Current directory must be the project root
 
 NOTE:
@@ -300,7 +300,7 @@ run_build() {
     # Create a temporary directory in the container for the project
     local container_project_dir="/tmp/whereami-build"
 
-    # Copy project files to container (excluding .git, build artifacts, etc.)
+    # Copy project files to container (excluding build artifacts and vendor dependencies).
     print_info "Copying project files to container..."
     if ! tar -C "$PROJECT_ROOT" -czf - \
          --exclude='build-dir' \
