@@ -35,6 +35,10 @@ bin/whereami
 
 See [BUILD.md](BUILD.md) for detailed build instructions.
 
+## Use cases
+
+I mainly use WhereAmI in combination with [hass2geo](https://github.com/rubiojr/hass2geo), where I use backend up geolocation data from my [Home Assistant companion](https://companion.home-assistant.io/) to track where I've been over the years. Any location tracking app that is able to export to GPX can be imported by Where Am I, I simply choose the Home Assistance mobile phone app for convenience (always with me) and privacy properties (location history stored in my private hass instance).
+
 ## Usage
 
 - **Add Waypoints**: Right-click on the map or use Ctrl+N
