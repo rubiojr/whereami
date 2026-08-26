@@ -1,38 +1,4 @@
 // qmllint disable unqualified
-// NOTE: Pending addition of bottom-right floating logo overlay.
-// I don’t have the full file with line numbers here to safely append the overlay.
-// Please provide (a) the last ~15 lines of this file with their line numbers
-// OR confirm that I should insert the overlay just before the final closing brace
-// of the ApplicationWindow. Then I can supply an exact minimal patch.
-//
-// Proposed snippet (will be added near the end of ApplicationWindow):
-//
-//     Item {
-//         id: logoOverlay
-//         anchors.right: parent.right
-//         anchors.bottom: parent.bottom
-//         anchors.margins: 12
-//         width: 48
-//         height: 48
-//         visible: true
-//         opacity: 0.85
-//         Image {
-//             anchors.fill: parent
-//             source: "qrc:/icons/io.github.rubiojr.whereami.svg"
-//             fillMode: Image.PreserveAspectFit
-//             smooth: true
-//         }
-//         MouseArea {
-//             anchors.fill: parent
-//             hoverEnabled: true
-//             onEntered: logoOverlay.opacity = 1.0
-//             onExited: logoOverlay.opacity = 0.85
-//             acceptedButtons: Qt.NoButton   // purely decorative
-//         }
-//     }
-//
-// Let me know and I’ll produce the final exact edit block.
-// (If the file already starts with a different first line, send that too so I can anchor properly.)
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 
@@ -64,7 +30,7 @@ ApplicationWindow {
         id: knobs
     }
 
-    // Central API service (stage 1 migration: waypoint load, clusters, location, import)
+    // Central service for semantic backend operations.
     API {
         id: api
         apiPort: 43098
@@ -129,7 +95,7 @@ ApplicationWindow {
                 locationSnack.showWithAction("Import failed", "");
         }
 
-        // --- Migrated waypoint add/delete handlers (formerly WaypointService) ---
+        // Waypoint add/delete lifecycle handlers.
         onWaypointAddStarted: function (wp) {
             var arr = window.waypoints.slice();
             arr.push(wp);
@@ -466,7 +432,7 @@ ApplicationWindow {
     property double currentLocationLat: 0
     property double currentLocationLon: 0
     property real currentLocationAccuracy: 0
-    // Track whether next successful fix should force recenter (API migration helper)
+    // Track whether the next successful location fix should force recentering.
     property bool forceCenterOnNextFix: false
 
     // Hide the locating snackbar once we have a fix
@@ -541,7 +507,8 @@ ApplicationWindow {
             }
         }
     }
-    // (Removed highlightFadeTimer – searchResultLocation now persists until a new search result is chosen or a waypoint is selected)
+    // Search highlights persist until another result is chosen, the empty map is clicked,
+    // or a map waypoint marker is selected.
     property var newWaypoints: []
     // Directory chooser for importing GPX files (FolderDialog from Qt.labs.platform)
     FolderDialog {
@@ -568,8 +535,6 @@ ApplicationWindow {
     property bool clusteringEnabled: true
     property var clusterModel: []
     property int clusterGridSize: 30
-
-    // WaypointService removed (Stage 2). Logic migrated to API signal handlers.
 
     // --- Undo Snackbar (component) ---
     property var lastDeletedWaypoint: null
@@ -615,7 +580,6 @@ ApplicationWindow {
         onTriggered: fetchClusters()
     }
 
-    // Migrated to central API service
     function fetchClusters() {
         if (!clusteringEnabled)
             return;
@@ -692,17 +656,13 @@ ApplicationWindow {
         return true;
     }
 
-    // Migrated to central API service
     function fetchCurrentLocation(forceCenter) {
         if (forceCenter)
             forceCenterOnNextFix = true;
         api.getLocation();
     }
 
-    // loadInitialWaypoints removed (migrated to api.getWaypoints())
-
     Component.onCompleted: {
-        // Stage 1 migration: use central API for initial load
         api.getWaypoints();
         if (clusteringEnabled)
             clusterFetchDebounce.restart();
@@ -715,7 +675,6 @@ ApplicationWindow {
         dateFilterActive: window.dateFilterActive
         dateRangeStart: window.dateFilterStart
         dateRangeEnd: window.dateFilterEnd
-        // onSearchLocation removed (legacy GeocodeModel path)
         onOpenFile: {
             // Open directory picker
             gpxDirDialog.open();
@@ -764,7 +723,7 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        // Left column removed — map takes full remaining width
+        // Map container.
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -979,7 +938,7 @@ ApplicationWindow {
                     }
                 }
 
-                // Waypoint / Cluster markers (restored inline implementation)
+                // Waypoint and cluster markers.
                 MapItemView {
                     id: markersView
                     model: window.clusteringEnabled ? (window.localFilterActive ? window.localClusterModel : window.clusterModel) : window.activeWaypoints
@@ -1252,7 +1211,6 @@ ApplicationWindow {
                     suggestions: []
                     api: api
                     waypoints: window.waypoints
-                    // tagVocabulary removed (backend distinct tags now provide suggestions)
                     onSuggestionChosen: function (s) {
                         if (!s)
                             return;
@@ -1476,9 +1434,9 @@ ApplicationWindow {
                 currentLocationLon: window.currentLocationLon
                 locationSnack: locationSnack
 
-                onShowNonBookmarkWaypointsChanged: function (newValue) {
-                    window.showNonBookmarkWaypoints = newValue;
-                    if (!newValue && window.selectedWaypoint && !window.selectedWaypoint.bookmark) {
+                onShowNonBookmarkWaypointsChanged: {
+                    window.showNonBookmarkWaypoints = mapControls.showNonBookmarkWaypoints;
+                    if (!mapControls.showNonBookmarkWaypoints && window.selectedWaypoint && !window.selectedWaypoint.bookmark) {
                         window.selectedWaypoint = null;
                         window.selectedWaypointIndex = -1;
                     }

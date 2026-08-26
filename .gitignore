@@ -6,3 +6,6 @@ dist/
 /build-dir
 /export-dir
 /whereami
+/.octmp
+/vendor
+/web
