@@ -24,3 +24,5 @@ AboutOverlay 1.0 AboutOverlay.qml
 HelpOverlay 1.0 HelpOverlay.qml
 Knobs 1.0 Knobs.qml
 MapView 1.0 MapView.qml
+Main 1.0 Main.qml
+PlacesReport 1.0 PlacesReport.qml

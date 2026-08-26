@@ -1,5 +1,5 @@
 import QtQuick 2.15
-import "qrc:/themes" as Themes
+import "." as Themes
 
 /*
     ThemeLoader.qml
@@ -63,18 +63,18 @@ Loader {
     source: {
         switch (themeVariant) {
         case "green":
-            return "qrc:/themes/GreenTheme.qml";
+            return Qt.resolvedUrl("GreenTheme.qml");
         case "purple":
-            return "qrc:/themes/PurpleTheme.qml";
+            return Qt.resolvedUrl("PurpleTheme.qml");
         case "adwaita-dark":
-            return "qrc:/themes/AdwaitaDarkTheme.qml";
+            return Qt.resolvedUrl("AdwaitaDarkTheme.qml");
         case "nord-polar":
-            return "qrc:/themes/NordPolarTheme.qml";
+            return Qt.resolvedUrl("NordPolarTheme.qml");
         case "nord-frost":
-            return "qrc:/themes/NordFrostTheme.qml";
+            return Qt.resolvedUrl("NordFrostTheme.qml");
         case "orange":
         default:
-            return "qrc:/themes/Theme.qml";
+            return Qt.resolvedUrl("Theme.qml");
         }
     }
 

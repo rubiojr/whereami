@@ -11,6 +11,8 @@ ToolBar {
     property real cornerRadius: 12
     // Host ApplicationWindow (set from MapView: rootWindow: window)
     property var rootWindow: null
+    property bool active: true
+    property alias placesNavigationButton: placesButton
     ThemeLoader {
         id: theme
     }
@@ -157,12 +159,22 @@ ToolBar {
     signal toggleInfoCard
     signal dateRangeSelected(string startDate, string endDate)
     signal dateRangeCleared
+    signal placesRequested
     signal helpRequested
     signal quitRequested
 
     property bool dateFilterActive: false
     property string dateRangeStart: ""
     property string dateRangeEnd: ""
+
+    function closePopups() {
+        dateRangePicker.close();
+    }
+
+    onActiveChanged: {
+        if (!active)
+            closePopups();
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -226,21 +238,57 @@ ToolBar {
             icon.width: theme.toolbarButtonSize
             icon.height: theme.toolbarButtonSize
             icon.color: toolbar.dateFilterActive || hovered ? theme.toolbarIconHover : theme.toolbarIcon
-            Accessible.name: toolbar.dateFilterActive ? "Clear waypoint date filter" : "Filter waypoints by date"
+            Accessible.name: "Open date picker"
             CustomToolTip {
-                tooltipText: toolbar.dateFilterActive ? ("Clear date filter: " + toolbar.dateRangeStart + (toolbar.dateRangeEnd !== toolbar.dateRangeStart ? " to " + toolbar.dateRangeEnd : "")) : "Find where I was by date"
+                tooltipText: toolbar.dateFilterActive ? ("Date filter: " + toolbar.dateRangeStart + (toolbar.dateRangeEnd !== toolbar.dateRangeStart ? " to " + toolbar.dateRangeEnd : "") + ". Click to choose another period") : "Find where I was by date"
                 visible: dateRangeButton.hovered
                 position: "bottom"
             }
             onClicked: {
-                if (toolbar.dateFilterActive) {
-                    dateRangePicker.close();
-                    toolbar.dateRangeCleared();
-                    return;
-                }
-                dateRangePicker.setRange("", "");
+                dateRangePicker.setRange(toolbar.dateFilterActive ? toolbar.dateRangeStart : "",
+                                         toolbar.dateFilterActive ? toolbar.dateRangeEnd : "");
                 dateRangePicker.open();
             }
+        }
+
+        ToolButton {
+            id: clearDateRangeButton
+            visible: toolbar.dateFilterActive
+            text: "×"
+            Accessible.name: "Clear waypoint date filter"
+            contentItem: Text {
+                text: clearDateRangeButton.text
+                color: clearDateRangeButton.hovered ? theme.toolbarIconHover : theme.toolbarIcon
+                font.pixelSize: theme.scale(4)
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            CustomToolTip {
+                tooltipText: "Clear date filter"
+                visible: clearDateRangeButton.hovered
+                position: "bottom"
+            }
+            onClicked: {
+                dateRangePicker.close();
+                toolbar.dateRangeCleared();
+            }
+        }
+
+        ToolButton {
+            id: placesButton
+            text: toolbar.width >= 720 ? "Places" : ""
+            display: text !== "" ? AbstractButton.TextBesideIcon : AbstractButton.IconOnly
+            icon.source: "qrc:/icons/places.svg"
+            icon.width: theme.toolbarButtonSize
+            icon.height: theme.toolbarButtonSize
+            icon.color: hovered ? theme.toolbarIconHover : theme.toolbarIcon
+            Accessible.name: "Open places by year"
+            CustomToolTip {
+                tooltipText: "Places by year"
+                visible: placesButton.hovered
+                position: "bottom"
+            }
+            onClicked: toolbar.placesRequested()
         }
 
         ToolButton {

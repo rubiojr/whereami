@@ -99,6 +99,7 @@ QtObject {
 
     // Fixed loopback API port shared with main.go and MapView.qml.
     property int apiPort: 43098
+	property string apiToken: ""
 
     // Default timeout (ms) for requests
     property int requestTimeoutMs: 8000
@@ -168,6 +169,22 @@ QtObject {
     signal versionFetchStarted
     signal versionFetched(var versionInfo)
     signal versionFetchFailed(string errorMessage)
+
+    // --- Administrative geodata ---
+    signal geodataStatusFetched(var status)
+    signal geodataStatusFailed(string errorMessage)
+    signal geodataInstallAccepted(string generationId)
+    signal geodataInstallFailed(string generationId, string errorMessage)
+    signal geodataCancelAccepted
+    signal geodataCancelFailed(string errorMessage)
+
+    // --- Place reports ---
+    signal placeReportSubmitted(string requestId, string jobId)
+    signal placeReportSubmitFailed(string requestId, string errorMessage)
+    signal placeReportStatusFetched(string jobId, var status)
+    signal placeReportStatusFailed(string jobId, string errorMessage)
+    signal placeReportCancelAccepted(string jobId)
+    signal placeReportCancelFailed(string jobId, string errorMessage)
 
     // ------------- Public Convenience API -------------
 
@@ -705,7 +722,8 @@ QtObject {
     // Fetch global distinct tag list (enriched objects when emoji=true)
     function fetchDistinctTags(callback) {
         if (api.apiPort < 0) {
-            callback && callback([]);
+            if (callback)
+                callback([]);
             return;
         }
         _xhr("GET", "/api/tags?distinct=true&emoji=true", null, function (txt) {
@@ -716,9 +734,11 @@ QtObject {
                 obj = null;
             }
             var tags = (obj && obj.tags) ? obj.tags : [];
-            callback && callback(tags);
+            if (callback)
+                callback(tags);
         }, function (err) {
-            callback && callback([]);
+            if (callback)
+                callback([]);
         });
     }
 
@@ -781,6 +801,92 @@ QtObject {
         });
     }
 
+    function getGeodataStatus() {
+        _xhr("GET", "/api/geodata", null, function (txt) {
+            var status = {};
+            try {
+                status = JSON.parse(txt);
+            } catch (e) {
+                api.geodataStatusFailed("invalid geodata status response");
+                return;
+            }
+            api.geodataStatusFetched(status);
+            api.requestSucceeded("GET /api/geodata", status, null);
+        }, function (err) {
+            api.geodataStatusFailed(err);
+            api.requestFailed("GET /api/geodata", err, null);
+        });
+    }
+
+    function installGeodata(generationId) {
+        _xhr("POST", "/api/geodata/install", { generation_id: generationId }, function () {
+            api.geodataInstallAccepted(generationId);
+            api.requestSucceeded("POST /api/geodata/install", null, generationId);
+        }, function (err) {
+            api.geodataInstallFailed(generationId, err);
+            api.requestFailed("POST /api/geodata/install", err, generationId);
+        });
+    }
+
+    function cancelGeodataInstall() {
+        _xhr("DELETE", "/api/geodata/install", null, function () {
+            api.geodataCancelAccepted();
+            api.requestSucceeded("DELETE /api/geodata/install", null, null);
+        }, function (err) {
+            api.geodataCancelFailed(err);
+            api.requestFailed("DELETE /api/geodata/install", err, null);
+        });
+    }
+
+    function submitPlaceReport(startDate, endDate, requestId) {
+        _xhr("POST", "/api/place-reports", { start_date: startDate, end_date: endDate }, function (txt) {
+            var response = {};
+            try {
+                response = JSON.parse(txt);
+            } catch (e) {
+                api.placeReportSubmitFailed(requestId, "invalid place report response");
+                return;
+            }
+            if (!response || !response.job_id) {
+                api.placeReportSubmitFailed(requestId, "place report service is unavailable");
+                return;
+            }
+            api.placeReportSubmitted(requestId, response.job_id || "");
+            api.requestSucceeded("POST /api/place-reports", response, requestId);
+        }, function (err) {
+            api.placeReportSubmitFailed(requestId, err);
+            api.requestFailed("POST /api/place-reports", err, requestId);
+        });
+    }
+
+    function getPlaceReport(jobId, includeResult) {
+        var suffix = includeResult === true ? "?result=true" : "";
+        _xhr("GET", "/api/place-reports/" + encodeURIComponent(jobId) + suffix, null, function (txt) {
+            var status = {};
+            try {
+                status = JSON.parse(txt);
+            } catch (e) {
+                api.placeReportStatusFailed(jobId, "invalid place report status response");
+                return;
+            }
+            api.placeReportStatusFetched(jobId, status);
+            api.requestSucceeded("GET /api/place-reports", status, jobId);
+        }, function (err) {
+            api.placeReportStatusFailed(jobId, err);
+            api.requestFailed("GET /api/place-reports", err, jobId);
+        });
+    }
+
+    function cancelPlaceReport(jobId) {
+        _xhr("DELETE", "/api/place-reports/" + encodeURIComponent(jobId), null, function () {
+            api.placeReportCancelAccepted(jobId);
+            api.requestSucceeded("DELETE /api/place-reports", null, jobId);
+        }, function (err) {
+            api.placeReportCancelFailed(jobId, err);
+            api.requestFailed("DELETE /api/place-reports", err, jobId);
+        });
+    }
+
     // ------------- Internal Helpers -------------
 
     function _baseUrl() {
@@ -807,6 +913,8 @@ QtObject {
 
         var url = api._baseUrl() + path;
         xhr.open(method, url);
+		if (api.apiToken !== "")
+			xhr.setRequestHeader("Authorization", "Bearer " + api.apiToken);
         if (method === "POST" || method === "PUT" || method === "PATCH") {
             xhr.setRequestHeader("Content-Type", "application/json");
         }

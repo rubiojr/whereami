@@ -34,6 +34,7 @@ QtObject {
     property var logoOverlay: null
     property var aboutOverlay: null
     property var locationSnack: null
+    property bool enabled: true
 
     // State that shortcuts need to access/modify
     property var selectedWaypoint: null
@@ -77,6 +78,7 @@ QtObject {
     property list<Shortcut> shortcuts: [
         // Zoom in with Ctrl++ or Ctrl+=
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl++"
             onActivated: {
                 if (root.selectedWaypoint && root.map) {
@@ -89,6 +91,7 @@ QtObject {
             }
         },
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+="
             onActivated: {
                 if (root.selectedWaypoint && root.map) {
@@ -103,6 +106,7 @@ QtObject {
 
         // Zoom out with Ctrl+-
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+-"
             onActivated: {
                 if (root.selectedWaypoint && root.map) {
@@ -117,6 +121,7 @@ QtObject {
 
         // Reset view to initial position + zoom (Ctrl+0)
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+0"
             onActivated: {
                 if (root.map && root.knobs) {
@@ -129,12 +134,14 @@ QtObject {
 
         // Quit application
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+Q"
             onActivated: Qt.quit()
         },
 
         // Toggle the search overlay with Ctrl+F
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+F"
             onActivated: {
                 root.toggleSearch();
@@ -143,6 +150,7 @@ QtObject {
 
         // Toggle bookmark-only mode with Ctrl+B
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+B"
             onActivated: {
                 root.toggleBookmarkMode();
@@ -151,6 +159,7 @@ QtObject {
 
         // Toggle waypoint table with Ctrl+T
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+T"
             onActivated: {
                 root.toggleWaypointTable();
@@ -159,6 +168,7 @@ QtObject {
 
         // Toggle waypoint info card with Ctrl+I
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+I"
             onActivated: {
                 root.toggleInfoCard();
@@ -167,6 +177,7 @@ QtObject {
 
         // Escape: close Add Waypoint dialog if open; otherwise clear selection, hide search, etc.
         Shortcut {
+            enabled: root.enabled
             sequence: "Escape"
             context: Qt.ApplicationShortcut
             onActivated: {
@@ -176,12 +187,14 @@ QtObject {
 
         // Toggle help overlay with Ctrl+? or Ctrl+/
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+?"
             onActivated: {
                 root.toggleHelp();
             }
         },
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+/"
             onActivated: {
                 root.toggleHelp();
@@ -190,6 +203,7 @@ QtObject {
 
         // Zoom to the selected waypoint at the configured search zoom with Ctrl+G
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+G"
             onActivated: {
                 root.zoomToSelectedWaypoint();
@@ -198,6 +212,7 @@ QtObject {
 
         // Delete selected bookmark waypoint with Delete key
         Shortcut {
+            enabled: root.enabled
             sequence: "Delete"
             onActivated: {
                 root.deleteSelectedBookmark();
@@ -206,6 +221,7 @@ QtObject {
 
         // Go to current location with Ctrl+L
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+L"
             onActivated: {
                 root.goToCurrentLocation();
@@ -214,14 +230,16 @@ QtObject {
 
         // Ctrl+Enter / Ctrl+Return: open AddWaypointDialog at current search result or selected waypoint
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+Enter"
             context: Qt.ApplicationShortcut
-            onActivated: handleAddWaypointShortcut()
+            onActivated: root.handleAddWaypointShortcut()
         },
         Shortcut {
+            enabled: root.enabled
             sequence: "Ctrl+Return"
             context: Qt.ApplicationShortcut
-            onActivated: handleAddWaypointShortcut()
+            onActivated: root.handleAddWaypointShortcut()
         }
     ]
 

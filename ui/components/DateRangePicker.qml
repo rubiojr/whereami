@@ -9,7 +9,6 @@ Popup {
     id: picker
 
     signal rangeApplied(string startDate, string endDate)
-
     property string startDateKey: ""
     property string endDateKey: ""
     property bool rangeEndPending: false
@@ -222,6 +221,7 @@ Popup {
                     border.color: quickPicksTab.checked ? theme.toolbarSeparator : "transparent"
                 }
             }
+
         }
 
         Label {
@@ -431,6 +431,7 @@ Popup {
                     }
                 }
             }
+
         }
 
         RowLayout {
@@ -466,6 +467,7 @@ Popup {
                     picker.close();
                 }
             }
+
         }
     }
 }

@@ -64,6 +64,10 @@ archives:
         dst: README.md
       - src: LICENSE
         dst: LICENSE
+      - src: licenses/ODbL-1.0.txt
+        dst: licenses/ODbL-1.0.txt
+      - src: docs/GEODATA.md
+        dst: docs/GEODATA.md
       - src: desktop/io.github.rubiojr.whereami.desktop
         dst: share/applications/io.github.rubiojr.whereami.desktop
       - src: ui/icons/io.github.rubiojr.whereami.svg
@@ -319,6 +323,18 @@ nfpms:
 
       - src: LICENSE
         dst: /usr/share/doc/whereami/LICENSE
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: licenses/ODbL-1.0.txt
+        dst: /usr/share/doc/whereami/ODbL-1.0.txt
+        type: file
+        file_info:
+          mode: 0644
+
+      - src: docs/GEODATA.md
+        dst: /usr/share/doc/whereami/GEODATA.md
         type: file
         file_info:
           mode: 0644

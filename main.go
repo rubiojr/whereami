@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/qml"
@@ -36,6 +37,7 @@ func main() {
 	dataDirFlag := flag.String("data-dir", "", "custom data directory (overrides XDG_DATA_HOME)")
 	configDirFlag := flag.String("config-dir", "", "custom config directory (overrides XDG_CONFIG_HOME)")
 	cacheDirFlag := flag.String("cache-dir", "", "custom cache directory (overrides XDG_CACHE_HOME)")
+	geodataManifestFlag := flag.String("geodata-manifest", "", "local development geodata manifest override")
 	flag.Parse()
 	debug := *debugFlag
 	themeVariant := *themeFlag
@@ -45,6 +47,10 @@ func main() {
 
 	// Fixed loopback API port shared with the QML configuration.
 	const apiPort = 43098
+	apiToken, err := newAPIToken()
+	if err != nil {
+		logger.Fatalf("API token generation failed: %v", err)
+	}
 
 	// Determine data directory for persistent app storage (bookmarks, imported GPX, databases).
 	// Precedence: --data-dir flag > $XDG_DATA_HOME > $HOME/.local/share/whereami > CWD fallback.
@@ -87,9 +93,32 @@ func main() {
 			logger.Debug("Copied default bookmarks to %s", bookmarksPath)
 		}
 	}
+	if err := openObservationIndex(dataDir, bookmarksPath); err != nil {
+		logger.Error("Failed to initialize observation index: %v", err)
+	} else {
+		defer closeObservationIndex()
+	}
+	var geoService *geodataService
+	if *geodataManifestFlag == "" {
+		geoService, err = openGeodataService(filepath.Join(dataDir, "geodata", "admin"))
+	} else {
+		geoService, err = openGeodataServiceFile(filepath.Join(dataDir, "geodata", "admin"), *geodataManifestFlag)
+	}
+	if err != nil {
+		logger.Error("Failed to initialize administrative geodata: %v", err)
+	} else {
+		defer geoService.Close()
+	}
+	var reportService *placeReportService
+	if observationRepo != nil && geoService != nil {
+		reportService = newPlaceReportService(observationRepo, geoService.manager)
+		defer reportService.Close()
+	}
 
 	// Register HTTP API handlers.
 	RegisterAPI(http.DefaultServeMux, bookmarksPath, debug)
+	RegisterGeodataAPI(http.DefaultServeMux, geoService)
+	RegisterPlaceReportAPI(http.DefaultServeMux, reportService)
 
 	// Build initial waypoint list (bookmarks + imported GPX) using centralized dedupe helper.
 	initial := RebuildAllWaypoints(bookmarksPath, dataDir)
@@ -104,8 +133,16 @@ func main() {
 	if err != nil {
 		logger.Fatalf("Bookmark API server bind error on %s: %v", addr, err)
 	}
+	server := &http.Server{
+		Handler:           secureAPI(apiToken, http.DefaultServeMux),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    64 << 10,
+	}
 	go func() {
-		if err := http.Serve(listener, nil); err != nil {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			logger.Error("Bookmark API server error on %s: %v", addr, err)
 		}
 	}()
@@ -123,9 +160,10 @@ func main() {
 
 	qt.NewQApplication(qtArgs)
 	engine := qml.NewQQmlApplicationEngine()
+	engine.RootContext().SetContextProperty2("whereamiApiToken", qt.NewQVariant14(apiToken))
 
 	// Load QML from Qt resources (qrc:/)
-	engine.Load(qt.NewQUrl3("qrc:/components/MapView.qml"))
+	engine.Load(qt.NewQUrl3("qrc:/components/Main.qml"))
 	if len(engine.RootObjects()) == 0 {
 		logger.Fatal("QML load failed: no root objects (check QML errors / Qt Location).")
 	}

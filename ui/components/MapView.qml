@@ -12,14 +12,25 @@ import "../lib/MapViewLogic.js" as MapViewLogic
 
 import "."
 
-ApplicationWindow {
+Page {
     id: window
-    visible: true
-    width: 1300
-    height: 800
-    title: qsTr("WhereAmI - GPX Waypoint Viewer")
-    flags: Qt.FramelessWindowHint
-    color: "transparent"
+
+    property var hostWindow: null
+    property bool active: true
+    property bool resumeLocationPolling: false
+    property string apiToken: ""
+    property alias apiService: api
+    property alias mapCenter: map.center
+    property alias mapZoomLevel: map.zoomLevel
+    property alias mapToolbar: toolbar
+
+    signal placesRequested
+
+    padding: 0
+    enabled: active
+    background: Rectangle {
+        color: "transparent"
+    }
 
     // Local theme instance
     ThemeLoader {
@@ -34,22 +45,25 @@ ApplicationWindow {
     API {
         id: api
         apiPort: 43098
+        apiToken: window.apiToken
 
         // Populate waypoints when loaded
         onWaypointsLoaded: function (arr) {
             window.waypoints = arr;
             if (clusteringEnabled)
-                clusterFetchDebounce.restart();
+                scheduleClusterFetch();
         }
 
         // Update clusters
         onClustersFetched: function (clusters, params) {
+            if (!window.active)
+                return;
             clusterModel = clusters;
         }
 
         // Handle location fetch (mirrors previous XHR success logic)
         onLocationFetched: function (loc) {
-            if (!loc)
+            if (!window.active || !loc)
                 return;
             var wasValid = currentLocationValid;
             currentLocationValid = true;
@@ -59,7 +73,8 @@ ApplicationWindow {
             if ((forceCenterOnNextFix || !wasValid) && map) {
                 map.center = QtPositioning.coordinate(currentLocationLat, currentLocationLon);
                 if ((map.zoomLevel < knobs.searchZoomLevel || !wasValid)) {
-                    locationZoomTimer.restart();
+                    if (window.active)
+                        locationZoomTimer.restart();
                 }
             }
             forceCenterOnNextFix = false;
@@ -70,7 +85,7 @@ ApplicationWindow {
             // Refresh waypoints after import
             api.getWaypoints();
             if (clusteringEnabled)
-                clusterFetchDebounce.restart();
+                scheduleClusterFetch();
 
             var msg = "";
             if (summary && typeof summary === "object") {
@@ -123,7 +138,7 @@ ApplicationWindow {
                 }
             }
             if (clusteringEnabled)
-                clusterFetchDebounce.restart();
+                scheduleClusterFetch();
         }
         onWaypointAddFailed: function (originalWp, errorMessage) {
             console.error("Add waypoint failed:", errorMessage);
@@ -156,7 +171,7 @@ ApplicationWindow {
             lastDeletedWaypoint = wp;
             undoBar.show(wp && wp.name ? ("Deleted \"" + wp.name + "\"") : "Waypoint deleted");
             if (clusteringEnabled)
-                clusterFetchDebounce.restart();
+                scheduleClusterFetch();
         }
         onWaypointDeleteFailed: function (wp, errorMessage) {
             console.error("Delete waypoint failed:", errorMessage);
@@ -173,7 +188,7 @@ ApplicationWindow {
                 window.waypoints = arr;
             }
             if (clusteringEnabled)
-                clusterFetchDebounce.restart();
+                scheduleClusterFetch();
         }
         // --- Tag synchronization (ensure WaypointTable updates immediately) ---
         // When tags are fetched / added / deleted in the info card, update the authoritative
@@ -241,6 +256,7 @@ ApplicationWindow {
     // Shortcuts controller
     ShortcutsController {
         id: shortcutsController
+        enabled: window.active
         map: map
         knobs: knobs
         api: api
@@ -275,7 +291,7 @@ ApplicationWindow {
                 window.selectedWaypointIndex = -1;
             }
             if (window.clusteringEnabled && !window.tagFilterActive) {
-                clusterFetchDebounce.restart();
+                scheduleClusterFetch();
             }
 
             // Snackbar feedback
@@ -303,9 +319,8 @@ ApplicationWindow {
             window.selectedWaypointIndex = -1;
         }
         onClusterFetchRequested: {
-            if (clusteringEnabled) {
-                clusterFetchDebounce.restart();
-            }
+            if (clusteringEnabled)
+                scheduleClusterFetch();
         }
         onOpenAddWaypointDialog: function (lat, lon, presetName) {
             window.pendingLat = lat;
@@ -408,7 +423,7 @@ ApplicationWindow {
         allTags = MapViewLogic.buildTagVocabulary(waypoints);
 
         if (clusteringEnabled)
-            clusterFetchDebounce.restart();
+            scheduleClusterFetch();
 
         // Clear selection if hidden by filter
         if (MapViewLogic.shouldClearSelection(showNonBookmarkWaypoints, selectedWaypoint)) {
@@ -419,7 +434,7 @@ ApplicationWindow {
 
     onActiveWaypointsChanged: {
         if (clusteringEnabled)
-            clusterFetchDebounce.restart();
+            scheduleClusterFetch();
 
         if (selectedWaypoint && !selectedWaypoint.transient && !MapViewLogic.containsWaypoint(activeWaypoints, selectedWaypoint)) {
             window.selectedWaypoint = null;
@@ -448,7 +463,10 @@ ApplicationWindow {
         interval: 10000
         repeat: true
         running: false
-        onTriggered: fetchCurrentLocation(false)
+        onTriggered: {
+            if (window.active)
+                fetchCurrentLocation(false);
+        }
     }
 
     // Delayed zoom so we animate center first, then zoom in.
@@ -457,7 +475,7 @@ ApplicationWindow {
         interval: 850    // Slightly longer than center animation (800ms) to avoid concurrent jump
         repeat: false
         onTriggered: {
-            if (map && (map.zoomLevel < knobs.searchZoomLevel)) {
+            if (window.active && map && (map.zoomLevel < knobs.searchZoomLevel)) {
                 map.zoomLevel = knobs.searchZoomLevel;
             }
         }
@@ -522,6 +540,7 @@ ApplicationWindow {
         }
     }
     property bool addWaypointDialogOpen: false
+    property bool gpxDirDialogOpen: false
     property double pendingLat: 0
     property double pendingLon: 0
     property string pendingWaypointName: ""
@@ -552,7 +571,7 @@ ApplicationWindow {
                 api.addWaypoint(lastDeletedWaypoint);
                 lastDeletedWaypoint = null;
                 if (clusteringEnabled)
-                    clusterFetchDebounce.restart();
+                    scheduleClusterFetch();
             }
         }
         onDismissed: {
@@ -577,11 +596,19 @@ ApplicationWindow {
         id: clusterFetchDebounce
         interval: 200
         repeat: false
-        onTriggered: fetchClusters()
+        onTriggered: {
+            if (window.active)
+                fetchClusters();
+        }
+    }
+
+    function scheduleClusterFetch() {
+        if (window.active && clusteringEnabled)
+            clusterFetchDebounce.restart();
     }
 
     function fetchClusters() {
-        if (!clusteringEnabled)
+        if (!window.active || !clusteringEnabled)
             return;
         if (!map)
             return;
@@ -657,6 +684,8 @@ ApplicationWindow {
     }
 
     function fetchCurrentLocation(forceCenter) {
+        if (!window.active)
+            return;
         if (forceCenter)
             forceCenterOnNextFix = true;
         api.getLocation();
@@ -665,13 +694,45 @@ ApplicationWindow {
     Component.onCompleted: {
         api.getWaypoints();
         if (clusteringEnabled)
-            clusterFetchDebounce.restart();
+            scheduleClusterFetch();
+    }
+
+    onActiveChanged: {
+        if (!active) {
+            centerThenZoomAnimation.stop();
+            resumeLocationPolling = locationPollTimer.running;
+            locationPollTimer.stop();
+            locationZoomTimer.stop();
+            clusterFetchDebounce.stop();
+            toolbar.closePopups();
+            gpxDirDialogOpen = gpxDirDialog.visible;
+            if (gpxDirDialogOpen)
+                gpxDirDialog.close();
+            addWaypointDialogOpen = addWaypointDialog.visible;
+            if (addWaypointDialogOpen)
+                addWaypointDialog.close();
+            undoBar.visible = false;
+            locationSnack.visible = false;
+        } else {
+            if (resumeLocationPolling)
+                locationPollTimer.start();
+            if (gpxDirDialogOpen) {
+                gpxDirDialogOpen = false;
+                gpxDirDialog.open();
+            }
+            if (addWaypointDialogOpen) {
+                addWaypointDialogOpen = false;
+                addWaypointDialog.open();
+            }
+            scheduleClusterFetch();
+        }
     }
 
     header: MapToolBar {
         id: toolbar
         cornerRadius: 12
-        rootWindow: window
+        rootWindow: window.hostWindow
+        active: window.active
         dateFilterActive: window.dateFilterActive
         dateRangeStart: window.dateFilterStart
         dateRangeEnd: window.dateFilterEnd
@@ -690,6 +751,7 @@ ApplicationWindow {
             window.applyDateRange(startDate, endDate);
         }
         onDateRangeCleared: window.clearDateRange()
+        onPlacesRequested: window.placesRequested()
         onToggleWaypointsTable: {
             waypointTableVisible = !waypointTableVisible;
             if (waypointTableVisible)
@@ -713,7 +775,7 @@ ApplicationWindow {
     footer: MapStatusBar {
         id: statusBar
         cornerRadius: 12
-        rootWindow: window
+        rootWindow: window.hostWindow
         mouseCoordinates: window.mouseCoordinates
         zoomLevel: map.zoomLevel
         waypointCount: window.activeWaypoints.length
@@ -734,12 +796,14 @@ ApplicationWindow {
                 center: knobs.initialPosition
                 zoomLevel: knobs.initialZoomLevel
                 Behavior on center {
+                    enabled: window.active
                     CoordinateAnimation {
                         duration: 800
                         easing.type: Easing.InOutQuad
                     }
                 }
                 Behavior on zoomLevel {
+                    enabled: window.active
                     NumberAnimation {
                         duration: 600
                         easing.type: Easing.InOutQuad
@@ -747,7 +811,7 @@ ApplicationWindow {
                 }
                 onZoomLevelChanged: {
                     if (clusteringEnabled)
-                        clusterFetchDebounce.restart();
+                        scheduleClusterFetch();
                 }
 
                 // Import a directory of GPX files by calling backend /api/import.
@@ -833,7 +897,7 @@ ApplicationWindow {
                                 map.zoomLevel = newZoom;
                                 accumulatedScale = 1.0;
                                 if (clusteringEnabled)
-                                    clusterFetchDebounce.restart();
+                                    scheduleClusterFetch();
                             }
                         }
                     }
@@ -885,7 +949,7 @@ ApplicationWindow {
                             targetZoom = Math.min(map.maximumZoomLevel, targetZoom);
                         map.zoomLevel = targetZoom;
                         if (clusteringEnabled)
-                            clusterFetchDebounce.restart();
+                            scheduleClusterFetch();
                     }
 
                     // Global add waypoint dialog (used on right-click)
@@ -994,7 +1058,7 @@ ApplicationWindow {
                                 color: theme.waypointSelectedHaloColor
                                 z: -1
                                 SequentialAnimation on opacity {
-                                    running: halo.visible
+                                    running: window.active && halo.visible
                                     loops: Animation.Infinite
                                     NumberAnimation {
                                         from: 0.85
@@ -1010,7 +1074,7 @@ ApplicationWindow {
                                     }
                                 }
                                 SequentialAnimation {
-                                    running: halo.visible
+                                    running: window.active && halo.visible
                                     loops: Animation.Infinite
                                     NumberAnimation {
                                         target: halo
@@ -1052,7 +1116,7 @@ ApplicationWindow {
                                             map.center = QtPositioning.coordinate(modelData.lat, modelData.lon);
                                             map.zoomLevel += 1;
                                             if (clusteringEnabled && clusterFetchDebounce)
-                                                clusterFetchDebounce.restart();
+                                                scheduleClusterFetch();
                                         }
                                     } else {
                                         // Resolve canonical waypoint
@@ -1098,11 +1162,13 @@ ApplicationWindow {
                             }
 
                             Behavior on color {
+                                enabled: window.active
                                 ColorAnimation {
                                     duration: 150
                                 }
                             }
                             Behavior on width {
+                                enabled: window.active
                                 NumberAnimation {
                                     duration: 150
                                     easing.type: Easing.OutQuad
@@ -1156,7 +1222,7 @@ ApplicationWindow {
                         border.width: 2
                         antialiasing: true
                         SequentialAnimation on scale {
-                            running: searchMarker.visible
+                            running: window.active && searchMarker.visible
                             loops: Animation.Infinite
                             NumberAnimation {
                                 from: 1.0
@@ -1286,7 +1352,7 @@ ApplicationWindow {
                             }
                         }
                         if (window.clusteringEnabled) {
-                            clusterFetchDebounce.restart();
+                            scheduleClusterFetch();
                         }
 
                         // When tag filter becomes active and has matches, zoom to fit all tagged waypoints
@@ -1354,7 +1420,7 @@ ApplicationWindow {
 
                         // Refresh clusters if enabled
                         if (clusteringEnabled)
-                            clusterFetchDebounce.restart();
+                            scheduleClusterFetch();
                     }
                 }
                 WaypointTable {

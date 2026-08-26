@@ -52,8 +52,8 @@ make release
 
 `.goreleaser.yml` currently builds Linux AMD64 only. It produces:
 
-- A `tar.gz` archive containing the executable, README, license, desktop entry, and icons
-- A Fedora-named RPM containing the executable, desktop entry, icons, README, and license
+- A `tar.gz` archive containing the executable, README, MIT and ODbL licenses, desktop entry, and icons
+- A Fedora-named RPM containing the executable, desktop entry, icons, README, and MIT and ODbL licenses
 - `checksums.txt` using SHA-256
 
 The RPM also creates `/usr/share/whereami/` as an empty application directory. The default `bookmarks.gpx` is embedded in the executable and is written to the user's data directory on first run; it is not installed under `/usr/share`.
@@ -65,9 +65,30 @@ The RPM also creates `/usr/share/whereami/` as an empty application directory. T
 - `/usr/share/icons/hicolor/.../io.github.rubiojr.whereami.{svg,png}`
 - `/usr/share/doc/whereami/README.md`
 - `/usr/share/doc/whereami/LICENSE`
+- `/usr/share/doc/whereami/ODbL-1.0.txt`
+- `/usr/share/doc/whereami/GEODATA.md`
 - `/usr/share/whereami/`
 
 The dependency list and package metadata are defined in the `nfpms` section of `.goreleaser.yml`. Post-install and post-remove scripts refresh the desktop and icon caches when the corresponding tools are available; the post-install script also refreshes the MIME database when available.
+
+## Administrative Geodata
+
+Administrative geodata is released separately from the application archives.
+Before advertising a generation in `geodata_manifest.json`:
+
+1. Pin an Overture release and Xiangshan version. Record both in `docs/GEODATA.md`.
+2. Build or obtain the Xiangshan split `index` and `polygons` artifacts using the documented transformation.
+3. Verify representative point-in-polygon probes with the application resolver.
+4. Publish the immutable bytes under a versioned WhereAmI release path. Never replace bytes at an existing URL.
+5. Record each artifact's exact byte count and SHA-256 digest in the manifest, with the attribution and `ODbL-1.0` license identifier.
+6. Run `go test ./internal/geodata ./internal/admingeo/...` and install the generation from a clean data directory.
+
+The complete ODbL 1.0 text is distributed at `licenses/ODbL-1.0.txt`. Only generations whose hosted sizes and checksums have been verified belong in the embedded manifest.
+
+`make geodata-dist` writes the rsync-ready version directory under
+`dist/geodata/`. The configured base URL is
+`https://files.rbel.co/whereami/geodata`; see `docs/GEODATA.md` for build,
+local-install, upload, and post-upload verification commands.
 
 ## Verification
 

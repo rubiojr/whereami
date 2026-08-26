@@ -371,26 +371,14 @@ func (p *tileProxy) evictIfNeeded() {
 }
 
 func (p *tileProxy) serveTile(w http.ResponseWriter, r *http.Request) {
-	// Add CORS headers for QML map compatibility
-	corsHeaders(w)
-
 	// Expected path: /api/tiles/{z}/{x}/{y}.png  (stats handled by dedicated handler)
 	if r.URL.Path == "/api/tiles/stats" {
 		// Should be caught by stats handler; defensive.
 		p.serveStats(w, r)
 		return
 	}
-	trim := strings.TrimPrefix(r.URL.Path, "/api/tiles/")
-	parts := strings.Split(trim, "/")
-	if len(parts) != 3 || !strings.HasSuffix(parts[2], ".png") {
-		http.Error(w, "bad path", http.StatusBadRequest)
-		return
-	}
-	yStr := strings.TrimSuffix(parts[2], ".png")
-	z, err1 := strconv.Atoi(parts[0])
-	x, err2 := strconv.Atoi(parts[1])
-	y, err3 := strconv.Atoi(yStr)
-	if err1 != nil || err2 != nil || err3 != nil || z < 0 || x < 0 || y < 0 {
+	z, x, y, ok := parseTilePath(r.URL.Path)
+	if !ok {
 		http.Error(w, "invalid coords", http.StatusBadRequest)
 		return
 	}
@@ -569,11 +557,6 @@ func (p *tileProxy) serveStats(w http.ResponseWriter, _ *http.Request) {
 
 func handlePostBookmark(bookmarksPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		corsHeaders(w)
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
 		var req struct {
 			Name string   `json:"name"`
 			Lat  float64  `json:"lat"`
@@ -724,12 +707,6 @@ func handleDeleteBookmark(bookmarksPath string) http.HandlerFunc {
 			"lon":     lon,
 		})
 	}
-}
-
-func corsHeaders(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, PATCH, DELETE, OPTIONS")
 }
 
 // ---------------- Waypoints & Clustering ----------------
@@ -1002,6 +979,9 @@ func handlePostImport(w http.ResponseWriter, r *http.Request) {
 		allWaypointsMu.Unlock()
 	} else {
 		dedupCount = len(allWaypoints)
+	}
+	if err := rebuildObservationIndex(); err != nil {
+		logger.Error("observation index rebuild after import failed: %v", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2063,8 +2043,7 @@ func RegisterAPI(mux *http.ServeMux, bookmarksPath string, debug bool) {
 		globalProxy.startPrunerOnce()
 	})
 
-	// Bookmarks (CORS)
-	mux.HandleFunc("OPTIONS /api/bookmarks", handlePostBookmark(bookmarksPath))
+	// Bookmarks
 	mux.HandleFunc("POST /api/bookmarks", handlePostBookmark(bookmarksPath))
 	mux.HandleFunc("PATCH /api/bookmarks", handlePatchBookmark(bookmarksPath))
 	mux.HandleFunc("DELETE /api/bookmarks", handleDeleteBookmark(bookmarksPath))
@@ -2099,8 +2078,6 @@ func RegisterAPI(mux *http.ServeMux, bookmarksPath string, debug bool) {
 
 // handleGetVersion returns runtime version information
 func handleGetVersion(w http.ResponseWriter, r *http.Request) {
-	corsHeaders(w)
-
 	versionInfo := map[string]interface{}{
 		"go_version": runtime.Version(),
 		"go_os":      runtime.GOOS,

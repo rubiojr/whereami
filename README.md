@@ -25,7 +25,11 @@ Download a Linux release artifact from the [releases page](https://github.com/ru
 
 ### From Source
 
-Requirements: Go 1.24 or newer, Qt 6.5 or newer, GCC, and `miqt-rcc`.
+Requirements: Go 1.25 or newer, Qt 6.5 or newer, GCC, and `miqt-rcc`.
+
+Administrative place reports use an optional local Xiangshan generation. See
+`docs/GEODATA.md` for `make geodata-build`, `make geodata-dist`, and the
+isolated `make geodata-run-local` workflow.
 
 ```bash
 git clone https://github.com/rubiojr/whereami.git
@@ -73,7 +77,7 @@ On Linux, the defaults are:
 - Cache: `${XDG_CACHE_HOME:-$HOME/.cache}/whereami/`
 - Configuration: `${XDG_CONFIG_HOME:-$HOME/.config}/whereami/`
 
-The data directory contains bookmarks, imported GPX files, tags, and search history. The cache directory contains map tiles and the geocoding cache. The three command-line directory options override these locations.
+The data directory contains bookmarks, imported GPX files, tags, and search history. The cache directory contains map tiles, the geocoding cache, and a rebuildable observation index used for place reports. The three command-line directory options override these locations.
 
 ## License
 

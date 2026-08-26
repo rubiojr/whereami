@@ -1,0 +1,46 @@
+{
+  "format_version": 1,
+  "generations": [
+    {
+      "id": "xiangshan-2026-04-15.0",
+      "dataset_version": "2026-04-15.0",
+      "source_version": "overturemaps-2026-04-15",
+      "attribution": "© OpenStreetMap contributors, Overture Maps Foundation",
+      "license": "ODbL-1.0",
+      "artifacts": [
+        {
+          "role": "index",
+          "filename": "divisions.xs-index.gz",
+          "url": "https://files.rbel.co/whereami/geodata/2026-04-15.0/divisions.xs-index.gz",
+          "bytes": 15920427,
+          "sha256": "7e5f4d337264b58402d0f5d80c8df96c1ce6845713fd20992a3266b0eefe09c7"
+        },
+        {
+          "role": "polygons",
+          "filename": "divisions.xs-poly",
+          "url": "https://files.rbel.co/whereami/geodata/2026-04-15.0/divisions.xs-poly",
+          "bytes": 445184648,
+          "sha256": "89ef505f8160c07eb505a04110848f02395684eff41e2ce32597e28e74a018c5"
+        }
+      ],
+      "probes": [
+        {
+          "latitude": 48.8584,
+          "longitude": 2.2945,
+          "expected": {
+            "country": "France",
+            "country_id": "51bc7545-7602-435d-8b11-90117246a387",
+            "region": "Île-de-France",
+            "region_id": "ad3154a9-92ec-40ef-ba0d-8443d8e024fd",
+            "county": "Paris",
+            "county_id": "a86c4ba9-8261-4a37-9fac-0c6aa9456d05",
+            "local_admin": "Paris",
+            "local_admin_id": "4e5c3982-82ce-43ba-aef2-6b501d542604",
+            "locality": "Paris",
+            "locality_id": "97b66514-3f41-47ac-a348-9cfd51d983d5"
+          }
+        }
+      ]
+    }
+  ]
+}

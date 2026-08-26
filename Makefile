@@ -24,6 +24,16 @@ BIN_DIR           := bin
 GO                := go
 QML_LINT          := qmllint-qt6
 
+GEODATA_BASE_URL      ?= https://files.rbel.co/whereami/geodata
+GEODATA_VERSION       ?= 2026-04-15.0
+GEODATA_SOURCE_VERSION ?= overturemaps-2026-04-15
+GEODATA_ID            ?= xiangshan-$(GEODATA_VERSION)
+GEODATA_INPUT_DIR     ?= build/geodata/$(GEODATA_VERSION)
+GEODATA_DIST_ROOT     ?= dist/geodata
+GEODATA_DIST_DIR      := $(GEODATA_DIST_ROOT)/$(GEODATA_VERSION)
+GEODATA_LOCAL_DATA_DIR ?= build/geodata-local
+XIANGSHAN_DIR         ?=
+
 # Optional: pass ldflags to reduce binary size
 LDFLAGS := -s -w
 
@@ -44,7 +54,8 @@ HOST_ARCH := $(shell uname -m)
 
 .PHONY: all build run clean lint fmt vet tidy qml-test \
         install uninstall print-vars help \
-        release release-snapshot release-rpm check-release-deps
+        release release-snapshot release-rpm check-release-deps \
+        geodata-build geodata-dist geodata-install-local geodata-run-local
 
 all: build
 
@@ -108,6 +119,42 @@ qml-test:
 		echo "qmltestrunner not found (install Qt Quick Test)"; \
 		exit 1; \
 	fi
+
+########################################
+# Administrative geodata
+########################################
+
+geodata-build:
+	@if [ -z "$(XIANGSHAN_DIR)" ]; then \
+		echo "Set XIANGSHAN_DIR to a Xiangshan v0.2.0 checkout containing data/divisions"; \
+		exit 1; \
+	fi
+	$(MAKE) -C "$(XIANGSHAN_DIR)" remote-split VERSION="$(GEODATA_VERSION)" SOURCE="$(GEODATA_SOURCE_VERSION)"
+	mkdir -p "$(GEODATA_INPUT_DIR)"
+	cp --reflink=auto "$(XIANGSHAN_DIR)/build/divisions.xs-index.gz" "$(GEODATA_INPUT_DIR)/divisions.xs-index.gz"
+	cp --reflink=auto "$(XIANGSHAN_DIR)/build/divisions.xs-poly" "$(GEODATA_INPUT_DIR)/divisions.xs-poly"
+
+geodata-dist:
+	@echo "==> Packaging geodata for $(GEODATA_BASE_URL)/$(GEODATA_VERSION)"
+	rm -rf "$(GEODATA_DIST_DIR)"
+	$(GO) run ./cmd/geodata-package \
+		-input "$(GEODATA_INPUT_DIR)" \
+		-output "$(GEODATA_DIST_DIR)" \
+		-base-url "$(GEODATA_BASE_URL)" \
+		-id "$(GEODATA_ID)" \
+		-dataset-version "$(GEODATA_VERSION)" \
+		-source-version "$(GEODATA_SOURCE_VERSION)"
+	@echo "Upload-ready directory: $(GEODATA_DIST_DIR)"
+
+geodata-install-local: geodata-dist
+	./scripts/install-local-geodata.sh "$(GEODATA_DIST_DIR)" "$(GEODATA_LOCAL_DATA_DIR)"
+
+geodata-run-local: build geodata-install-local
+	./$(BIN_DIR)/$(APP_NAME) \
+		--data-dir "$(GEODATA_LOCAL_DATA_DIR)" \
+		--cache-dir "$(GEODATA_LOCAL_DATA_DIR)/cache" \
+		--config-dir "$(GEODATA_LOCAL_DATA_DIR)/config" \
+		--geodata-manifest "$(GEODATA_LOCAL_DATA_DIR)/geodata/admin/local-manifest.json"
 
 
 ########################################
@@ -218,6 +265,10 @@ help:
 	@echo "  lint-qml          Run QML linter (if available)"
 	@echo "  lint              fmt + vet + QML lint"
 	@echo "  qml-test          Run QML JS test suite"
+	@echo "  geodata-build     Build Xiangshan split files from a checkout"
+	@echo "  geodata-dist      Create the versioned directory to upload"
+	@echo "  geodata-install-local  Install the packaged generation for local testing"
+	@echo "  geodata-run-local Build and run against the local generation"
 	@echo "  install           Install binary, desktop file & icon to ~/.local"
 	@echo "  uninstall         Remove installed binary/desktop/icon"
 	@echo "  release-snapshot  Build snapshot release with GoReleaser"

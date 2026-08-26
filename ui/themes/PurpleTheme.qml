@@ -1,5 +1,5 @@
 import QtQuick 2.15
-import "qrc:/themes" as Themes
+import "." as Themes
 
 QtObject {
     id: purpleThemeRoot

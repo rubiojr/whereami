@@ -1,14 +1,14 @@
 # QML and Go HTTP API
 
-This document describes the HTTP integration implemented by `api.go` and `ui/services/API.qml`.
+This document describes the HTTP integration implemented by `api.go`, `geodata_service.go`, and `ui/services/API.qml`.
 
 ## Architecture
 
-The Go process serves an unauthenticated HTTP API on the fixed loopback address `127.0.0.1:43098`. `MapView.qml` creates one `API` service with the same port.
+The Go process serves an authenticated HTTP API on the fixed loopback address `127.0.0.1:43098`. A random bearer token is generated for each process, injected into QML, and attached by `API.qml` to every private API request.
 
 Semantic XHR operations from QML components go through `ui/services/API.qml`. The map tile path is the exception: QtLocation requests `http://127.0.0.1:43098/api/tiles/%z/%x/%y.png` directly from the local tile proxy.
 
-The API is loopback-only, but it has no authentication. Do not expose it on a non-loopback interface without adding access controls.
+The API is loopback-only. Coordinate requests matching `GET /api/tiles/{z}/{x}/{y}.png` are the only unauthenticated routes because QtLocation cannot attach the bearer token. Tile statistics and malformed tile-like paths remain private. The server does not grant browser CORS access.
 
 ## QML Usage
 
@@ -18,6 +18,7 @@ import "../services"
 API {
     id: api
     apiPort: 43098
+	apiToken: whereamiApiToken
     onWaypointsLoaded: function (waypoints) {
         window.waypoints = waypoints
     }
@@ -45,6 +46,12 @@ Child components receive the same service through an `api` property and react to
 | `deleteTag(wp, tag)` | `DELETE /api/tags?name=&lat=&lon=&tag=&emoji=true` | Deletes one raw tag and returns the remaining enriched list |
 | `fetchDistinctTags(callback)` | `GET /api/tags?distinct=true&emoji=true` | Calls back with the enriched global tag vocabulary |
 | `getVersion()` | `GET /api/version` | Loads Go runtime, platform, module, and available VCS build information |
+| `getGeodataStatus()` | `GET /api/geodata` | Loads local generation metadata and install progress without exposing URLs or paths |
+| `installGeodata(id)` | `POST /api/geodata/install` | Starts one verified background install for a build-selected generation |
+| `cancelGeodataInstall()` | `DELETE /api/geodata/install` | Cancels the active geodata install |
+| `submitPlaceReport(start, end)` | `POST /api/place-reports` | Queues an offline UTC report for inclusive calendar dates |
+| `getPlaceReport(id, includeResult)` | `GET /api/place-reports/{id}` | Polls job state; `includeResult=true` fetches a completed result once |
+| `cancelPlaceReport(id)` | `DELETE /api/place-reports/{id}` | Cancels a queued or running report |
 | `request(path, options)` | Caller-selected | Low-level request helper for an API path |
 
 `request()` accepts `method`, `body`, `timeout`, `context`, `onSuccess`, and `onError`. It prefixes the fixed loopback base URL and emits `requestSucceeded` or `requestFailed`.
@@ -71,7 +78,26 @@ GET     /api/suggest
 GET     /api/recent_suggest
 POST    /api/history
 GET     /api/version
+GET     /api/geodata
+POST    /api/geodata/install
+DELETE  /api/geodata/install
+POST    /api/place-reports
+GET     /api/place-reports/{id}
+DELETE  /api/place-reports/{id}
 ```
+
+The default source manifest contains no downloadable generation until immutable
+WhereAmI-hosted Xiangshan artifacts are published. The application never falls
+back to mutable upstream artifact URLs.
+
+Place-report jobs use one worker, permit at most eight queued jobs, retain at
+most sixteen terminal jobs, and have a two-minute end-to-end deadline. Date
+ranges are limited to 7,320 inclusive UTC calendar days. Backend errors are
+logged locally; API failures use fixed messages so observation paths and
+coordinates cannot leak through error responses.
+
+`GET /api/place-reports/{id}` omits the potentially large report payload by
+default. Add `?result=true` after the state reaches `completed` to fetch it.
 
 ## Signals
 
@@ -103,6 +129,10 @@ Location, import, and search:
 - `suggestStarted`, `suggestResults`, `suggestFailed`
 - `recentSearchesFetchStarted`, `recentSearchesFetched`, `recentSearchEntriesFetched`, `recentSearchesFetchFailed`
 - `versionFetchStarted`, `versionFetched`, `versionFetchFailed`
+- `geodataStatusFetched`, `geodataStatusFailed`
+- `geodataInstallAccepted`, `geodataInstallFailed`, `geodataCancelAccepted`, `geodataCancelFailed`
+- `placeReportSubmitted`, `placeReportSubmitFailed`
+- `placeReportStatusFetched`, `placeReportStatusFailed`, `placeReportCancelAccepted`, `placeReportCancelFailed`
 
 ## Data Shapes
 

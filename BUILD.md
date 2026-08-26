@@ -18,7 +18,7 @@ make release-rpm
 
 ### Prerequisites
 
-- Go 1.24 or newer, matching the minimum in `go.mod`
+- Go 1.25 or newer, matching the minimum in `go.mod`
 - Qt 6.5 or newer
 - GCC and G++ for CGO and the Qt bindings
 - `miqt-rcc` for embedding QML resources
