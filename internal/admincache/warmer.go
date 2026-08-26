@@ -29,7 +29,7 @@ type AcquireFunc func() (admingeo.Resolver, error)
 // including the active version and any rollback generation.
 type RetainedVersionsFunc func() []admingeo.DatasetVersion
 
-// Warmer fills a Store from distinct reportable observation coordinates. It
+// Warmer fills a Store from distinct timeline observation coordinates. It
 // owns one worker goroutine and coalesces concurrent notifications.
 type Warmer struct {
 	mu         sync.Mutex
@@ -96,7 +96,7 @@ func (w *Warmer) Trigger() {
 
 // BeginForeground preempts an active warm pass so it releases its snapshot and
 // resolver lease. Warming restarts after the foreground work finishes. The
-// returned release function is idempotent and should be deferred by reports.
+// returned release function is idempotent and should be deferred by timelines.
 func (w *Warmer) BeginForeground() func() {
 	w.mu.Lock()
 	if w.closed {

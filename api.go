@@ -992,7 +992,7 @@ func handlePostImport(bookmarksPath string, w http.ResponseWriter, r *http.Reque
 		allWaypointsMu.Unlock()
 	}
 	if indexErr != nil {
-		http.Error(w, "GPX files were imported but the report index could not be updated", http.StatusInternalServerError)
+		http.Error(w, "GPX files were imported but the observation index could not be updated", http.StatusInternalServerError)
 		return
 	}
 

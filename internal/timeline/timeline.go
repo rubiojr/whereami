@@ -1,5 +1,5 @@
-// Package reports aggregates recorded GPX observations into administrative places.
-package reports
+// Package timeline aggregates recorded GPX observations into a chronological timeline.
+package timeline
 
 import (
 	"context"
@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	maxReportPlaces         = 100000
-	maxReportTimelineStops  = 100000
-	journeySeparationMeters = 100.0
-	earthRadiusMeters       = 6371008.8
+	maxTimelinePlaces            = 100000
+	maxTimelineStops             = 100000
+	timelineStopSeparationMeters = 100.0
+	earthRadiusMeters            = 6371008.8
 )
 
-// DatasetMetadata identifies the immutable administrative dataset used by a report.
+// DatasetMetadata identifies the immutable administrative dataset used by a timeline.
 type DatasetMetadata struct {
 	DatasetVersion admingeo.DatasetVersion `json:"dataset_version"`
 	SourceVersion  string                  `json:"source_version"`
@@ -28,7 +28,7 @@ type DatasetMetadata struct {
 	License        string                  `json:"license"`
 }
 
-// Period describes the exact UTC half-open interval used for the report.
+// Period describes the exact UTC half-open interval used for the timeline.
 type Period struct {
 	StartUTC  string `json:"start_utc"`
 	EndUTC    string `json:"end_utc_exclusive"`
@@ -36,7 +36,7 @@ type Period struct {
 	Semantics string `json:"semantics"`
 }
 
-// Summary describes report coverage without exposing observation coordinates.
+// Summary describes timeline coverage without exposing observation coordinates.
 type Summary struct {
 	RecordedObservations   int64 `json:"recorded_observations"`
 	ResolvedObservations   int64 `json:"resolved_observations"`
@@ -62,12 +62,15 @@ type Place struct {
 	RecordedObservations int64  `json:"recorded_observations"`
 	RecordedDays         int    `json:"recorded_days"`
 	SourceFiles          int    `json:"source_files"`
-	FirstObservationUTC  string `json:"first_observation_utc"`
-	LastObservationUTC   string `json:"last_observation_utc"`
+	// TimelineIndex identifies the latest safely represented stop for this place.
+	// It is -1 when a truncated timeline cannot provide a reliable destination.
+	TimelineIndex       int    `json:"timeline_index"`
+	FirstObservationUTC string `json:"first_observation_utc"`
+	LastObservationUTC  string `json:"last_observation_utc"`
 }
 
-// TimelineStop is one chronological journey position separated from the prior
-// anchor by at least the report's distance threshold. Completed stops retain
+// TimelineStop is one chronological position separated from the prior anchor by
+// at least the timeline's distance threshold. Completed stops retain
 // their anchor coordinate; the final stop uses the latest recorded coordinate.
 // DateUTC is the stop's latest UTC date. Source paths are omitted.
 type TimelineStop struct {
@@ -89,16 +92,16 @@ type TimelineStop struct {
 	LastObservationUTC   string  `json:"last_observation_utc"`
 }
 
-// Report contains aggregate place details and a local coordinate-bearing journey.
-type Report struct {
-	Period                  Period          `json:"period"`
-	ObservationRevision     string          `json:"observation_revision"`
-	Dataset                 DatasetMetadata `json:"dataset"`
-	Summary                 Summary         `json:"summary"`
-	JourneySeparationMeters float64         `json:"journey_separation_meters"`
-	JourneyTruncated        bool            `json:"journey_truncated,omitempty"`
-	Places                  []Place         `json:"places"`
-	Timeline                []TimelineStop  `json:"timeline"`
+// Result contains aggregate place details and a local coordinate-bearing timeline.
+type Result struct {
+	Period                       Period          `json:"period"`
+	ObservationRevision          string          `json:"observation_revision"`
+	Dataset                      DatasetMetadata `json:"dataset"`
+	Summary                      Summary         `json:"summary"`
+	TimelineStopSeparationMeters float64         `json:"timeline_stop_separation_meters"`
+	TimelineTruncated            bool            `json:"timeline_truncated,omitempty"`
+	Places                       []Place         `json:"places"`
+	Timeline                     []TimelineStop  `json:"timeline"`
 }
 
 type aggregate struct {
@@ -123,7 +126,7 @@ type timelineAggregate struct {
 type accumulator struct {
 	ctx           context.Context
 	resolver      admingeo.Resolver
-	report        *Report
+	result        *Result
 	aggregates    map[admingeo.AdminPath]*aggregate
 	timeline      []*timelineAggregate
 	timelineLimit int
@@ -132,39 +135,39 @@ type accumulator struct {
 
 // Generate resolves and aggregates observations in [start,end). Progress is
 // called periodically with the number of observations scanned.
-func Generate(ctx context.Context, snapshot *observations.Snapshot, resolver admingeo.Resolver, dataset DatasetMetadata, start, end time.Time, progress func(int64)) (Report, error) {
+func Generate(ctx context.Context, snapshot *observations.Snapshot, resolver admingeo.Resolver, dataset DatasetMetadata, start, end time.Time, progress func(int64)) (Result, error) {
 	if ctx == nil {
-		return Report{}, errors.New("report context is nil")
+		return Result{}, errors.New("timeline context is nil")
 	}
 	if snapshot == nil || resolver == nil {
-		return Report{}, errors.New("report data source is unavailable")
+		return Result{}, errors.New("timeline data source is unavailable")
 	}
 	start = start.UTC()
 	end = end.UTC()
 	if !end.After(start) {
-		return Report{}, errors.New("report end must follow start")
+		return Result{}, errors.New("timeline end must follow start")
 	}
 	if resolver.Version() != dataset.DatasetVersion {
-		return Report{}, fmt.Errorf("resolver dataset version %q does not match report metadata %q", resolver.Version(), dataset.DatasetVersion)
+		return Result{}, fmt.Errorf("resolver dataset version %q does not match timeline metadata %q", resolver.Version(), dataset.DatasetVersion)
 	}
 	if err := ctx.Err(); err != nil {
-		return Report{}, err
+		return Result{}, err
 	}
 
 	timeCounts, err := snapshot.TimeStatusCounts()
 	if err != nil {
-		return Report{}, err
+		return Result{}, err
 	}
-	report := Report{
+	result := Result{
 		Period: Period{
 			StartUTC:  start.Format(time.RFC3339Nano),
 			EndUTC:    end.Format(time.RFC3339Nano),
 			TimeZone:  "UTC",
 			Semantics: "recorded observations in UTC [start,end)",
 		},
-		ObservationRevision:     snapshot.Revision(),
-		Dataset:                 dataset,
-		JourneySeparationMeters: journeySeparationMeters,
+		ObservationRevision:          snapshot.Revision(),
+		Dataset:                      dataset,
+		TimelineStopSeparationMeters: timelineStopSeparationMeters,
 		Summary: Summary{
 			IndexedValidTimes:   timeCounts.Valid,
 			IndexedMissingTimes: timeCounts.Missing,
@@ -176,52 +179,59 @@ func Generate(ctx context.Context, snapshot *observations.Snapshot, resolver adm
 	accumulator := accumulator{
 		ctx:           ctx,
 		resolver:      resolver,
-		report:        &report,
+		result:        &result,
 		aggregates:    make(map[admingeo.AdminPath]*aggregate),
 		timeline:      make([]*timelineAggregate, 0),
-		timelineLimit: maxReportTimelineStops,
+		timelineLimit: maxTimelineStops,
 		progress:      progress,
 	}
 	err = snapshot.ScanPeriod(start, end, accumulator.record)
 	if err != nil {
-		return Report{}, err
+		return Result{}, err
 	}
 	if progress != nil {
-		progress(report.Summary.RecordedObservations)
+		progress(result.Summary.RecordedObservations)
 	}
-	report.Places = accumulator.places()
-	report.Timeline = accumulator.timelineStops()
-	return report, nil
+	result.Places = accumulator.places()
+	result.Timeline = accumulator.timelineStops()
+	return result, nil
 }
 
 func (a *accumulator) record(observation observations.Observation) error {
 	if err := a.ctx.Err(); err != nil {
 		return err
 	}
-	a.report.Summary.RecordedObservations++
-	if a.progress != nil && a.report.Summary.RecordedObservations%1024 == 0 {
-		a.progress(a.report.Summary.RecordedObservations)
+	a.result.Summary.RecordedObservations++
+	if a.progress != nil && a.result.Summary.RecordedObservations%1024 == 0 {
+		a.progress(a.result.Summary.RecordedObservations)
 	}
 	if !observation.CoordinatesValid {
-		a.report.Summary.InvalidCoordinates++
+		a.result.Summary.InvalidCoordinates++
 		return nil
 	}
 	path, err := a.resolver.Resolve(a.ctx, admingeo.Coordinate{Latitude: observation.Latitude, Longitude: observation.Longitude})
 	if err != nil {
-		return fmt.Errorf("resolve recorded observation %d: %w", a.report.Summary.RecordedObservations, err)
+		return fmt.Errorf("resolve recorded observation %d: %w", a.result.Summary.RecordedObservations, err)
 	}
+	wasTimelineTruncated := a.result.TimelineTruncated
 	if err := a.recordTimeline(path, observation); err != nil {
 		return err
 	}
+	timelineIndex := -1
+	if !a.result.TimelineTruncated {
+		timelineIndex = len(a.timeline) - 1
+	} else if !wasTimelineTruncated {
+		a.invalidateTimelineIndex(len(a.timeline) - 1)
+	}
 	if path == (admingeo.AdminPath{}) {
-		a.report.Summary.UnresolvedObservations++
+		a.result.Summary.UnresolvedObservations++
 		return nil
 	}
-	a.report.Summary.ResolvedObservations++
+	a.result.Summary.ResolvedObservations++
 	item := a.aggregates[path]
 	if item == nil {
-		if len(a.aggregates) >= maxReportPlaces {
-			return fmt.Errorf("report exceeds %d distinct administrative places", maxReportPlaces)
+		if len(a.aggregates) >= maxTimelinePlaces {
+			return fmt.Errorf("timeline exceeds %d distinct administrative places", maxTimelinePlaces)
 		}
 		item = &aggregate{
 			place: Place{
@@ -230,6 +240,7 @@ func (a *accumulator) record(observation observations.Observation) error {
 				County: path.County, CountyID: path.CountyID,
 				LocalAdmin: path.LocalAdmin, LocalAdminID: path.LocalAdminID,
 				Locality: path.Locality, LocalityID: path.LocalityID,
+				TimelineIndex: timelineIndex,
 			},
 			days:    make(map[string]struct{}),
 			sources: make(map[string]struct{}),
@@ -239,6 +250,9 @@ func (a *accumulator) record(observation observations.Observation) error {
 		a.aggregates[path] = item
 	}
 	day := observation.Time.UTC().Format(time.DateOnly)
+	if timelineIndex >= 0 {
+		item.place.TimelineIndex = timelineIndex
+	}
 	item.place.RecordedObservations++
 	item.days[day] = struct{}{}
 	item.sources[observation.Source] = struct{}{}
@@ -251,14 +265,25 @@ func (a *accumulator) record(observation observations.Observation) error {
 	return nil
 }
 
+func (a *accumulator) invalidateTimelineIndex(index int) {
+	if index < 0 {
+		return
+	}
+	for _, item := range a.aggregates {
+		if item.place.TimelineIndex == index {
+			item.place.TimelineIndex = -1
+		}
+	}
+}
+
 func (a *accumulator) recordTimeline(path admingeo.AdminPath, observation observations.Observation) error {
 	var item *timelineAggregate
 	if len(a.timeline) > 0 {
 		item = a.timeline[len(a.timeline)-1]
 	}
-	if item == nil || distanceMeters(item.anchorLatitude, item.anchorLongitude, observation.Latitude, observation.Longitude) >= journeySeparationMeters {
+	if item == nil || distanceMeters(item.anchorLatitude, item.anchorLongitude, observation.Latitude, observation.Longitude) >= timelineStopSeparationMeters {
 		if len(a.timeline) >= a.timelineLimit {
-			a.report.JourneyTruncated = true
+			a.result.TimelineTruncated = true
 		} else {
 			item = &timelineAggregate{
 				stop: TimelineStop{

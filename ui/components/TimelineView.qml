@@ -7,7 +7,7 @@ import QtPositioning 6.5
 import "../themes"
 
 Item {
-    id: journey
+    id: timelineView
 
     property var result: null
     property int year: new Date().getUTCFullYear()
@@ -15,10 +15,12 @@ Item {
     property bool controlsVisible: true
     property bool cameraUserAdjusted: false
     property int currentIndex: -1
-    property alias scrubber: journeySlider
+    property var selectedPlace: null
+    property alias scrubber: timelineSlider
     readonly property var stops: result && result.timeline ? result.timeline : []
     readonly property int stopCount: stops.length
     readonly property var currentStop: currentIndex >= 0 && currentIndex < stopCount ? stops[currentIndex] : null
+    readonly property var displayedPlace: selectedPlace || currentStop
     readonly property bool atOldest: currentIndex <= 0
     readonly property bool atLatest: currentIndex < 0 || currentIndex >= stopCount - 1
     readonly property bool mapReady: mapLoader.status === Loader.Ready
@@ -37,19 +39,21 @@ Item {
     }
 
     onResultChanged: {
+        selectedPlace = null;
         currentIndex = -1;
         resetToLatest();
-        Qt.callLater(function() { journey.focusCurrent(true); });
+        Qt.callLater(function() { timelineView.focusCurrent(true); });
     }
     onCurrentIndexChanged: {
+        selectedPlace = null;
         cameraUserAdjusted = false;
         Qt.callLater(focusCurrent);
     }
     onActiveChanged: {
         if (active)
-            Qt.callLater(function() { journey.focusCurrent(true); });
+            Qt.callLater(function() { timelineView.focusCurrent(true); });
     }
-    onControlsVisibleChanged: Qt.callLater(journey.alignCurrent)
+    onControlsVisibleChanged: Qt.callLater(timelineView.alignCurrent)
     onFocusTargetYChanged: {
         if (active)
             alignmentTimer.restart();
@@ -59,33 +63,52 @@ Item {
         id: alignmentTimer
         interval: 60
         repeat: false
-        onTriggered: journey.alignCurrent()
+        onTriggered: timelineView.alignCurrent()
     }
 
     Shortcut {
         sequence: "Left"
         context: Qt.WindowShortcut
-        enabled: journey.active && journey.visible && journey.controlsVisible && !journeySlider.activeFocus
-        onActivated: journey.previous()
+        enabled: timelineView.active && timelineView.visible && timelineView.controlsVisible && !timelineSlider.activeFocus
+        onActivated: timelineView.previous()
     }
 
     Shortcut {
         sequence: "Right"
         context: Qt.WindowShortcut
-        enabled: journey.active && journey.visible && journey.controlsVisible && !journeySlider.activeFocus
-        onActivated: journey.next()
+        enabled: timelineView.active && timelineView.visible && timelineView.controlsVisible && !timelineSlider.activeFocus
+        onActivated: timelineView.next()
     }
 
     function resetToLatest() {
+        selectedPlace = null;
         currentIndex = result && result.timeline ? result.timeline.length - 1 : -1;
     }
 
     function selectStop(index) {
+        selectedPlace = null;
         if (stopCount === 0) {
             currentIndex = -1;
             return;
         }
         currentIndex = Math.max(0, Math.min(stopCount - 1, Math.round(index)));
+    }
+
+    function showStop(index, place) {
+        if (stopCount === 0) {
+            selectedPlace = null;
+            currentIndex = -1;
+            return;
+        }
+        var targetIndex = Math.max(0, Math.min(stopCount - 1, Math.round(index)));
+        if (currentIndex === targetIndex) {
+            selectedPlace = place || null;
+            cameraUserAdjusted = false;
+            Qt.callLater(alignCurrent);
+            return;
+        }
+        selectStop(targetIndex);
+        selectedPlace = place || null;
     }
 
     function previous() {
@@ -137,6 +160,17 @@ Item {
         return parts.join(" / ");
     }
 
+    function stopIndexForPlace(place) {
+        if (!place || place.timeline_index === undefined || place.timeline_index === null)
+            return -1;
+        if (typeof place.timeline_index !== "number")
+            return -1;
+        var index = place.timeline_index;
+        if (!isFinite(index) || Math.floor(index) !== index || index < 0 || index >= stopCount)
+            return -1;
+        return index;
+    }
+
     function dateLabel(stop) {
         if (!stop || !stop.date_utc || stop.date_utc.length < 10)
             return "Date unavailable";
@@ -177,16 +211,16 @@ Item {
     Loader {
         id: mapLoader
         anchors.fill: parent
-        active: journey.active && journey.stopCount > 0
+        active: timelineView.active && timelineView.stopCount > 0
         sourceComponent: mapComponent
-        onLoaded: journey.focusCurrent(true)
+        onLoaded: timelineView.focusCurrent(true)
     }
 
     Component {
         id: mapComponent
 
         Map {
-            id: journeyMap
+            id: timelineMap
 
             center: QtPositioning.coordinate(0, 0)
             zoomLevel: 15.5
@@ -195,7 +229,7 @@ Item {
             Timer {
                 id: deferredAlignmentTimer
                 interval: 0
-                onTriggered: journeyMap.alignCoordinateToPoint(journeyMap.deferredAlignmentCoordinate, journey.mapFocusPoint())
+                onTriggered: timelineMap.alignCoordinateToPoint(timelineMap.deferredAlignmentCoordinate, timelineView.mapFocusPoint())
             }
 
             plugin: Plugin {
@@ -231,18 +265,18 @@ Item {
             }
 
             function alignStop(latitude, longitude) {
-                alignCoordinateToPoint(QtPositioning.coordinate(latitude, longitude), journey.mapFocusPoint());
+                alignCoordinateToPoint(QtPositioning.coordinate(latitude, longitude), timelineView.mapFocusPoint());
             }
 
             Connections {
-                target: journey
+                target: timelineView
 
                 function onFocusRequested(latitude, longitude, immediate) {
-                    journeyMap.flyTo(latitude, longitude, immediate);
+                    timelineMap.flyTo(latitude, longitude, immediate);
                 }
 
                 function onAlignmentRequested(latitude, longitude) {
-                    journeyMap.alignStop(latitude, longitude);
+                    timelineMap.alignStop(latitude, longitude);
                 }
             }
 
@@ -252,28 +286,28 @@ Item {
                 property real cruiseZoom: 10
 
                 NumberAnimation {
-                    target: journeyMap
+                    target: timelineMap
                     property: "zoomLevel"
                     to: cameraFlight.cruiseZoom
                     duration: 280
                     easing.type: Easing.OutCubic
                 }
                 CoordinateAnimation {
-                    target: journeyMap
+                    target: timelineMap
                     property: "center"
                     to: cameraFlight.destination
                     duration: 850
                     easing.type: Easing.InOutCubic
                 }
                 NumberAnimation {
-                    target: journeyMap
+                    target: timelineMap
                     property: "zoomLevel"
                     to: 15.5
                     duration: 480
                     easing.type: Easing.OutCubic
                 }
                 ScriptAction {
-                    script: journeyMap.alignCoordinateToPoint(cameraFlight.destination, journey.mapFocusPoint())
+                    script: timelineMap.alignCoordinateToPoint(cameraFlight.destination, timelineView.mapFocusPoint())
                 }
             }
 
@@ -281,12 +315,12 @@ Item {
                 line.width: 3
                 line.color: theme.accent
                 opacity: 0.55
-                path: journey.contextPath()
+                path: timelineView.contextPath()
             }
 
             MapQuickItem {
-                visible: journey.currentIndex > 0 && journey.currentIndex < journey.stopCount
-                coordinate: visible ? QtPositioning.coordinate(journey.stops[journey.currentIndex - 1].latitude, journey.stops[journey.currentIndex - 1].longitude) : QtPositioning.coordinate(0, 0)
+                visible: timelineView.currentIndex > 0 && timelineView.currentIndex < timelineView.stopCount
+                coordinate: visible ? QtPositioning.coordinate(timelineView.stops[timelineView.currentIndex - 1].latitude, timelineView.stops[timelineView.currentIndex - 1].longitude) : QtPositioning.coordinate(0, 0)
                 anchorPoint.x: 7
                 anchorPoint.y: 7
                 sourceItem: Rectangle {
@@ -300,8 +334,8 @@ Item {
             }
 
             MapQuickItem {
-                visible: journey.currentIndex >= 0 && journey.currentIndex < journey.stopCount - 1
-                coordinate: visible ? QtPositioning.coordinate(journey.stops[journey.currentIndex + 1].latitude, journey.stops[journey.currentIndex + 1].longitude) : QtPositioning.coordinate(0, 0)
+                visible: timelineView.currentIndex >= 0 && timelineView.currentIndex < timelineView.stopCount - 1
+                coordinate: visible ? QtPositioning.coordinate(timelineView.stops[timelineView.currentIndex + 1].latitude, timelineView.stops[timelineView.currentIndex + 1].longitude) : QtPositioning.coordinate(0, 0)
                 anchorPoint.x: 7
                 anchorPoint.y: 7
                 sourceItem: Rectangle {
@@ -315,7 +349,7 @@ Item {
             }
 
             MapQuickItem {
-                coordinate: journey.currentStop ? QtPositioning.coordinate(journey.currentStop.latitude, journey.currentStop.longitude) : QtPositioning.coordinate(0, 0)
+                coordinate: timelineView.currentStop ? QtPositioning.coordinate(timelineView.currentStop.latitude, timelineView.currentStop.longitude) : QtPositioning.coordinate(0, 0)
                 anchorPoint.x: 25
                 anchorPoint.y: 25
                 z: 10
@@ -332,7 +366,7 @@ Item {
                         color: Qt.rgba(theme.accent.r, theme.accent.g, theme.accent.b, 0.22)
 
                         SequentialAnimation on scale {
-                            running: journey.active && journey.visible && journey.controlsVisible
+                            running: timelineView.active && timelineView.visible && timelineView.controlsVisible
                             loops: Animation.Infinite
                             NumberAnimation { to: 1.22; duration: 900; easing.type: Easing.InOutQuad }
                             NumberAnimation { to: 1; duration: 900; easing.type: Easing.InOutQuad }
@@ -360,17 +394,17 @@ Item {
                 onActiveChanged: {
                     if (active) {
                         cameraFlight.stop();
-                        journey.cameraUserAdjusted = true;
-                        journeyMap.startCentroid = journeyMap.toCoordinate(pinch.centroid.position, false);
+                        timelineView.cameraUserAdjusted = true;
+                        timelineMap.startCentroid = timelineMap.toCoordinate(pinch.centroid.position, false);
                         accumulatedScale = 1;
                     } else if (accumulatedScale !== 1) {
-                        journeyMap.zoomLevel += Math.log2(accumulatedScale);
+                        timelineMap.zoomLevel += Math.log2(accumulatedScale);
                         accumulatedScale = 1;
                     }
                 }
                 onScaleChanged: delta => {
                     accumulatedScale *= delta;
-                    journeyMap.alignCoordinateToPoint(journeyMap.startCentroid, pinch.centroid.position);
+                    timelineMap.alignCoordinateToPoint(timelineMap.startCentroid, pinch.centroid.position);
                 }
             }
 
@@ -380,7 +414,7 @@ Item {
                 onActiveChanged: {
                     if (active) {
                         cameraFlight.stop();
-                        journey.cameraUserAdjusted = true;
+                        timelineView.cameraUserAdjusted = true;
                     }
                 }
             }
@@ -390,10 +424,10 @@ Item {
                 onActiveChanged: {
                     if (active) {
                         cameraFlight.stop();
-                        journey.cameraUserAdjusted = true;
+                        timelineView.cameraUserAdjusted = true;
                     }
                 }
-                onTranslationChanged: delta => journeyMap.pan(-delta.x, -delta.y)
+                onTranslationChanged: delta => timelineMap.pan(-delta.x, -delta.y)
             }
         }
     }
@@ -403,7 +437,7 @@ Item {
         width: Math.max(0, Math.min(460, parent.width - 32))
         height: emptyContent.implicitHeight + 32
         radius: 16
-        visible: journey.controlsVisible && journey.stopCount === 0
+        visible: timelineView.controlsVisible && timelineView.stopCount === 0
         color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.95)
 
         Column {
@@ -414,7 +448,7 @@ Item {
 
             Label {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "No journey for " + journey.year
+                text: "No timeline for " + timelineView.year
                 color: theme.primaryText
                 font.bold: true
                 font.pixelSize: theme.scale(4)
@@ -432,20 +466,22 @@ Item {
 
     Rectangle {
         id: detailPanel
-        objectName: "journeyPanel"
-        readonly property bool compact: journey.width < 620
+        objectName: "timelinePanel"
+        readonly property bool compact: timelineView.width < 620
+        readonly property int contentMargin: compact ? 12 : 16
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 30
         width: Math.max(0, Math.min(760, parent.width - 24))
-        height: compact ? 184 : 164
+        height: Math.max(compact ? 194 : 174, detailContent.implicitHeight + contentMargin * 2)
         radius: 18
         color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.95)
-        visible: journey.controlsVisible && journey.currentStop !== null
+        visible: timelineView.controlsVisible && timelineView.currentStop !== null
 
         ColumnLayout {
+            id: detailContent
             anchors.fill: parent
-            anchors.margins: detailPanel.compact ? 12 : 16
+            anchors.margins: detailPanel.contentMargin
             spacing: 6
 
             RowLayout {
@@ -458,9 +494,9 @@ Item {
                     Layout.preferredWidth: detailPanel.compact ? 44 : 48
                     Layout.preferredHeight: detailPanel.compact ? 44 : 48
                     text: "‹"
-                    enabled: !journey.atOldest
+                    enabled: !timelineView.atOldest
                     Accessible.name: "Previous older location"
-                    onClicked: journey.previous()
+                    onClicked: timelineView.previous()
                     contentItem: Text {
                         text: olderButton.text
                         color: olderButton.enabled ? theme.primaryText : theme.toolbarIconDisabled
@@ -481,16 +517,16 @@ Item {
 
                     Label {
                         Layout.fillWidth: true
-                        text: journey.dateLabel(journey.currentStop)
+                        text: timelineView.dateLabel(timelineView.currentStop)
                         color: theme.accent
                         font.bold: true
-                        font.pixelSize: theme.scale(0)
+                        font.pixelSize: theme.scale(2)
                         elide: Text.ElideRight
                     }
 
                     Label {
                         Layout.fillWidth: true
-                        text: journey.placeName(journey.currentStop)
+                        text: timelineView.placeName(timelineView.displayedPlace)
                         color: theme.primaryText
                         font.bold: true
                         font.pixelSize: theme.scale(detailPanel.compact ? 4 : 5)
@@ -499,9 +535,9 @@ Item {
 
                     Label {
                         Layout.fillWidth: true
-                        text: journey.hierarchy(journey.currentStop)
+                        text: timelineView.hierarchy(timelineView.displayedPlace)
                         color: theme.secondaryText
-                        font.pixelSize: theme.scale(0)
+                        font.pixelSize: theme.scale(2)
                         elide: Text.ElideRight
                     }
 
@@ -510,26 +546,26 @@ Item {
                         spacing: detailPanel.compact ? 8 : 12
 
                         Label {
-                            text: journey.timeRange(journey.currentStop)
+                            text: timelineView.timeRange(timelineView.currentStop)
                             color: theme.toolbarText
-                            font.pixelSize: theme.scale(0)
+                            font.pixelSize: theme.scale(2)
                         }
 
                         Label {
                             text: {
-                                var observations = journey.currentStop ? journey.currentStop.recorded_observations || 0 : 0;
+                                var observations = timelineView.currentStop ? timelineView.currentStop.recorded_observations || 0 : 0;
                                 return observations + (observations === 1 ? " observation" : " observations");
                             }
                             color: theme.toolbarTextSecondary
-                            font.pixelSize: theme.scale(0)
+                            font.pixelSize: theme.scale(2)
                         }
 
                         Label {
                             Layout.fillWidth: true
                             visible: !detailPanel.compact
-                            text: journey.coordinateLabel(journey.currentStop)
+                            text: timelineView.coordinateLabel(timelineView.currentStop)
                             color: theme.toolbarTextSecondary
-                            font.pixelSize: theme.scale(0)
+                            font.pixelSize: theme.scale(2)
                             horizontalAlignment: Text.AlignRight
                             elide: Text.ElideLeft
                         }
@@ -543,24 +579,25 @@ Item {
 
                     Label {
                         Layout.fillWidth: true
-                        text: (journey.currentIndex + 1) + " / " + journey.stopCount
+                        text: (timelineView.currentIndex + 1) + " / " + timelineView.stopCount
                         color: theme.primaryText
                         font.bold: true
-                        font.pixelSize: theme.scale(1)
+                        font.pixelSize: theme.scale(2)
                         horizontalAlignment: Text.AlignHCenter
                     }
 
                     Label {
-                        id: journeyMetaLabel
-                        objectName: "journeyMetaLabel"
+                        id: timelineMetaLabel
+                        objectName: "timelineMetaLabel"
                         Layout.fillWidth: true
                         text: {
-                            var threshold = Math.round(journey.result && journey.result.journey_separation_meters ? journey.result.journey_separation_meters : 100);
-                            return journey.result && journey.result.journey_truncated ? "LIMITED\n" + threshold + " m stops" : threshold + " m stops";
+                            var hasThreshold = timelineView.result && timelineView.result.timeline_stop_separation_meters !== undefined && timelineView.result.timeline_stop_separation_meters !== null;
+                            var threshold = Math.round(hasThreshold ? timelineView.result.timeline_stop_separation_meters : 100);
+                            return timelineView.result && timelineView.result.timeline_truncated ? "LIMITED\n" + threshold + " m stops" : threshold + " m stops";
                         }
-                        color: journey.result && journey.result.journey_truncated ? theme.accent : theme.secondaryText
-                        font.bold: !!(journey.result && journey.result.journey_truncated)
-                        font.pixelSize: theme.scale(0)
+                        color: timelineView.result && timelineView.result.timeline_truncated ? theme.accent : theme.secondaryText
+                        font.bold: !!(timelineView.result && timelineView.result.timeline_truncated)
+                        font.pixelSize: theme.scale(2)
                         horizontalAlignment: Text.AlignHCenter
                         lineHeight: 0.9
                         wrapMode: Text.WordWrap
@@ -571,32 +608,6 @@ Item {
                         Layout.fillHeight: true
                     }
 
-                    Button {
-                        id: latestButton
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 28
-                        text: "Latest"
-                        enabled: !journey.atLatest
-                        opacity: enabled ? 1 : 0
-                        Accessible.name: "Go to latest recorded location"
-                        Accessible.ignored: !enabled
-                        onClicked: journey.resetToLatest()
-                        contentItem: Text {
-                            text: latestButton.text
-                            color: "white"
-                            font.bold: true
-                            font.pixelSize: theme.scale(0)
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: 7
-                            color: theme.accent
-                        }
-                        Behavior on opacity {
-                            NumberAnimation { duration: 120 }
-                        }
-                    }
                 }
 
                 ToolButton {
@@ -604,9 +615,9 @@ Item {
                     Layout.preferredWidth: detailPanel.compact ? 44 : 48
                     Layout.preferredHeight: detailPanel.compact ? 44 : 48
                     text: "›"
-                    enabled: !journey.atLatest
+                    enabled: !timelineView.atLatest
                     Accessible.name: "Next newer location"
-                    onClicked: journey.next()
+                    onClicked: timelineView.next()
                     contentItem: Text {
                         text: newerButton.text
                         color: newerButton.enabled ? theme.primaryText : theme.toolbarIconDisabled
@@ -622,56 +633,90 @@ Item {
                 }
             }
 
-            Slider {
-                id: journeySlider
+            RowLayout {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 28
-                from: 0
-                to: Math.max(0, journey.stopCount - 1)
-                stepSize: 1
-                enabled: journey.stopCount > 1
-                Accessible.name: "Journey position"
-                onMoved: journey.selectStop(value)
-                Keys.priority: Keys.BeforeItem
-                Keys.onLeftPressed: event => {
-                    journey.previous();
-                    event.accepted = true;
-                }
-                Keys.onRightPressed: event => {
-                    journey.next();
-                    event.accepted = true;
-                }
-                background: Rectangle {
-                    x: journeySlider.leftPadding
-                    y: journeySlider.topPadding + journeySlider.availableHeight / 2 - height / 2
-                    width: journeySlider.availableWidth
-                    height: 3
-                    radius: 2
-                    color: theme.toolbarSeparator
+                spacing: 6
 
-                    Rectangle {
-                        width: journeySlider.visualPosition * parent.width
-                        height: parent.height
-                        radius: parent.radius
-                        color: theme.accent
+                Slider {
+                    id: timelineSlider
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 28
+                    from: 0
+                    to: Math.max(0, timelineView.stopCount - 1)
+                    stepSize: 1
+                    enabled: timelineView.stopCount > 1
+                    Accessible.name: "Timeline position"
+                    onMoved: timelineView.selectStop(value)
+                    Keys.priority: Keys.BeforeItem
+                    Keys.onLeftPressed: event => {
+                        timelineView.previous();
+                        event.accepted = true;
+                    }
+                    Keys.onRightPressed: event => {
+                        timelineView.next();
+                        event.accepted = true;
+                    }
+                    background: Rectangle {
+                        x: timelineSlider.leftPadding
+                        y: timelineSlider.topPadding + timelineSlider.availableHeight / 2 - height / 2
+                        width: timelineSlider.availableWidth
+                        height: 3
+                        radius: 2
+                        color: theme.toolbarSeparator
+
+                        Rectangle {
+                            width: timelineSlider.visualPosition * parent.width
+                            height: parent.height
+                            radius: parent.radius
+                            color: theme.accent
+                        }
+                    }
+                    handle: Rectangle {
+                        x: timelineSlider.leftPadding + timelineSlider.visualPosition * (timelineSlider.availableWidth - width)
+                        y: timelineSlider.topPadding + timelineSlider.availableHeight / 2 - height / 2
+                        width: 18
+                        height: 18
+                        radius: 9
+                        color: timelineSlider.pressed ? Qt.lighter(theme.accent, 1.2) : theme.accent
+                        border.color: "white"
+                        border.width: 2
                     }
                 }
-                handle: Rectangle {
-                    x: journeySlider.leftPadding + journeySlider.visualPosition * (journeySlider.availableWidth - width)
-                    y: journeySlider.topPadding + journeySlider.availableHeight / 2 - height / 2
-                    width: 18
-                    height: 18
-                    radius: 9
-                    color: journeySlider.pressed ? Qt.lighter(theme.accent, 1.2) : theme.accent
-                    border.color: "white"
-                    border.width: 2
+
+                ToolButton {
+                    id: finishButton
+                    objectName: "timelineFinishButton"
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 28
+                    enabled: !timelineView.atLatest
+                    opacity: enabled ? 1 : 0
+                    icon.source: "qrc:/icons/finish.svg"
+                    icon.width: 16
+                    icon.height: 16
+                    icon.color: theme.toolbarIcon
+                    Accessible.name: "Go to latest recorded location"
+                    Accessible.ignored: !enabled
+                    onClicked: timelineView.resetToLatest()
+                    CustomToolTip {
+                        tooltipText: "Go to latest"
+                        visible: finishButton.hovered
+                        position: "top"
+                    }
+                    background: Rectangle {
+                        radius: 7
+                        color: finishButton.down ? theme.toolbarBackgroundHover : "transparent"
+                    }
+                    Behavior on opacity {
+                        NumberAnimation { duration: 120 }
+                    }
                 }
             }
 
             Binding {
-                target: journeySlider
+                target: timelineSlider
                 property: "value"
-                value: journey.currentIndex
+                value: Math.max(timelineSlider.from, Math.min(timelineSlider.to, timelineView.currentIndex))
                 restoreMode: Binding.RestoreBindingOrValue
             }
         }

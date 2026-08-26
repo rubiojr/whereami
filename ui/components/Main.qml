@@ -15,33 +15,37 @@ ApplicationWindow {
     flags: Qt.FramelessWindowHint
     color: "transparent"
 
-    property string reportStartDate: ""
-    property string reportEndDate: ""
+    property string timelineStartDate: ""
+    property string timelineEndDate: ""
     property string apiToken: typeof whereamiApiToken !== "undefined" ? whereamiApiToken : ""
     property alias mapPage: mapView
-    property alias placesPage: placesReport
+    property alias timelinePage: timelinePageItem
     property alias currentPage: pages.currentIndex
     readonly property int currentUTCYear: new Date().getUTCFullYear()
 
-    function openPlacesReport(startDate, endDate) {
+    function openTimeline(startDate, endDate) {
         var alreadyOpen = pages.currentIndex === 1;
-        reportStartDate = startDate;
-        reportEndDate = endDate || startDate;
+        timelineStartDate = startDate;
+        timelineEndDate = endDate || startDate;
         if (alreadyOpen)
-            placesReport.beginReport();
+            timelinePageItem.beginTimeline();
         else
             pages.currentIndex = 1;
     }
 
-    function openPlacesYear(year) {
+    function openTimelineYear(year) {
         var selectedYear = Math.floor(Number(year));
         if (!isFinite(selectedYear) || selectedYear < 1 || selectedYear > currentUTCYear)
             selectedYear = currentUTCYear;
-        openPlacesReport(selectedYear + "-01-01", selectedYear + "-12-31");
+        openTimeline(selectedYear + "-01-01", selectedYear + "-12-31");
     }
 
-    function openCurrentYearPlaces() {
-        openPlacesYear(currentUTCYear);
+    function openCurrentYearTimeline() {
+        openTimelineYear(currentUTCYear);
+    }
+
+    function quitApplication() {
+        Qt.quit();
     }
 
     StackLayout {
@@ -54,19 +58,21 @@ ApplicationWindow {
             hostWindow: window
             apiToken: window.apiToken
             active: pages.currentIndex === 0
-            onPlacesRequested: window.openCurrentYearPlaces()
+            onTimelineRequested: window.openCurrentYearTimeline()
+            onQuitRequested: window.quitApplication()
         }
 
-        PlacesReport {
-            id: placesReport
+        TimelinePage {
+            id: timelinePageItem
             hostWindow: window
             api: mapView.apiService
             active: pages.currentIndex === 1
-            startDate: window.reportStartDate
-            endDate: window.reportEndDate
+            startDate: window.timelineStartDate
+            endDate: window.timelineEndDate
             onBackRequested: pages.currentIndex = 0
+            onQuitRequested: window.quitApplication()
             onYearRequested: function (year) {
-                window.openPlacesYear(year);
+                window.openTimelineYear(year);
             }
         }
     }

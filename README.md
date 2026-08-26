@@ -11,7 +11,7 @@ A lightweight desktop waypoint and GPX viewer for exploring and managing locatio
 - **GPX import**: Recursively import GPX files from a selected directory
 - **Search**: Search local waypoints and remote Nominatim geocoding results
 - **Filters**: Show bookmarks only, filter by tag, or select an inclusive UTC date range
-- **Places journey**: Travel through significant recorded locations on an animated offline-resolved map
+- **Timeline**: Travel through significant recorded locations on an animated offline-resolved map
 - **Themes**: Six runtime-selectable color themes
 - **Keyboard shortcuts**: Open the in-app shortcut list with `Ctrl+?` or `Ctrl+/`
 
@@ -28,7 +28,7 @@ Download a Linux release artifact from the [releases page](https://github.com/ru
 
 Requirements: Go 1.25 or newer, Qt 6.5 or newer, GCC, and `miqt-rcc`.
 
-Administrative place reports use an optional local Xiangshan generation. See
+Administrative place timelines use an optional local Xiangshan generation. See
 `docs/GEODATA.md` for `make geodata-build`, `make geodata-dist`, and the
 isolated `make geodata-run-local` workflow.
 
@@ -51,7 +51,7 @@ WhereAmI can display location history exported as GPX. One example is combining 
 - **Import GPX**: Select a directory with the folder button in the toolbar. Import scans recursively, preserves relative paths, replaces changed files atomically, and reports unsupported or invalid files separately.
 - **Search**: Press `Ctrl+F` and use the search box.
 - **Filter by date**: Use the calendar button in the toolbar to choose a day, range, or UTC date preset. Click the highlighted button again to clear the filter.
-- **Explore a year**: Use the places button to open the current year's journey, then move through older or newer locations. Consecutive movement below 100 meters is grouped into one stop.
+- **Explore a year**: Use the timeline button to open the current year's timeline, then move through older or newer locations. Consecutive movement below 100 meters is grouped into one stop.
 - **Navigate**: Drag to pan, use the mouse wheel to zoom, or use touch pinch gestures.
 - **Themes**: Start the application with `--theme=<variant>`, where the variant is `orange`, `green`, `purple`, `adwaita-dark`, `nord-polar`, or `nord-frost`. The default is `nord-polar`.
 - **All shortcuts**: Press `Ctrl+?` or `Ctrl+/`.
@@ -79,7 +79,7 @@ On Linux, the defaults are:
 - Cache: `${XDG_CACHE_HOME:-$HOME/.cache}/whereami/`
 - Configuration: `${XDG_CONFIG_HOME:-$HOME/.config}/whereami/`
 
-The data directory contains bookmarks, imported GPX files, tags, and search history. The cache directory contains map tiles, geocoding caches, a rebuildable observation index, and dataset-versioned administrative resolutions used for place reports. The three command-line directory options override these locations.
+The data directory contains bookmarks, imported GPX files, tags, and search history. The cache directory contains map tiles, geocoding caches, a rebuildable observation index, and dataset-versioned administrative resolutions used by timelines. The three command-line directory options override these locations.
 
 ## License
 

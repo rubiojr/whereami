@@ -103,7 +103,7 @@ QtObject {
 
     // Default timeout (ms) for requests
     property int requestTimeoutMs: 8000
-    property int placeReportResultTimeoutMs: 60000
+    property int timelineResultTimeoutMs: 60000
 
     // --- Generic signals ---
     signal requestSucceeded(string kind, var result, var context)
@@ -179,13 +179,13 @@ QtObject {
     signal geodataCancelAccepted
     signal geodataCancelFailed(string errorMessage)
 
-    // --- Place reports ---
-    signal placeReportSubmitted(string requestId, string jobId)
-    signal placeReportSubmitFailed(string requestId, string errorMessage)
-    signal placeReportStatusFetched(string jobId, var status)
-    signal placeReportStatusFailed(string jobId, string errorMessage, bool includedResult)
-    signal placeReportCancelAccepted(string jobId)
-    signal placeReportCancelFailed(string jobId, string errorMessage)
+    // --- Timelines ---
+    signal timelineSubmitted(string requestId, string jobId)
+    signal timelineSubmitFailed(string requestId, string errorMessage)
+    signal timelineStatusFetched(string jobId, var status)
+    signal timelineStatusFailed(string jobId, string errorMessage, bool includedResult)
+    signal timelineCancelAccepted(string jobId)
+    signal timelineCancelFailed(string jobId, string errorMessage)
 
     // ------------- Public Convenience API -------------
 
@@ -844,57 +844,57 @@ QtObject {
         });
     }
 
-    function submitPlaceReport(startDate, endDate, requestId) {
-        _xhr("POST", "/api/place-reports", { start_date: startDate, end_date: endDate }, function (txt) {
+    function submitTimeline(startDate, endDate, requestId) {
+        _xhr("POST", "/api/timelines", { start_date: startDate, end_date: endDate }, function (txt) {
             var response = {};
             try {
                 response = JSON.parse(txt);
             } catch (e) {
-                api.placeReportSubmitFailed(requestId, "invalid place report response");
+                api.timelineSubmitFailed(requestId, "invalid timeline response");
                 return;
             }
             if (!response || !response.job_id) {
-                api.placeReportSubmitFailed(requestId, "place report service is unavailable");
+                api.timelineSubmitFailed(requestId, "timeline service is unavailable");
                 return;
             }
-            api.placeReportSubmitted(requestId, response.job_id || "");
-            api.requestSucceeded("POST /api/place-reports", response, requestId);
+            api.timelineSubmitted(requestId, response.job_id || "");
+            api.requestSucceeded("POST /api/timelines", response, requestId);
         }, function (err) {
-            api.placeReportSubmitFailed(requestId, err);
-            api.requestFailed("POST /api/place-reports", err, requestId);
+            api.timelineSubmitFailed(requestId, err);
+            api.requestFailed("POST /api/timelines", err, requestId);
         });
     }
 
-    function getPlaceReport(jobId, includeResult) {
+    function getTimeline(jobId, includeResult) {
         var includedResult = includeResult === true;
         var suffix = includedResult ? "?result=true" : "";
-        _xhr("GET", "/api/place-reports/" + encodeURIComponent(jobId) + suffix, null, function (txt) {
+        _xhr("GET", "/api/timelines/" + encodeURIComponent(jobId) + suffix, null, function (txt) {
             var status = {};
             try {
                 status = JSON.parse(txt);
             } catch (e) {
-                api.placeReportStatusFailed(jobId, "invalid place report status response", includedResult);
+                api.timelineStatusFailed(jobId, "invalid timeline status response", includedResult);
                 return;
             }
             if (!status || typeof status !== "object") {
-                api.placeReportStatusFailed(jobId, "invalid place report status response", includedResult);
+                api.timelineStatusFailed(jobId, "invalid timeline status response", includedResult);
                 return;
             }
-            api.placeReportStatusFetched(jobId, status);
-            api.requestSucceeded("GET /api/place-reports", status, jobId);
+            api.timelineStatusFetched(jobId, status);
+            api.requestSucceeded("GET /api/timelines", status, jobId);
         }, function (err) {
-            api.placeReportStatusFailed(jobId, err, includedResult);
-            api.requestFailed("GET /api/place-reports", err, jobId);
-        }, includedResult ? api.placeReportResultTimeoutMs : undefined);
+            api.timelineStatusFailed(jobId, err, includedResult);
+            api.requestFailed("GET /api/timelines", err, jobId);
+        }, includedResult ? api.timelineResultTimeoutMs : undefined);
     }
 
-    function cancelPlaceReport(jobId) {
-        _xhr("DELETE", "/api/place-reports/" + encodeURIComponent(jobId), null, function () {
-            api.placeReportCancelAccepted(jobId);
-            api.requestSucceeded("DELETE /api/place-reports", null, jobId);
+    function cancelTimeline(jobId) {
+        _xhr("DELETE", "/api/timelines/" + encodeURIComponent(jobId), null, function () {
+            api.timelineCancelAccepted(jobId);
+            api.requestSucceeded("DELETE /api/timelines", null, jobId);
         }, function (err) {
-            api.placeReportCancelFailed(jobId, err);
-            api.requestFailed("DELETE /api/place-reports", err, jobId);
+            api.timelineCancelFailed(jobId, err);
+            api.requestFailed("DELETE /api/timelines", err, jobId);
         });
     }
 

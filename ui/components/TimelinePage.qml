@@ -6,7 +6,7 @@ import QtQuick.Window 2.15
 import "../themes"
 
 Page {
-    id: report
+    id: timelinePage
 
     property var hostWindow: null
     property var api: null
@@ -31,8 +31,9 @@ Page {
     readonly property int maxResultRetries: 3
     property int currentView: 0
     property alias detailsButton: detailsToggle
-    property alias timelineView: journeyTimeline
+    property alias timelineView: timelineViewContent
     property alias detailsPanel: detailsOverlay
+    property alias quitButton: timelineQuitButton
     readonly property int currentUTCYear: new Date().getUTCFullYear()
     readonly property int selectedYear: {
         var year = Number(startDate.substring(0, 4));
@@ -41,6 +42,7 @@ Page {
 
     signal backRequested
     signal yearRequested(int year)
+    signal quitRequested
 
     padding: 0
     background: Rectangle {
@@ -51,18 +53,27 @@ Page {
         id: theme
     }
 
-    function reportPeriod() {
+    function timelinePeriod() {
         return startDate === endDate ? startDate : startDate + " to " + endDate;
     }
 
-    function beginReport() {
+    function showPlaceOnTimeline(place) {
+        var stopIndex = timelineViewContent.stopIndexForPlace(place);
+        if (stopIndex < 0)
+            return;
+        currentView = 0;
+        timelineViewContent.showStop(stopIndex, place);
+        Qt.callLater(timelineViewContent.forceActiveFocus);
+    }
+
+    function beginTimeline() {
         if (!api || startDate === "" || endDate === "") {
             errorMessage = "Choose a valid date range.";
             jobState = "failed";
             return;
         }
         if (jobId !== "" && (jobState === "queued" || jobState === "running" || jobState === "cancelling"))
-            api.cancelPlaceReport(jobId);
+            api.cancelTimeline(jobId);
         submissionSequence += 1;
         submissionId = Date.now().toString() + "-" + submissionSequence.toString();
         submittedStartDate = startDate;
@@ -76,15 +87,15 @@ Page {
         statusRequestPending = false;
         resultRetryCount = 0;
         processedObservations = 0;
-        api.submitPlaceReport(startDate, endDate, submissionId);
+        api.submitTimeline(startDate, endDate, submissionId);
     }
 
-    function requestReportStatus(includeResult) {
+    function requestTimelineStatus(includeResult) {
         if (!api || jobId === "" || statusRequestPending)
             return;
         statusRequestPending = true;
         resultRequested = includeResult === true;
-        api.getPlaceReport(jobId, resultRequested);
+        api.getTimeline(jobId, resultRequested);
     }
 
     function retryCompletedResult(message) {
@@ -100,22 +111,22 @@ Page {
             resultRetryTimer.restart();
     }
 
-    function leaveReport() {
-        cancelActiveReport();
+    function leaveTimeline() {
+        cancelActiveTimeline();
         currentView = 0;
         submissionId = "";
         backRequested();
     }
 
-    function cancelActiveReport() {
+    function cancelActiveTimeline() {
         if (!api || jobId === "" || (jobState !== "queued" && jobState !== "running"))
             return;
         jobState = "cancelling";
-        api.cancelPlaceReport(jobId);
+        api.cancelTimeline(jobId);
     }
 
-    function invalidateCachedReport() {
-        cancelActiveReport();
+    function invalidateCachedTimeline() {
+        cancelActiveTimeline();
         resultRetryTimer.stop();
         submissionId = "";
         jobId = "";
@@ -131,111 +142,111 @@ Page {
 
     onActiveChanged: {
         if (active && jobState === "completed" && !result && jobId !== "" && submittedStartDate === startDate && submittedEndDate === endDate)
-            requestReportStatus(true);
+            requestTimelineStatus(true);
         else if (active && !(jobState === "completed" && result && resultStartDate === startDate && resultEndDate === endDate))
-            beginReport();
+            beginTimeline();
         else if (!active)
-            cancelActiveReport();
+            cancelActiveTimeline();
     }
 
     Connections {
-        target: report.api
-        enabled: report.api !== null
+        target: timelinePage.api
+        enabled: timelinePage.api !== null
 
-        function onPlaceReportSubmitted(requestId, id) {
-            if (!report.active || requestId !== report.submissionId) {
-                report.api.cancelPlaceReport(id);
+        function onTimelineSubmitted(requestId, id) {
+            if (!timelinePage.active || requestId !== timelinePage.submissionId) {
+                timelinePage.api.cancelTimeline(id);
                 return;
             }
-            report.jobId = id;
-            report.jobState = "queued";
-            report.requestReportStatus(false);
+            timelinePage.jobId = id;
+            timelinePage.jobState = "queued";
+            timelinePage.requestTimelineStatus(false);
         }
 
-        function onPlaceReportSubmitFailed(requestId, message) {
-            if (!report.active || requestId !== report.submissionId)
+        function onTimelineSubmitFailed(requestId, message) {
+            if (!timelinePage.active || requestId !== timelinePage.submissionId)
                 return;
-            report.jobState = "unavailable";
-            report.errorMessage = message;
-            report.api.getGeodataStatus();
+            timelinePage.jobState = "unavailable";
+            timelinePage.errorMessage = message;
+            timelinePage.api.getGeodataStatus();
         }
 
-        function onPlaceReportStatusFetched(id, status) {
-            if (id !== report.jobId)
+        function onTimelineStatusFetched(id, status) {
+            if (id !== timelinePage.jobId)
                 return;
-            var includedResult = report.resultRequested;
-            report.statusRequestPending = false;
+            var includedResult = timelinePage.resultRequested;
+            timelinePage.statusRequestPending = false;
             if (!status || typeof status !== "object") {
-                report.resultRequested = false;
-                report.errorMessage = "Report status response was invalid.";
+                timelinePage.resultRequested = false;
+                timelinePage.errorMessage = "Timeline status response was invalid.";
                 return;
             }
-            if ((report.jobState === "completed" || report.jobState === "failed" || report.jobState === "cancelled")
-                    && status.state !== report.jobState)
+            if ((timelinePage.jobState === "completed" || timelinePage.jobState === "failed" || timelinePage.jobState === "cancelled")
+                    && status.state !== timelinePage.jobState)
                 return;
-            report.jobState = status.state || "failed";
-            report.errorMessage = status.error || "";
-            report.processedObservations = status.processed_observations || 0;
+            timelinePage.jobState = status.state || "failed";
+            timelinePage.errorMessage = status.error || "";
+            timelinePage.processedObservations = status.processed_observations || 0;
             if (status.result) {
-                report.resultRequested = false;
-                report.resultRetryCount = 0;
-                report.result = status.result;
-                report.resultStartDate = report.submittedStartDate;
-                report.resultEndDate = report.submittedEndDate;
+                timelinePage.resultRequested = false;
+                timelinePage.resultRetryCount = 0;
+                timelinePage.result = status.result;
+                timelinePage.resultStartDate = timelinePage.submittedStartDate;
+                timelinePage.resultEndDate = timelinePage.submittedEndDate;
             } else if (status.state === "completed") {
-                report.resultRequested = false;
+                timelinePage.resultRequested = false;
                 if (includedResult) {
-                    report.retryCompletedResult("The completed report returned no result.");
+                    timelinePage.retryCompletedResult("The completed timeline returned no result.");
                 } else {
-                    report.requestReportStatus(true);
+                    timelinePage.requestTimelineStatus(true);
                 }
             }
         }
 
-        function onPlaceReportStatusFailed(id, message, includedResult) {
-            if (id !== report.jobId)
+        function onTimelineStatusFailed(id, message, includedResult) {
+            if (id !== timelinePage.jobId)
                 return;
-            report.statusRequestPending = false;
+            timelinePage.statusRequestPending = false;
             if (message.indexOf("HTTP 404") === 0) {
-                report.resultRequested = false;
-                report.jobState = "failed";
-                report.errorMessage = "The place report is no longer available.";
+                timelinePage.resultRequested = false;
+                timelinePage.jobState = "failed";
+                timelinePage.errorMessage = "The timeline is no longer available.";
                 return;
             }
             if (includedResult) {
-                report.retryCompletedResult("Could not load the completed report.");
+                timelinePage.retryCompletedResult("Could not load the completed timeline.");
                 return;
             }
-            report.errorMessage = "Report status is temporarily unavailable; retrying.";
+            timelinePage.errorMessage = "Timeline status is temporarily unavailable; retrying.";
         }
 
         function onGeodataStatusFetched(status) {
-            report.geodataStatus = status;
+            timelinePage.geodataStatus = status;
         }
 
         function onImportCompleted(summary, params) {
             if (!summary || Number(summary.files || 0) === 0)
                 return;
-            report.invalidateCachedReport();
-            if (report.active)
-                Qt.callLater(report.beginReport);
+            timelinePage.invalidateCachedTimeline();
+            if (timelinePage.active)
+                Qt.callLater(timelinePage.beginTimeline);
         }
 
         function onGeodataInstallAccepted(generationId) {
-            report.api.getGeodataStatus();
+            timelinePage.api.getGeodataStatus();
         }
 
         function onGeodataInstallFailed(generationId, message) {
-            report.errorMessage = message;
-            report.api.getGeodataStatus();
+            timelinePage.errorMessage = message;
+            timelinePage.api.getGeodataStatus();
         }
     }
 
     Timer {
         interval: 250
         repeat: true
-        running: report.active && report.api !== null && report.jobId !== "" && (report.jobState === "queued" || report.jobState === "running" || report.jobState === "cancelling")
-        onTriggered: report.requestReportStatus(false)
+        running: timelinePage.active && timelinePage.api !== null && timelinePage.jobId !== "" && (timelinePage.jobState === "queued" || timelinePage.jobState === "running" || timelinePage.jobState === "cancelling")
+        onTriggered: timelinePage.requestTimelineStatus(false)
     }
 
     Timer {
@@ -243,20 +254,20 @@ Page {
         interval: 1000
         repeat: false
         onTriggered: {
-            if (report.active && report.jobState === "completed" && !report.result)
-                report.requestReportStatus(true);
+            if (timelinePage.active && timelinePage.jobState === "completed" && !timelinePage.result)
+                timelinePage.requestTimelineStatus(true);
         }
     }
 
     Timer {
         interval: 500
         repeat: true
-        running: report.active && report.api !== null && report.geodataStatus && report.geodataStatus.install && report.geodataStatus.install.state === "installing"
-        onTriggered: report.api.getGeodataStatus()
+        running: timelinePage.active && timelinePage.api !== null && timelinePage.geodataStatus && timelinePage.geodataStatus.install && timelinePage.geodataStatus.install.state === "installing"
+        onTriggered: timelinePage.api.getGeodataStatus()
     }
 
     header: ToolBar {
-        id: reportToolbar
+        id: timelineToolbar
         height: 50
 
         background: Rectangle {
@@ -266,9 +277,9 @@ Page {
                 acceptedButtons: Qt.LeftButton
                 gesturePolicy: TapHandler.WithinBounds
                 onDoubleTapped: {
-                    if (!report.hostWindow)
+                    if (!timelinePage.hostWindow)
                         return;
-                    report.hostWindow.visibility = report.hostWindow.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen;
+                    timelinePage.hostWindow.visibility = timelinePage.hostWindow.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen;
                 }
             }
         }
@@ -276,8 +287,8 @@ Page {
         DragHandler {
             target: null
             onActiveChanged: {
-                if (active && report.hostWindow && report.hostWindow.startSystemMove)
-                    report.hostWindow.startSystemMove();
+                if (active && timelinePage.hostWindow && timelinePage.hostWindow.startSystemMove)
+                    timelinePage.hostWindow.startSystemMove();
             }
         }
 
@@ -290,8 +301,8 @@ Page {
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.SizeFDiagCursor
             onPressed: {
-                if (report.hostWindow && report.hostWindow.startSystemResize)
-                    report.hostWindow.startSystemResize(Qt.TopEdge | Qt.LeftEdge);
+                if (timelinePage.hostWindow && timelinePage.hostWindow.startSystemResize)
+                    timelinePage.hostWindow.startSystemResize(Qt.TopEdge | Qt.LeftEdge);
             }
         }
 
@@ -304,8 +315,8 @@ Page {
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.SizeBDiagCursor
             onPressed: {
-                if (report.hostWindow && report.hostWindow.startSystemResize)
-                    report.hostWindow.startSystemResize(Qt.TopEdge | Qt.RightEdge);
+                if (timelinePage.hostWindow && timelinePage.hostWindow.startSystemResize)
+                    timelinePage.hostWindow.startSystemResize(Qt.TopEdge | Qt.RightEdge);
             }
         }
 
@@ -317,7 +328,7 @@ Page {
             ToolButton {
                 text: "Back"
                 Accessible.name: "Back to map"
-                onClicked: report.leaveReport()
+                onClicked: timelinePage.leaveTimeline()
             }
 
             Label {
@@ -330,9 +341,18 @@ Page {
             }
 
             ToolButton {
-                text: "Quit"
+                id: timelineQuitButton
+                icon.source: "qrc:/icons/quit.svg"
+                icon.width: theme.toolbarButtonSize
+                icon.height: theme.toolbarButtonSize
+                icon.color: hovered ? theme.toolbarIconHover : theme.toolbarIcon
                 Accessible.name: "Quit"
-                onClicked: Qt.quit()
+                CustomToolTip {
+                    tooltipText: "Quit"
+                    visible: timelineQuitButton.hovered
+                    position: "bottom"
+                }
+                onClicked: timelinePage.quitRequested()
             }
         }
     }
@@ -340,25 +360,25 @@ Page {
     Item {
         anchors.fill: parent
 
-        TravelTimeline {
-            id: journeyTimeline
+        TimelineView {
+            id: timelineViewContent
             anchors.fill: parent
-            visible: report.result !== null
-            result: report.result
-            year: report.selectedYear
-            active: report.active
-            controlsVisible: report.currentView === 0
+            visible: timelinePage.result !== null
+            result: timelinePage.result
+            year: timelinePage.selectedYear
+            active: timelinePage.active
+            controlsVisible: timelinePage.currentView === 0
         }
 
         Rectangle {
             id: statusCard
-            objectName: "placesStatusCard"
+            objectName: "timelineStatusCard"
             anchors.centerIn: parent
             width: Math.max(0, Math.min(520, parent.width - 32))
             height: statusContent.implicitHeight + 28
             radius: 16
             color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.96)
-            visible: report.result === null && report.jobState !== "unavailable"
+            visible: timelinePage.result === null && timelinePage.jobState !== "unavailable"
             z: 20
 
             RowLayout {
@@ -368,7 +388,7 @@ Page {
                 spacing: 12
 
                 BusyIndicator {
-                    running: report.jobState === "submitting" || report.jobState === "queued" || report.jobState === "running" || report.jobState === "cancelling"
+                    running: timelinePage.jobState === "submitting" || timelinePage.jobState === "queued" || timelinePage.jobState === "running" || timelinePage.jobState === "cancelling"
                     visible: running
                     Layout.preferredWidth: 30
                     Layout.preferredHeight: 30
@@ -381,19 +401,19 @@ Page {
                     Label {
                         Layout.fillWidth: true
                         text: {
-                            if (report.jobState === "completed")
-                                return report.result ? "Report ready" : "Report result unavailable";
-                            if (report.jobState === "unavailable")
+                            if (timelinePage.jobState === "completed")
+                                return timelinePage.result ? "Timeline ready" : "Timeline result unavailable";
+                            if (timelinePage.jobState === "unavailable")
                                 return "Administrative place data required";
-                            if (report.jobState === "failed")
-                                return "Report failed";
-                            if (report.jobState === "cancelled")
-                                return "Report cancelled";
-                            if (report.jobState === "queued")
-                                return "Report queued";
-                            if (report.jobState === "cancelling")
-                                return "Cancelling report";
-                            return "Building your local journey";
+                            if (timelinePage.jobState === "failed")
+                                return "Timeline failed";
+                            if (timelinePage.jobState === "cancelled")
+                                return "Timeline cancelled";
+                            if (timelinePage.jobState === "queued")
+                                return "Timeline queued";
+                            if (timelinePage.jobState === "cancelling")
+                                return "Cancelling timeline";
+                            return "Building your local timeline";
                         }
                         color: theme.toolbarText
                         font.bold: true
@@ -402,24 +422,25 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
-                        text: report.errorMessage !== "" ? report.errorMessage : (report.processedObservations > 0 ? report.processedObservations + " recorded observations processed" : "Cached places are reused; missing places get foreground priority.")
+                        text: timelinePage.errorMessage !== "" ? timelinePage.errorMessage : (timelinePage.processedObservations > 0 ? timelinePage.processedObservations + " recorded observations processed" : "Cached places are reused; missing places get foreground priority.")
                         color: theme.toolbarTextSecondary
+                        font.pixelSize: theme.scale(2)
                         wrapMode: Text.WordWrap
                     }
                 }
 
                 Button {
-                    visible: report.jobState === "queued" || report.jobState === "running" || report.jobState === "completed" || report.jobState === "failed" || report.jobState === "cancelled"
-                    text: report.jobState === "queued" || report.jobState === "running" ? "Cancel" : (report.jobState === "completed" ? "Retry result" : "Retry")
+                    visible: timelinePage.jobState === "queued" || timelinePage.jobState === "running" || timelinePage.jobState === "completed" || timelinePage.jobState === "failed" || timelinePage.jobState === "cancelled"
+                    text: timelinePage.jobState === "queued" || timelinePage.jobState === "running" ? "Cancel" : (timelinePage.jobState === "completed" ? "Retry result" : "Retry")
                     onClicked: {
-                        if (report.jobState === "queued" || report.jobState === "running") {
-                            report.cancelActiveReport();
-                        } else if (report.jobState === "completed") {
-                            report.resultRetryCount = 0;
-                            report.errorMessage = "";
-                            report.requestReportStatus(true);
+                        if (timelinePage.jobState === "queued" || timelinePage.jobState === "running") {
+                            timelinePage.cancelActiveTimeline();
+                        } else if (timelinePage.jobState === "completed") {
+                            timelinePage.resultRetryCount = 0;
+                            timelinePage.errorMessage = "";
+                            timelinePage.requestTimelineStatus(true);
                         } else {
-                            report.beginReport();
+                            timelinePage.beginTimeline();
                         }
                     }
                 }
@@ -432,7 +453,7 @@ Page {
             height: unavailableContent.implicitHeight + 36
             radius: 16
             color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.97)
-            visible: report.jobState === "unavailable"
+            visible: timelinePage.jobState === "unavailable"
             z: 20
 
             ColumnLayout {
@@ -451,56 +472,57 @@ Page {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: report.geodataStatus && report.geodataStatus.available && report.geodataStatus.available.length > 0 ? "Install the verified offline boundary dataset to create this report." : "This build does not advertise a signed boundary dataset yet. No mutable upstream download will be used."
+                    text: timelinePage.geodataStatus && timelinePage.geodataStatus.available && timelinePage.geodataStatus.available.length > 0 ? "Install the verified offline boundary dataset to create this timeline." : "This build does not advertise a signed boundary dataset yet. No mutable upstream download will be used."
                     color: theme.secondaryText
                     wrapMode: Text.WordWrap
                     horizontalAlignment: Text.AlignHCenter
                 }
                 ProgressBar {
                     Layout.fillWidth: true
-                    visible: report.geodataStatus && report.geodataStatus.install && report.geodataStatus.install.state === "installing"
+                    visible: timelinePage.geodataStatus && timelinePage.geodataStatus.install && timelinePage.geodataStatus.install.state === "installing"
                     from: 0
-                    to: report.geodataStatus && report.geodataStatus.install && report.geodataStatus.install.progress ? Math.max(1, report.geodataStatus.install.progress.total_bytes || 1) : 1
-                    value: report.geodataStatus && report.geodataStatus.install && report.geodataStatus.install.progress ? report.geodataStatus.install.progress.bytes || 0 : 0
+                    to: timelinePage.geodataStatus && timelinePage.geodataStatus.install && timelinePage.geodataStatus.install.progress ? Math.max(1, timelinePage.geodataStatus.install.progress.total_bytes || 1) : 1
+                    value: timelinePage.geodataStatus && timelinePage.geodataStatus.install && timelinePage.geodataStatus.install.progress ? timelinePage.geodataStatus.install.progress.bytes || 0 : 0
                 }
                 RowLayout {
                     Layout.alignment: Qt.AlignHCenter
                     Button {
-                        visible: report.geodataStatus && report.geodataStatus.available && report.geodataStatus.available.length > 0 && (!report.geodataStatus.install || report.geodataStatus.install.state !== "installing")
+                        visible: timelinePage.geodataStatus && timelinePage.geodataStatus.available && timelinePage.geodataStatus.available.length > 0 && (!timelinePage.geodataStatus.install || timelinePage.geodataStatus.install.state !== "installing")
                         text: "Install offline data"
-                        onClicked: report.api.installGeodata(report.geodataStatus.available[0].id)
+                        onClicked: timelinePage.api.installGeodata(timelinePage.geodataStatus.available[0].id)
                     }
                     Button {
-                        visible: report.geodataStatus && report.geodataStatus.install && report.geodataStatus.install.state === "installing"
+                        visible: timelinePage.geodataStatus && timelinePage.geodataStatus.install && timelinePage.geodataStatus.install.state === "installing"
                         text: "Cancel install"
-                        onClicked: report.api.cancelGeodataInstall()
+                        onClicked: timelinePage.api.cancelGeodataInstall()
                     }
                     Button {
-                        text: "Retry report"
-                        onClicked: report.beginReport()
+                        text: "Retry timeline"
+                        onClicked: timelinePage.beginTimeline()
                     }
                 }
             }
         }
 
-        PlacesDetailsSheet {
+        TimelineDetailsSheet {
             id: detailsOverlay
             anchors.fill: parent
-            result: report.result
-            period: report.reportPeriod()
-            open: report.currentView === 1
+            result: timelinePage.result
+            period: timelinePage.timelinePeriod()
+            open: timelinePage.currentView === 1
             topInset: yearPill.y + yearPill.height + 10
             z: 30
             onCloseRequested: {
-                report.currentView = 0;
+                timelinePage.currentView = 0;
                 Qt.callLater(detailsToggle.forceActiveFocus);
             }
-            onRefreshRequested: report.beginReport()
+            onPlaceRequested: place => timelinePage.showPlaceOnTimeline(place)
+            onRefreshRequested: timelinePage.beginTimeline()
         }
 
         Rectangle {
             id: yearPill
-            objectName: "placesYearPill"
+            objectName: "timelineYearPill"
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.topMargin: 16
@@ -509,7 +531,7 @@ Page {
             height: 42
             radius: 21
             color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.94)
-            visible: report.currentView === 0
+            visible: timelinePage.currentView === 0
             z: 40
 
             RowLayout {
@@ -525,8 +547,8 @@ Page {
                     Layout.preferredHeight: 40
                     text: "‹"
                     Accessible.name: "Previous year"
-                    enabled: report.selectedYear > 1
-                    onClicked: report.yearRequested(report.selectedYear - 1)
+                    enabled: timelinePage.selectedYear > 1
+                    onClicked: timelinePage.yearRequested(timelinePage.selectedYear - 1)
                     contentItem: Text {
                         text: previousYearButton.text
                         color: previousYearButton.enabled ? theme.primaryText : theme.toolbarIconDisabled
@@ -543,7 +565,7 @@ Page {
 
                 Label {
                     Layout.preferredWidth: 58
-                    text: report.selectedYear
+                    text: timelinePage.selectedYear
                     color: theme.primaryText
                     font.bold: true
                     font.pixelSize: theme.scale(2)
@@ -556,8 +578,8 @@ Page {
                     Layout.preferredHeight: 40
                     text: "›"
                     Accessible.name: "Next year"
-                    enabled: report.selectedYear < report.currentUTCYear
-                    onClicked: report.yearRequested(report.selectedYear + 1)
+                    enabled: timelinePage.selectedYear < timelinePage.currentUTCYear
+                    onClicked: timelinePage.yearRequested(timelinePage.selectedYear + 1)
                     contentItem: Text {
                         text: nextYearButton.text
                         color: nextYearButton.enabled ? theme.primaryText : theme.toolbarIconDisabled
@@ -582,11 +604,11 @@ Page {
             anchors.rightMargin: 16
             width: 98
             height: 42
-            visible: report.result !== null
-            text: report.currentView === 0 ? "Details" : "Journey"
-            Accessible.name: report.currentView === 0 ? "Open report details" : "Return to journey"
+            visible: timelinePage.result !== null
+            text: timelinePage.currentView === 0 ? "Details" : "Timeline"
+            Accessible.name: timelinePage.currentView === 0 ? "Open timeline details" : "Return to timeline"
             z: 40
-            onClicked: report.currentView = report.currentView === 0 ? 1 : 0
+            onClicked: timelinePage.currentView = timelinePage.currentView === 0 ? 1 : 0
             contentItem: Text {
                 text: detailsToggle.text
                 color: theme.primaryText
@@ -609,8 +631,8 @@ Page {
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.SizeBDiagCursor
             onPressed: {
-                if (report.hostWindow && report.hostWindow.startSystemResize)
-                    report.hostWindow.startSystemResize(Qt.BottomEdge | Qt.LeftEdge);
+                if (timelinePage.hostWindow && timelinePage.hostWindow.startSystemResize)
+                    timelinePage.hostWindow.startSystemResize(Qt.BottomEdge | Qt.LeftEdge);
             }
         }
 
@@ -623,8 +645,8 @@ Page {
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.SizeFDiagCursor
             onPressed: {
-                if (report.hostWindow && report.hostWindow.startSystemResize)
-                    report.hostWindow.startSystemResize(Qt.BottomEdge | Qt.RightEdge);
+                if (timelinePage.hostWindow && timelinePage.hostWindow.startSystemResize)
+                    timelinePage.hostWindow.startSystemResize(Qt.BottomEdge | Qt.RightEdge);
             }
         }
     }

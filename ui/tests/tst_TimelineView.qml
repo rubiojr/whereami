@@ -7,11 +7,11 @@ import "../components"
 
 TestCase {
     id: testCase
-    name: "TravelTimeline"
+    name: "TimelineView"
 
     Component {
         id: timelineComponent
-        TravelTimeline {
+        TimelineView {
             width: 1000
             height: 700
             year: 2024
@@ -27,7 +27,7 @@ TestCase {
             visible: true
             property alias timeline: visibleTimeline
 
-            TravelTimeline {
+            TimelineView {
                 id: visibleTimeline
                 anchors.fill: parent
                 active: true
@@ -72,8 +72,8 @@ TestCase {
                 last_observation_utc: "2024-02-09T19:15:00Z"
             }
         ],
-        journey_separation_meters: 100,
-        journey_truncated: true
+        timeline_stop_separation_meters: 100,
+        timeline_truncated: true
     })
 
     function test_navigationStartsAtLatestAndMovesChronologically() {
@@ -84,6 +84,7 @@ TestCase {
         compare(timeline.currentStop.locality, "Barcelona");
         verify(timeline.atLatest);
         verify(!timeline.atOldest);
+        tryCompare(timeline.scrubber, "value", timeline.stopCount - 1);
 
         timeline.previous();
         compare(timeline.currentIndex, 0);
@@ -113,7 +114,32 @@ TestCase {
         compare(timeline.coordinateLabel(sampleResult.timeline[1]), "41.38740, 2.16860");
     }
 
-    function test_panelOffsetsMapAndPreservesJourneyMetadata() {
+    function test_placeLookupUsesExplicitTimelineIndex() {
+        var timeline = createTemporaryObject(timelineComponent, null, { result: sampleResult });
+        verify(timeline !== null);
+        compare(timeline.stopIndexForPlace({ timeline_index: 0 }), 0);
+        compare(timeline.stopIndexForPlace({ timeline_index: 1 }), 1);
+        compare(timeline.stopIndexForPlace({ timeline_index: 2 }), -1);
+        compare(timeline.stopIndexForPlace({ timeline_index: 0.5 }), -1);
+        compare(timeline.stopIndexForPlace({ timeline_index: "1" }), -1);
+        compare(timeline.stopIndexForPlace({ timeline_index: true }), -1);
+        compare(timeline.stopIndexForPlace({}), -1);
+    }
+
+    function test_showStopKeepsClickedPlaceContextUntilNavigation() {
+        var timeline = createTemporaryObject(timelineComponent, null, { result: sampleResult });
+        verify(timeline !== null);
+
+        timeline.showStop(0, { locality: "Boundary edge", country: "France" });
+        compare(timeline.currentIndex, 0);
+        compare(timeline.displayedPlace.locality, "Boundary edge");
+
+        timeline.next();
+        compare(timeline.currentIndex, 1);
+        compare(timeline.displayedPlace.locality, "Barcelona");
+    }
+
+    function test_panelOffsetsMapAndPreservesTimelineMetadata() {
         var timeline = createTemporaryObject(timelineComponent, null, {
             width: 360,
             result: sampleResult
@@ -121,15 +147,41 @@ TestCase {
         verify(timeline !== null);
         verify(timeline.panelVisible);
         verify(timeline.focusTargetY < timeline.height / 2);
-        var metadata = findChild(timeline, "journeyMetaLabel");
+        var metadata = findChild(timeline, "timelineMetaLabel");
         verify(metadata !== null);
         verify(metadata.text.indexOf("LIMITED") >= 0);
         verify(metadata.text.indexOf("100 m") >= 0);
         verify(!metadata.truncated);
+        verify(metadata.font.pixelSize >= 14);
 
         timeline.controlsVisible = false;
         verify(!timeline.panelVisible);
         compare(timeline.focusTargetY, timeline.height / 2);
+    }
+
+    function test_finishButtonJumpsToLatest() {
+        var window = createTemporaryObject(timelineWindowComponent, null);
+        verify(window !== null);
+        var timeline = window.timeline;
+        var finishButton = findChild(timeline, "timelineFinishButton");
+        verify(finishButton !== null);
+        compare(finishButton.icon.source.toString(), "qrc:/icons/finish.svg");
+        compare(finishButton.icon.width, 16);
+        compare(finishButton.icon.height, 16);
+        verify(!finishButton.enabled);
+        compare(finishButton.opacity, 0);
+
+        timeline.previous();
+        verify(finishButton.enabled);
+        tryCompare(finishButton, "opacity", 1);
+        verify(finishButton.x >= timeline.scrubber.x + timeline.scrubber.width);
+        window.requestActivate();
+        tryVerify(function() { return window.active; });
+        mouseClick(finishButton, finishButton.width / 2, finishButton.height / 2, Qt.LeftButton);
+
+        compare(timeline.currentIndex, timeline.stopCount - 1);
+        verify(!finishButton.enabled);
+        tryCompare(finishButton, "opacity", 0);
     }
 
     function test_detailsRoundTripPreservesMapZoom() {
@@ -189,7 +241,7 @@ TestCase {
         verify(!timeline.cameraUserAdjusted);
     }
 
-    function test_mapLoadsForJourney() {
+    function test_mapLoadsForTimeline() {
         var timeline = createTemporaryObject(timelineComponent, null, {
             active: true,
             result: sampleResult

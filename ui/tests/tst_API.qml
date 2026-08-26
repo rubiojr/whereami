@@ -17,26 +17,26 @@ TestCase {
         SignalSpy {}
     }
 
-    function test_offlinePlaceReportStatusIsReportedAsFailure() {
+    function test_offlineTimelineStatusIsReportedAsFailure() {
         var api = createTemporaryObject(apiComponent, null);
         verify(api !== null);
         var fetchedSpy = createTemporaryObject(statusSpyComponent, null, {
             target: api,
-            signalName: "placeReportStatusFetched"
+            signalName: "timelineStatusFetched"
         });
         var failedSpy = createTemporaryObject(statusSpyComponent, null, {
             target: api,
-            signalName: "placeReportStatusFailed"
+            signalName: "timelineStatusFailed"
         });
         verify(fetchedSpy !== null);
         verify(failedSpy !== null);
 
-        api.getPlaceReport("job-1", false);
+        api.getTimeline("job-1", false);
 
         compare(fetchedSpy.count, 0);
         compare(failedSpy.count, 1);
         compare(failedSpy.signalArguments[0][0], "job-1");
-        compare(failedSpy.signalArguments[0][1], "invalid place report status response");
+        compare(failedSpy.signalArguments[0][1], "invalid timeline status response");
         compare(failedSpy.signalArguments[0][2], false);
     }
 }

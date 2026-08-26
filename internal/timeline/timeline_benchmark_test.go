@@ -1,4 +1,4 @@
-package reports_test
+package timeline_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/rubiojr/whereami/internal/observations"
-	"github.com/rubiojr/whereami/internal/reports"
+	"github.com/rubiojr/whereami/internal/timeline"
 )
 
 func BenchmarkGenerateMillionObservations(b *testing.B) {
@@ -46,7 +46,7 @@ func BenchmarkGenerateMillionObservations(b *testing.B) {
 	}
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 0, 1)
-	metadata := reports.DatasetMetadata{DatasetVersion: "dataset-v1"}
+	metadata := timeline.DatasetMetadata{DatasetVersion: "dataset-v1"}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -55,7 +55,7 @@ func BenchmarkGenerateMillionObservations(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		report, err := reports.Generate(context.Background(), snapshot, reportResolver{}, metadata, start, end, nil)
+		result, err := timeline.Generate(context.Background(), snapshot, timelineResolver{}, metadata, start, end, nil)
 		closeErr := snapshot.Close()
 		if err != nil {
 			b.Fatal(err)
@@ -63,8 +63,8 @@ func BenchmarkGenerateMillionObservations(b *testing.B) {
 		if closeErr != nil {
 			b.Fatal(closeErr)
 		}
-		if report.Summary.RecordedObservations != files*observationsPerFile {
-			b.Fatalf("got %d observations", report.Summary.RecordedObservations)
+		if result.Summary.RecordedObservations != files*observationsPerFile {
+			b.Fatalf("got %d observations", result.Summary.RecordedObservations)
 		}
 	}
 	b.ReportMetric(files*observationsPerFile, "observations/op")

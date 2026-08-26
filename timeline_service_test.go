@@ -12,37 +12,37 @@ import (
 	"time"
 
 	"github.com/rubiojr/whereami/internal/geodata"
-	"github.com/rubiojr/whereami/internal/reports"
+	"github.com/rubiojr/whereami/internal/timeline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPlaceReportAPIRequiresAuthAndRunsAsynchronously(t *testing.T) {
+func TestTimelineAPIRequiresAuthAndRunsAsynchronously(t *testing.T) {
 	type period struct{ start, end time.Time }
 	periods := make(chan period, 1)
-	service := newPlaceReportJobService(nil, func(_ context.Context, start, end time.Time, progress func(int64)) (reports.Report, error) {
+	service := newTimelineJobService(nil, func(_ context.Context, start, end time.Time, progress func(int64)) (timeline.Result, error) {
 		periods <- period{start: start, end: end}
 		progress(3)
-		return reports.Report{
-			Period:  reports.Period{StartUTC: start.Format(time.RFC3339), EndUTC: end.Format(time.RFC3339), TimeZone: "UTC"},
-			Summary: reports.Summary{RecordedObservations: 3},
-			Places:  []reports.Place{{Country: "Spain", Locality: "Barcelona", RecordedObservations: 3}},
+		return timeline.Result{
+			Period:  timeline.Period{StartUTC: start.Format(time.RFC3339), EndUTC: end.Format(time.RFC3339), TimeZone: "UTC"},
+			Summary: timeline.Summary{RecordedObservations: 3},
+			Places:  []timeline.Place{{Country: "Spain", Locality: "Barcelona", RecordedObservations: 3}},
 		}, nil
 	})
 	t.Cleanup(service.Close)
 	mux := http.NewServeMux()
-	RegisterPlaceReportAPI(mux, service)
+	RegisterTimelineAPI(mux, service)
 	handler := secureAPI("secret", mux)
 	body := []byte(`{"start_date":"2024-02-28","end_date":"2024-02-29"}`)
 
 	unauthorized := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/place-reports", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/api/timelines", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(unauthorized, request)
 	assert.Equal(t, http.StatusUnauthorized, unauthorized.Code)
 
 	response := httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodPost, "/api/place-reports", bytes.NewReader(body))
+	request = httptest.NewRequest(http.MethodPost, "/api/timelines", bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer secret")
 	request.Header.Set("Content-Type", "application/json")
 	handler.ServeHTTP(response, request)
@@ -61,7 +61,7 @@ func TestPlaceReportAPIRequiresAuthAndRunsAsynchronously(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodGet, "/api/place-reports/"+jobID, nil)
+	request = httptest.NewRequest(http.MethodGet, "/api/timelines/"+jobID, nil)
 	request.Header.Set("Authorization", "Bearer secret")
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code)
@@ -73,19 +73,19 @@ func TestPlaceReportAPIRequiresAuthAndRunsAsynchronously(t *testing.T) {
 	assert.Contains(t, responseText, `"processed_observations":3`)
 
 	response = httptest.NewRecorder()
-	request = httptest.NewRequest(http.MethodGet, "/api/place-reports/"+jobID+"?result=true", nil)
+	request = httptest.NewRequest(http.MethodGet, "/api/timelines/"+jobID+"?result=true", nil)
 	request.Header.Set("Authorization", "Bearer secret")
 	handler.ServeHTTP(response, request)
 	require.Equal(t, http.StatusOK, response.Code)
 	assert.Contains(t, strings.ToLower(response.Body.String()), `"locality":"barcelona"`)
 }
 
-func TestPlaceReportCancellation(t *testing.T) {
+func TestTimelineCancellation(t *testing.T) {
 	started := make(chan struct{})
-	service := newPlaceReportJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (reports.Report, error) {
+	service := newTimelineJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (timeline.Result, error) {
 		close(started)
 		<-ctx.Done()
-		return reports.Report{}, ctx.Err()
+		return timeline.Result{}, ctx.Err()
 	})
 	t.Cleanup(service.Close)
 	id, err := service.Submit("2024-01-01", "2024-01-01")
@@ -101,21 +101,21 @@ func TestPlaceReportCancellation(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
-func TestPlaceReportDeadlineStartsWhenJobRuns(t *testing.T) {
+func TestTimelineDeadlineStartsWhenJobRuns(t *testing.T) {
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})
 	secondDeadline := make(chan bool, 1)
 	runCount := 0
-	service := newPlaceReportJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (reports.Report, error) {
+	service := newTimelineJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (timeline.Result, error) {
 		runCount++
 		if runCount == 1 {
 			close(firstStarted)
 			<-releaseFirst
-			return reports.Report{}, nil
+			return timeline.Result{}, nil
 		}
 		_, hasDeadline := ctx.Deadline()
 		secondDeadline <- hasDeadline
-		return reports.Report{}, nil
+		return timeline.Result{}, nil
 	})
 	t.Cleanup(service.Close)
 	t.Cleanup(func() {
@@ -141,16 +141,16 @@ func TestPlaceReportDeadlineStartsWhenJobRuns(t *testing.T) {
 	case hasDeadline := <-secondDeadline:
 		assert.True(t, hasDeadline)
 	case <-time.After(time.Second):
-		t.Fatal("queued report did not start")
+		t.Fatal("queued timeline did not start")
 	}
 }
 
-func TestPlaceReportPrunesExpiredResults(t *testing.T) {
+func TestTimelinePrunesExpiredResults(t *testing.T) {
 	now := time.Now()
-	service := &placeReportService{
-		jobs: map[string]*placeReportJob{
-			"expired": {id: "expired", state: "completed", result: &reports.Report{}, finished: now.Add(-placeReportRetention)},
-			"recent":  {id: "recent", state: "completed", result: &reports.Report{}, finished: now},
+	service := &timelineService{
+		jobs: map[string]*timelineJob{
+			"expired": {id: "expired", state: "completed", result: &timeline.Result{}, finished: now.Add(-timelineRetention)},
+			"recent":  {id: "recent", state: "completed", result: &timeline.Result{}, finished: now},
 			"running": {id: "running", state: "running"},
 		},
 		order: []string{"expired", "recent", "running"},
@@ -163,46 +163,46 @@ func TestPlaceReportPrunesExpiredResults(t *testing.T) {
 	assert.Equal(t, []string{"recent", "running"}, service.order)
 }
 
-func TestPlaceReportQueueIsBounded(t *testing.T) {
+func TestTimelineQueueIsBounded(t *testing.T) {
 	started := make(chan struct{})
-	service := newPlaceReportJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (reports.Report, error) {
+	service := newTimelineJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (timeline.Result, error) {
 		select {
 		case <-started:
 		default:
 			close(started)
 		}
 		<-ctx.Done()
-		return reports.Report{}, ctx.Err()
+		return timeline.Result{}, ctx.Err()
 	})
 	t.Cleanup(service.Close)
 	_, err := service.Submit("2024-01-01", "2024-01-01")
 	require.NoError(t, err)
 	<-started
-	for range maxQueuedPlaceReports {
+	for range maxQueuedTimelines {
 		_, err = service.Submit("2024-01-01", "2024-01-01")
 		require.NoError(t, err)
 	}
 	_, err = service.Submit("2024-01-01", "2024-01-01")
-	assert.ErrorIs(t, err, errPlaceReportQueueFull)
+	assert.ErrorIs(t, err, errTimelineQueueFull)
 }
 
-func TestPlaceReportCancellingQueuedJobReclaimsCapacity(t *testing.T) {
+func TestTimelineCancellingQueuedJobReclaimsCapacity(t *testing.T) {
 	started := make(chan struct{})
-	service := newPlaceReportJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (reports.Report, error) {
+	service := newTimelineJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (timeline.Result, error) {
 		select {
 		case <-started:
 		default:
 			close(started)
 		}
 		<-ctx.Done()
-		return reports.Report{}, ctx.Err()
+		return timeline.Result{}, ctx.Err()
 	})
 	t.Cleanup(service.Close)
 	_, err := service.Submit("2024-01-01", "2024-01-01")
 	require.NoError(t, err)
 	<-started
-	queued := make([]string, 0, maxQueuedPlaceReports)
-	for range maxQueuedPlaceReports {
+	queued := make([]string, 0, maxQueuedTimelines)
+	for range maxQueuedTimelines {
 		id, submitErr := service.Submit("2024-01-01", "2024-01-01")
 		require.NoError(t, submitErr)
 		queued = append(queued, id)
@@ -214,13 +214,13 @@ func TestPlaceReportCancellingQueuedJobReclaimsCapacity(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestPlaceReportCancellationWinsOverSuccessfulRun(t *testing.T) {
+func TestTimelineCancellationWinsOverSuccessfulRun(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	service := newPlaceReportJobService(nil, func(context.Context, time.Time, time.Time, func(int64)) (reports.Report, error) {
+	service := newTimelineJobService(nil, func(context.Context, time.Time, time.Time, func(int64)) (timeline.Result, error) {
 		close(started)
 		<-release
-		return reports.Report{}, nil
+		return timeline.Result{}, nil
 	})
 	t.Cleanup(service.Close)
 	id, err := service.Submit("2024-01-01", "2024-01-01")
@@ -236,9 +236,9 @@ func TestPlaceReportCancellationWinsOverSuccessfulRun(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
-func TestPlaceReportFailureDoesNotExposeBackendDetails(t *testing.T) {
-	service := newPlaceReportJobService(nil, func(context.Context, time.Time, time.Time, func(int64)) (reports.Report, error) {
-		return reports.Report{}, errors.New(`open /home/alice/private/observations.sqlite: permission denied`)
+func TestTimelineFailureDoesNotExposeBackendDetails(t *testing.T) {
+	service := newTimelineJobService(nil, func(context.Context, time.Time, time.Time, func(int64)) (timeline.Result, error) {
+		return timeline.Result{}, errors.New(`open /home/alice/private/observations.sqlite: permission denied`)
 	})
 	t.Cleanup(service.Close)
 	id, err := service.Submit("2024-01-01", "2024-01-01")
@@ -248,43 +248,43 @@ func TestPlaceReportFailureDoesNotExposeBackendDetails(t *testing.T) {
 		return ok && status.State == "failed"
 	}, time.Second, 10*time.Millisecond)
 	status, _ := service.Status(id)
-	assert.Equal(t, "place report generation failed", status.Error)
+	assert.Equal(t, "timeline generation failed", status.Error)
 	assert.NotContains(t, status.Error, "/home/alice")
 }
 
-func TestPlaceReportAPIReportsMissingGeodata(t *testing.T) {
-	service := newPlaceReportJobService(func() error { return geodata.ErrNoActiveGeneration }, func(context.Context, time.Time, time.Time, func(int64)) (reports.Report, error) {
-		return reports.Report{}, nil
+func TestTimelineAPIReportsMissingGeodata(t *testing.T) {
+	service := newTimelineJobService(func() error { return geodata.ErrNoActiveGeneration }, func(context.Context, time.Time, time.Time, func(int64)) (timeline.Result, error) {
+		return timeline.Result{}, nil
 	})
 	t.Cleanup(service.Close)
 	mux := http.NewServeMux()
-	RegisterPlaceReportAPI(mux, service)
+	RegisterTimelineAPI(mux, service)
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/place-reports", bytes.NewBufferString(`{"start_date":"2024-01-01","end_date":"2024-01-01"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/timelines", bytes.NewBufferString(`{"start_date":"2024-01-01","end_date":"2024-01-01"}`))
 	mux.ServeHTTP(response, request)
 	assert.Equal(t, http.StatusConflict, response.Code)
 }
 
-func TestPlaceReportAPIDoesNotExposeReadinessDetails(t *testing.T) {
-	service := newPlaceReportJobService(func() error {
+func TestTimelineAPIDoesNotExposeReadinessDetails(t *testing.T) {
+	service := newTimelineJobService(func() error {
 		return errors.New(`open /home/alice/private/geodata/state.json: permission denied`)
-	}, func(context.Context, time.Time, time.Time, func(int64)) (reports.Report, error) {
-		return reports.Report{}, nil
+	}, func(context.Context, time.Time, time.Time, func(int64)) (timeline.Result, error) {
+		return timeline.Result{}, nil
 	})
 	t.Cleanup(service.Close)
 	mux := http.NewServeMux()
-	RegisterPlaceReportAPI(mux, service)
+	RegisterTimelineAPI(mux, service)
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/place-reports", bytes.NewBufferString(`{"start_date":"2024-01-01","end_date":"2024-01-01"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/timelines", bytes.NewBufferString(`{"start_date":"2024-01-01","end_date":"2024-01-01"}`))
 	mux.ServeHTTP(response, request)
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code)
-	assert.Equal(t, "place reports unavailable\n", response.Body.String())
+	assert.Equal(t, "timelines unavailable\n", response.Body.String())
 	assert.NotContains(t, response.Body.String(), "/home/alice")
 }
 
-func TestParsePlaceReportDates(t *testing.T) {
+func TestParseTimelineDates(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		startDate string
@@ -295,7 +295,7 @@ func TestParsePlaceReportDates(t *testing.T) {
 		{name: "reverse", startDate: "2024-03-01", endDate: "2024-02-29"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, err := parsePlaceReportDates(test.startDate, test.endDate)
+			_, _, err := parseTimelineDates(test.startDate, test.endDate)
 			assert.Error(t, err)
 		})
 	}

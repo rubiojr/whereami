@@ -383,7 +383,7 @@ func (s *Snapshot) ScanPeriod(start, end time.Time, visit func(Observation) erro
 }
 
 // ScanResolvableCoordinates visits each distinct coordinate which can
-// participate in a report, ordered by longitude and then latitude.
+// participate in a timeline, ordered by longitude and then latitude.
 func (s *Snapshot) ScanResolvableCoordinates(ctx context.Context, visit func(longitude, latitude float64) error) error {
 	if ctx == nil {
 		return errors.New("observation coordinate scan context is nil")

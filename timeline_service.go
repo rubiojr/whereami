@@ -16,27 +16,27 @@ import (
 	"github.com/rubiojr/whereami/internal/admingeo"
 	"github.com/rubiojr/whereami/internal/geodata"
 	"github.com/rubiojr/whereami/internal/observations"
-	"github.com/rubiojr/whereami/internal/reports"
+	"github.com/rubiojr/whereami/internal/timeline"
 	"github.com/rubiojr/whereami/pkg/logger"
 )
 
 const (
-	maxQueuedPlaceReports   = 8
-	maxRetainedPlaceReports = 16
-	maxPlaceReportDays      = 7320
-	maxPlaceReportDuration  = 10 * time.Minute
-	placeReportRetention    = 15 * time.Minute
-	placeReportPruneEvery   = time.Minute
+	maxQueuedTimelines   = 8
+	maxRetainedTimelines = 16
+	maxTimelineDays      = 7320
+	maxTimelineDuration  = 10 * time.Minute
+	timelineRetention    = 15 * time.Minute
+	timelinePruneEvery   = time.Minute
 )
 
 var (
-	errInvalidPlaceReportDates = errors.New("invalid place report dates")
-	errPlaceReportQueueFull    = errors.New("place report queue is full")
+	errInvalidTimelineDates = errors.New("invalid timeline dates")
+	errTimelineQueueFull    = errors.New("timeline queue is full")
 )
 
-type placeReportRunFunc func(context.Context, time.Time, time.Time, func(int64)) (reports.Report, error)
+type timelineRunFunc func(context.Context, time.Time, time.Time, func(int64)) (timeline.Result, error)
 
-type placeReportJob struct {
+type timelineJob struct {
 	id        string
 	state     string
 	startDate string
@@ -44,7 +44,7 @@ type placeReportJob struct {
 	start     time.Time
 	end       time.Time
 	processed int64
-	result    *reports.Report
+	result    *timeline.Result
 	err       string
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -52,21 +52,21 @@ type placeReportJob struct {
 	finished  time.Time
 }
 
-type placeReportJobStatus struct {
-	ID        string          `json:"id"`
-	State     string          `json:"state"`
-	StartDate string          `json:"start_date"`
-	EndDate   string          `json:"end_date"`
-	Processed int64           `json:"processed_observations"`
-	Result    *reports.Report `json:"result,omitempty"`
-	Error     string          `json:"error,omitempty"`
+type timelineJobStatus struct {
+	ID        string           `json:"id"`
+	State     string           `json:"state"`
+	StartDate string           `json:"start_date"`
+	EndDate   string           `json:"end_date"`
+	Processed int64            `json:"processed_observations"`
+	Result    *timeline.Result `json:"result,omitempty"`
+	Error     string           `json:"error,omitempty"`
 }
 
-type placeReportService struct {
+type timelineService struct {
 	mu      sync.Mutex
 	ready   func() error
-	run     placeReportRunFunc
-	jobs    map[string]*placeReportJob
+	run     timelineRunFunc
+	jobs    map[string]*timelineJob
 	order   []string
 	pending []string
 	wake    chan struct{}
@@ -75,29 +75,29 @@ type placeReportService struct {
 	closed  bool
 }
 
-func newPlaceReportService(repository *observations.Repository, manager *geodata.Manager, cache *admincache.Store, warmer *admincache.Warmer) *placeReportService {
-	service := newPlaceReportJobService(func() error {
+func newTimelineService(repository *observations.Repository, manager *geodata.Manager, cache *admincache.Store, warmer *admincache.Warmer) *timelineService {
+	service := newTimelineJobService(func() error {
 		if repository == nil || manager == nil {
-			return errors.New("place report data is unavailable")
+			return errors.New("timeline data is unavailable")
 		}
 		lease, err := manager.Acquire()
 		if err != nil {
 			return err
 		}
 		return lease.Close()
-	}, func(ctx context.Context, start, end time.Time, progress func(int64)) (reports.Report, error) {
+	}, func(ctx context.Context, start, end time.Time, progress func(int64)) (timeline.Result, error) {
 		if warmer != nil {
 			release := warmer.BeginForeground()
 			defer release()
 		}
 		snapshot, err := repository.Snapshot()
 		if err != nil {
-			return reports.Report{}, err
+			return timeline.Result{}, err
 		}
 		defer snapshot.Close()
 		lease, err := manager.Acquire()
 		if err != nil {
-			return reports.Report{}, err
+			return timeline.Result{}, err
 		}
 		defer lease.Close()
 		var resolver admingeo.Resolver = lease
@@ -105,7 +105,7 @@ func newPlaceReportService(repository *observations.Repository, manager *geodata
 		if cache != nil {
 			session, err = admincache.NewSession(cache, lease)
 			if err != nil {
-				return reports.Report{}, err
+				return timeline.Result{}, err
 			}
 			resolver = session
 			defer func() {
@@ -115,7 +115,7 @@ func newPlaceReportService(repository *observations.Repository, manager *geodata
 			}()
 		}
 		generation := lease.Generation()
-		return reports.Generate(ctx, snapshot, resolver, reports.DatasetMetadata{
+		return timeline.Generate(ctx, snapshot, resolver, timeline.DatasetMetadata{
 			DatasetVersion: generation.DatasetVersion,
 			SourceVersion:  generation.SourceVersion,
 			Attribution:    generation.Attribution,
@@ -125,14 +125,14 @@ func newPlaceReportService(repository *observations.Repository, manager *geodata
 	return service
 }
 
-func newPlaceReportJobService(ready func() error, run placeReportRunFunc) *placeReportService {
+func newTimelineJobService(ready func() error, run timelineRunFunc) *timelineService {
 	if run == nil {
-		panic("place report run function is required")
+		panic("timeline run function is required")
 	}
-	service := &placeReportService{
+	service := &timelineService{
 		ready: ready,
 		run:   run,
-		jobs:  make(map[string]*placeReportJob),
+		jobs:  make(map[string]*timelineJob),
 		wake:  make(chan struct{}, 1),
 		stop:  make(chan struct{}),
 	}
@@ -141,8 +141,8 @@ func newPlaceReportJobService(ready func() error, run placeReportRunFunc) *place
 	return service
 }
 
-func (s *placeReportService) Submit(startDate, endDate string) (string, error) {
-	start, end, err := parsePlaceReportDates(startDate, endDate)
+func (s *timelineService) Submit(startDate, endDate string) (string, error) {
+	start, end, err := parseTimelineDates(startDate, endDate)
 	if err != nil {
 		return "", err
 	}
@@ -151,12 +151,12 @@ func (s *placeReportService) Submit(startDate, endDate string) (string, error) {
 			return "", err
 		}
 	}
-	id, err := newPlaceReportID()
+	id, err := newTimelineID()
 	if err != nil {
 		return "", err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	job := &placeReportJob{
+	job := &timelineJob{
 		id: id, state: "queued", startDate: startDate, endDate: endDate,
 		start: start, end: end, ctx: ctx, cancel: cancel,
 	}
@@ -165,18 +165,18 @@ func (s *placeReportService) Submit(startDate, endDate string) (string, error) {
 	if s.closed {
 		s.mu.Unlock()
 		cancel()
-		return "", errors.New("place report service is closed")
+		return "", errors.New("timeline service is closed")
 	}
 	s.pruneLocked()
-	if len(s.jobs) >= maxRetainedPlaceReports {
+	if len(s.jobs) >= maxRetainedTimelines {
 		s.mu.Unlock()
 		cancel()
-		return "", errPlaceReportQueueFull
+		return "", errTimelineQueueFull
 	}
-	if len(s.pending) >= maxQueuedPlaceReports {
+	if len(s.pending) >= maxQueuedTimelines {
 		s.mu.Unlock()
 		cancel()
-		return "", errPlaceReportQueueFull
+		return "", errTimelineQueueFull
 	}
 	s.jobs[id] = job
 	s.order = append(s.order, id)
@@ -189,20 +189,20 @@ func (s *placeReportService) Submit(startDate, endDate string) (string, error) {
 	return id, nil
 }
 
-func (s *placeReportService) Status(id string) (placeReportJobStatus, bool) {
+func (s *timelineService) Status(id string) (timelineJobStatus, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job, ok := s.jobs[id]
 	if !ok {
-		return placeReportJobStatus{}, false
+		return timelineJobStatus{}, false
 	}
-	return placeReportJobStatus{
+	return timelineJobStatus{
 		ID: job.id, State: job.state, StartDate: job.startDate, EndDate: job.endDate,
 		Processed: job.processed, Result: job.result, Error: job.err,
 	}, true
 }
 
-func (s *placeReportService) Cancel(id string) (bool, bool) {
+func (s *timelineService) Cancel(id string) (bool, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job, ok := s.jobs[id]
@@ -227,7 +227,7 @@ func (s *placeReportService) Cancel(id string) (bool, bool) {
 	}
 }
 
-func (s *placeReportService) Close() {
+func (s *timelineService) Close() {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -248,9 +248,9 @@ func (s *placeReportService) Close() {
 	s.wg.Wait()
 }
 
-func (s *placeReportService) worker() {
+func (s *timelineService) worker() {
 	defer s.wg.Done()
-	ticker := time.NewTicker(placeReportPruneEvery)
+	ticker := time.NewTicker(timelinePruneEvery)
 	defer ticker.Stop()
 	for {
 		select {
@@ -275,7 +275,7 @@ func (s *placeReportService) worker() {
 	}
 }
 
-func (s *placeReportService) runJob(id string) {
+func (s *timelineService) runJob(id string) {
 	s.mu.Lock()
 	job := s.jobs[id]
 	if job == nil || job.state != "queued" {
@@ -287,7 +287,7 @@ func (s *placeReportService) runJob(id string) {
 	queuedCtx, start, end := job.ctx, job.start, job.end
 	s.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(queuedCtx, maxPlaceReportDuration)
+	ctx, cancel := context.WithTimeout(queuedCtx, maxTimelineDuration)
 	result, err := run(ctx, start, end, func(processed int64) {
 		s.mu.Lock()
 		if current := s.jobs[id]; current != nil {
@@ -312,18 +312,18 @@ func (s *placeReportService) runJob(id string) {
 		job.state = "cancelled"
 	case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctxErr, context.DeadlineExceeded):
 		job.state = "failed"
-		job.err = "place report exceeded the ten-minute limit"
+		job.err = "timeline exceeded the ten-minute limit"
 	case err != nil:
 		job.state = "failed"
-		job.err = "place report generation failed"
-		logger.Error("Place report %s failed: %v", id, err)
+		job.err = "timeline generation failed"
+		logger.Error("Timeline %s failed: %v", id, err)
 	default:
 		job.state = "completed"
 		job.result = &result
 	}
 }
 
-func (s *placeReportService) nextPending() (string, bool) {
+func (s *timelineService) nextPending() (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.pending) == 0 {
@@ -334,7 +334,7 @@ func (s *placeReportService) nextPending() (string, bool) {
 	return id, true
 }
 
-func (s *placeReportService) removePendingLocked(id string) {
+func (s *timelineService) removePendingLocked(id string) {
 	for index, pendingID := range s.pending {
 		if pendingID == id {
 			s.pending = append(s.pending[:index], s.pending[index+1:]...)
@@ -343,8 +343,8 @@ func (s *placeReportService) removePendingLocked(id string) {
 	}
 }
 
-func (s *placeReportService) pruneLocked() {
-	for len(s.jobs) >= maxRetainedPlaceReports {
+func (s *timelineService) pruneLocked() {
+	for len(s.jobs) >= maxRetainedTimelines {
 		removed := false
 		for index, id := range s.order {
 			job := s.jobs[id]
@@ -361,11 +361,11 @@ func (s *placeReportService) pruneLocked() {
 	}
 }
 
-func (s *placeReportService) pruneExpiredLocked(now time.Time) {
+func (s *timelineService) pruneExpiredLocked(now time.Time) {
 	retained := s.order[:0]
 	for _, id := range s.order {
 		job := s.jobs[id]
-		if job != nil && !job.finished.IsZero() && now.Sub(job.finished) >= placeReportRetention {
+		if job != nil && !job.finished.IsZero() && now.Sub(job.finished) >= timelineRetention {
 			delete(s.jobs, id)
 			continue
 		}
@@ -374,14 +374,14 @@ func (s *placeReportService) pruneExpiredLocked(now time.Time) {
 	s.order = retained
 }
 
-func parsePlaceReportDates(startDate, endDate string) (time.Time, time.Time, error) {
+func parseTimelineDates(startDate, endDate string) (time.Time, time.Time, error) {
 	parse := func(value string) (time.Time, error) {
 		if len(value) != len(time.DateOnly) {
-			return time.Time{}, fmt.Errorf("%w: dates must use YYYY-MM-DD", errInvalidPlaceReportDates)
+			return time.Time{}, fmt.Errorf("%w: dates must use YYYY-MM-DD", errInvalidTimelineDates)
 		}
 		parsed, err := time.ParseInLocation(time.DateOnly, value, time.UTC)
 		if err != nil || parsed.Format(time.DateOnly) != value {
-			return time.Time{}, fmt.Errorf("%w: dates must use YYYY-MM-DD", errInvalidPlaceReportDates)
+			return time.Time{}, fmt.Errorf("%w: dates must use YYYY-MM-DD", errInvalidTimelineDates)
 		}
 		return parsed, nil
 	}
@@ -394,30 +394,30 @@ func parsePlaceReportDates(startDate, endDate string) (time.Time, time.Time, err
 		return time.Time{}, time.Time{}, err
 	}
 	if inclusiveEnd.Before(start) {
-		return time.Time{}, time.Time{}, fmt.Errorf("%w: end date precedes start date", errInvalidPlaceReportDates)
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: end date precedes start date", errInvalidTimelineDates)
 	}
 	end := inclusiveEnd.AddDate(0, 0, 1)
-	if int(end.Sub(start)/(24*time.Hour)) > maxPlaceReportDays {
-		return time.Time{}, time.Time{}, fmt.Errorf("%w: date range exceeds %d days", errInvalidPlaceReportDates, maxPlaceReportDays)
+	if int(end.Sub(start)/(24*time.Hour)) > maxTimelineDays {
+		return time.Time{}, time.Time{}, fmt.Errorf("%w: date range exceeds %d days", errInvalidTimelineDates, maxTimelineDays)
 	}
 	return start, end, nil
 }
 
-func newPlaceReportID() (string, error) {
+func newTimelineID() (string, error) {
 	random := make([]byte, 16)
 	if _, err := rand.Read(random); err != nil {
-		return "", fmt.Errorf("generate place report ID: %w", err)
+		return "", fmt.Errorf("generate timeline ID: %w", err)
 	}
 	return hex.EncodeToString(random), nil
 }
 
-func RegisterPlaceReportAPI(mux *http.ServeMux, service *placeReportService) {
+func RegisterTimelineAPI(mux *http.ServeMux, service *timelineService) {
 	if mux == nil {
 		mux = http.DefaultServeMux
 	}
-	mux.HandleFunc("POST /api/place-reports", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/timelines", func(w http.ResponseWriter, r *http.Request) {
 		if service == nil {
-			http.Error(w, "place reports unavailable", http.StatusServiceUnavailable)
+			http.Error(w, "timelines unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
@@ -439,15 +439,15 @@ func RegisterPlaceReportAPI(mux *http.ServeMux, service *placeReportService) {
 		id, err := service.Submit(request.StartDate, request.EndDate)
 		if err != nil {
 			status := http.StatusServiceUnavailable
-			message := "place reports unavailable"
+			message := "timelines unavailable"
 			switch {
-			case errors.Is(err, errInvalidPlaceReportDates):
+			case errors.Is(err, errInvalidTimelineDates):
 				status = http.StatusBadRequest
 				message = err.Error()
 			case errors.Is(err, geodata.ErrNoActiveGeneration):
 				status = http.StatusConflict
 				message = "administrative geodata is not installed"
-			case errors.Is(err, errPlaceReportQueueFull):
+			case errors.Is(err, errTimelineQueueFull):
 				status = http.StatusTooManyRequests
 				w.Header().Set("Retry-After", "1")
 			}
@@ -456,14 +456,14 @@ func RegisterPlaceReportAPI(mux *http.ServeMux, service *placeReportService) {
 		}
 		writeAPIJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
 	})
-	mux.HandleFunc("GET /api/place-reports/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/timelines/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if service == nil {
-			http.Error(w, "place reports unavailable", http.StatusServiceUnavailable)
+			http.Error(w, "timelines unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		status, ok := service.Status(r.PathValue("id"))
 		if !ok {
-			http.Error(w, "place report not found", http.StatusNotFound)
+			http.Error(w, "timeline not found", http.StatusNotFound)
 			return
 		}
 		if r.URL.Query().Get("result") != "true" {
@@ -471,18 +471,18 @@ func RegisterPlaceReportAPI(mux *http.ServeMux, service *placeReportService) {
 		}
 		writeAPIJSON(w, http.StatusOK, status)
 	})
-	mux.HandleFunc("DELETE /api/place-reports/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /api/timelines/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if service == nil {
-			http.Error(w, "place reports unavailable", http.StatusServiceUnavailable)
+			http.Error(w, "timelines unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		cancelled, found := service.Cancel(r.PathValue("id"))
 		if !found {
-			http.Error(w, "place report not found", http.StatusNotFound)
+			http.Error(w, "timeline not found", http.StatusNotFound)
 			return
 		}
 		if !cancelled {
-			http.Error(w, "place report is already finished", http.StatusConflict)
+			http.Error(w, "timeline is already finished", http.StatusConflict)
 			return
 		}
 		writeAPIJSON(w, http.StatusAccepted, map[string]string{"status": "cancelling"})

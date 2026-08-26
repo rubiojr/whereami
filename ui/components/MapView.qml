@@ -24,7 +24,8 @@ Page {
     property alias mapZoomLevel: map.zoomLevel
     property alias mapToolbar: toolbar
 
-    signal placesRequested
+    signal timelineRequested
+    signal quitRequested
 
     padding: 0
     enabled: active
@@ -760,7 +761,7 @@ Page {
             window.applyDateRange(startDate, endDate);
         }
         onDateRangeCleared: window.clearDateRange()
-        onPlacesRequested: window.placesRequested()
+        onTimelineRequested: window.timelineRequested()
         onToggleWaypointsTable: {
             waypointTableVisible = !waypointTableVisible;
             if (waypointTableVisible)
@@ -777,7 +778,7 @@ Page {
                 helpOverlay.toggle();
         }
         onQuitRequested: {
-            Qt.quit();
+            window.quitRequested();
         }
     }
 

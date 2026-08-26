@@ -13,7 +13,7 @@ TestCase {
         }
     }
 
-    function test_reportNavigationPreservesMapState() {
+    function test_timelineNavigationPreservesMapState() {
         var application = createTemporaryObject(mainComponent, null);
         verify(application !== null);
         application.mapPage.apiService.apiPort = -1;
@@ -32,7 +32,7 @@ TestCase {
         application.mapPage.selectedWaypoint = selected;
         application.mapPage.selectedWaypointIndex = 0;
 
-        application.openPlacesReport("2024-01-01", "2024-01-31");
+        application.openTimeline("2024-01-01", "2024-01-31");
         compare(application.currentPage, 1);
         application.currentPage = 0;
 
@@ -49,26 +49,26 @@ TestCase {
         compare(application.mapPage.selectedWaypointIndex, 0);
     }
 
-    function test_placesNavigationUsesYearTimeline() {
+    function test_timelineNavigationUsesYear() {
         var application = createTemporaryObject(mainComponent, null);
         verify(application !== null);
         application.mapPage.apiService.apiPort = -1;
         wait(100);
 
-        application.mapPage.mapToolbar.placesNavigationButton.clicked();
+        application.mapPage.mapToolbar.timelineNavigationButton.clicked();
         compare(application.currentPage, 1);
-        compare(application.reportStartDate, application.currentUTCYear + "-01-01");
-        compare(application.reportEndDate, application.currentUTCYear + "-12-31");
-        compare(application.placesPage.selectedYear, application.currentUTCYear);
+        compare(application.timelineStartDate, application.currentUTCYear + "-01-01");
+        compare(application.timelineEndDate, application.currentUTCYear + "-12-31");
+        compare(application.timelinePage.selectedYear, application.currentUTCYear);
 
-        application.placesPage.yearRequested(application.currentUTCYear - 1);
-        compare(application.reportStartDate, (application.currentUTCYear - 1) + "-01-01");
-        compare(application.reportEndDate, (application.currentUTCYear - 1) + "-12-31");
-        compare(application.placesPage.selectedYear, application.currentUTCYear - 1);
+        application.timelinePage.yearRequested(application.currentUTCYear - 1);
+        compare(application.timelineStartDate, (application.currentUTCYear - 1) + "-01-01");
+        compare(application.timelineEndDate, (application.currentUTCYear - 1) + "-12-31");
+        compare(application.timelinePage.selectedYear, application.currentUTCYear - 1);
 
-        application.placesPage.yearRequested(application.currentUTCYear);
-        compare(application.reportStartDate, application.currentUTCYear + "-01-01");
-        compare(application.reportEndDate, application.currentUTCYear + "-12-31");
+        application.timelinePage.yearRequested(application.currentUTCYear);
+        compare(application.timelineStartDate, application.currentUTCYear + "-01-01");
+        compare(application.timelineEndDate, application.currentUTCYear + "-12-31");
     }
 
     function test_escapeClosesDetailsWithoutMapShortcutConflict() {
@@ -76,24 +76,24 @@ TestCase {
         verify(application !== null);
         application.mapPage.apiService.apiPort = -1;
         application.currentPage = 1;
-        application.placesPage.result = {
+        application.timelinePage.result = {
             summary: {},
             places: [],
             timeline: []
         };
-        application.placesPage.currentView = 1;
+        application.timelinePage.currentView = 1;
         verify(!application.mapPage.active);
-        verify(application.placesPage.detailsPanel.visible);
+        verify(application.timelinePage.detailsPanel.visible);
 
         application.requestActivate();
         tryVerify(function() { return application.active; });
-        application.placesPage.detailsPanel.forceActiveFocus();
-        tryVerify(function() { return application.placesPage.detailsPanel.activeFocus; });
+        application.timelinePage.detailsPanel.forceActiveFocus();
+        tryVerify(function() { return application.timelinePage.detailsPanel.activeFocus; });
         keyClick(Qt.Key_Escape);
 
-        compare(application.placesPage.currentView, 0);
+        compare(application.timelinePage.currentView, 0);
         compare(application.currentPage, 1);
         verify(application.visible);
-        tryVerify(function() { return application.placesPage.detailsButton.activeFocus; });
+        tryVerify(function() { return application.timelinePage.detailsButton.activeFocus; });
     }
 }

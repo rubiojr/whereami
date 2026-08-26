@@ -113,7 +113,7 @@ func main() {
 	} else {
 		defer geoService.Close()
 	}
-	var reportService *placeReportService
+	var timelineService *timelineService
 	if observationRepo != nil && geoService != nil {
 		var resolutionCache *admincache.Store
 		resolutionCache, err = admincache.Open(filepath.Join(cacheDir, "observations", "administrative.sqlite"))
@@ -156,14 +156,14 @@ func main() {
 				resolutionWarmer.Trigger()
 			}
 		}
-		reportService = newPlaceReportService(observationRepo, geoService.manager, resolutionCache, resolutionWarmer)
-		defer reportService.Close()
+		timelineService = newTimelineService(observationRepo, geoService.manager, resolutionCache, resolutionWarmer)
+		defer timelineService.Close()
 	}
 
 	// Register HTTP API handlers.
 	RegisterAPI(http.DefaultServeMux, bookmarksPath, debug)
 	RegisterGeodataAPI(http.DefaultServeMux, geoService)
-	RegisterPlaceReportAPI(http.DefaultServeMux, reportService)
+	RegisterTimelineAPI(http.DefaultServeMux, timelineService)
 
 	// Build initial waypoint list (bookmarks + imported GPX) using centralized dedupe helper.
 	initial := RebuildAllWaypoints(bookmarksPath, dataDir)

@@ -12,6 +12,7 @@ LogoOverlay 1.0 LogoOverlay.qml
 CurrentLocationMarker 1.0 CurrentLocationMarker.qml
 SearchResultMarker 1.0 SearchResultMarker.qml
 MapControlButton 1.0 MapControlButton.qml
+CustomToolTip 1.0 CustomToolTip.qml
 AddWaypointDialog 1.0 AddWaypointDialog.qml
 WaypointInfoCard 1.0 WaypointInfoCard.qml
 WaypointTable 1.0 WaypointTable.qml
@@ -25,6 +26,6 @@ HelpOverlay 1.0 HelpOverlay.qml
 Knobs 1.0 Knobs.qml
 MapView 1.0 MapView.qml
 Main 1.0 Main.qml
-PlacesReport 1.0 PlacesReport.qml
-TravelTimeline 1.0 TravelTimeline.qml
-PlacesDetailsSheet 1.0 PlacesDetailsSheet.qml
+TimelinePage 1.0 TimelinePage.qml
+TimelineView 1.0 TimelineView.qml
+TimelineDetailsSheet 1.0 TimelineDetailsSheet.qml

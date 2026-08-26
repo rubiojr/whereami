@@ -12,7 +12,8 @@ ToolBar {
     // Host ApplicationWindow (set from MapView: rootWindow: window)
     property var rootWindow: null
     property bool active: true
-    property alias placesNavigationButton: placesButton
+    property alias timelineNavigationButton: timelineButton
+    property alias quitButton: mapQuitButton
     ThemeLoader {
         id: theme
     }
@@ -159,7 +160,7 @@ ToolBar {
     signal toggleInfoCard
     signal dateRangeSelected(string startDate, string endDate)
     signal dateRangeCleared
-    signal placesRequested
+    signal timelineRequested
     signal helpRequested
     signal quitRequested
 
@@ -275,18 +276,18 @@ ToolBar {
         }
 
         ToolButton {
-            id: placesButton
-            icon.source: "qrc:/icons/places.svg"
+            id: timelineButton
+            icon.source: "qrc:/icons/timeline.svg"
             icon.width: theme.toolbarButtonSize
             icon.height: theme.toolbarButtonSize
             icon.color: hovered ? theme.toolbarIconHover : theme.toolbarIcon
-            Accessible.name: "Open places by year"
+            Accessible.name: "Open timeline by year"
             CustomToolTip {
-                tooltipText: "Places by year"
-                visible: placesButton.hovered
+                tooltipText: "Timeline by year"
+                visible: timelineButton.hovered
                 position: "bottom"
             }
-            onClicked: toolbar.placesRequested()
+            onClicked: toolbar.timelineRequested()
         }
 
         ToolButton {
@@ -359,14 +360,14 @@ ToolBar {
 
         // Quit application
         ToolButton {
-            id: quitButton
+            id: mapQuitButton
             icon.source: "qrc:/icons/quit.svg"
             icon.width: theme.toolbarButtonSize
             icon.height: theme.toolbarButtonSize
             icon.color: hovered ? theme.toolbarIconHover : theme.toolbarIcon
             CustomToolTip {
                 tooltipText: "Quit"
-                visible: quitButton.hovered
+                visible: mapQuitButton.hovered
                 position: "bottom"
             }
             onClicked: {

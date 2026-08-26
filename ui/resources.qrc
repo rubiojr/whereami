@@ -2,9 +2,9 @@
   <qresource prefix="/">
     <file>components/Main.qml</file>
     <file>components/MapView.qml</file>
-    <file>components/PlacesReport.qml</file>
-    <file>components/TravelTimeline.qml</file>
-    <file>components/PlacesDetailsSheet.qml</file>
+    <file>components/TimelinePage.qml</file>
+    <file>components/TimelineView.qml</file>
+    <file>components/TimelineDetailsSheet.qml</file>
     <file>components/AddWaypointDialog.qml</file>
     <file>components/Knobs.qml</file>
     <file>components/MapControlButton.qml</file>
@@ -32,7 +32,8 @@
     <file>icons/target.svg</file>
     <file>icons/table.svg</file>
     <file>icons/calendar.svg</file>
-    <file>icons/places.svg</file>
+    <file>icons/timeline.svg</file>
+    <file>icons/finish.svg</file>
     <file>icons/quit.svg</file>
     <file>themes/GreenTheme.qml</file>
     <file>icons/io.github.rubiojr.whereami.svg</file>

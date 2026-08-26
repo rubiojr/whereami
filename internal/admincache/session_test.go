@@ -170,7 +170,7 @@ func TestSessionMemoIsBounded(t *testing.T) {
 	require.NoError(t, session.Close())
 }
 
-func TestSessionPersistsCompletedBatchAfterReportCancellation(t *testing.T) {
+func TestSessionPersistsCompletedBatchAfterTimelineCancellation(t *testing.T) {
 	store := openTestStore(t)
 	upstream := &stubResolver{version: "dataset-v1"}
 	session, err := NewSession(store, upstream)

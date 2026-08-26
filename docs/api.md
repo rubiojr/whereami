@@ -49,9 +49,9 @@ Child components receive the same service through an `api` property and react to
 | `getGeodataStatus()` | `GET /api/geodata` | Loads local generation metadata and install progress without exposing URLs or paths |
 | `installGeodata(id)` | `POST /api/geodata/install` | Starts one verified background install for a build-selected generation |
 | `cancelGeodataInstall()` | `DELETE /api/geodata/install` | Cancels the active geodata install |
-| `submitPlaceReport(start, end)` | `POST /api/place-reports` | Queues an offline UTC report for inclusive calendar dates |
-| `getPlaceReport(id, includeResult)` | `GET /api/place-reports/{id}` | Polls job state; `includeResult=true` fetches a completed result with a longer timeout |
-| `cancelPlaceReport(id)` | `DELETE /api/place-reports/{id}` | Cancels a queued or running report |
+| `submitTimeline(start, end)` | `POST /api/timelines` | Queues an offline UTC timeline for inclusive calendar dates |
+| `getTimeline(id, includeResult)` | `GET /api/timelines/{id}` | Polls job state; `includeResult=true` fetches a completed result with a longer timeout |
+| `cancelTimeline(id)` | `DELETE /api/timelines/{id}` | Cancels a queued or running timeline |
 | `request(path, options)` | Caller-selected | Low-level request helper for an API path |
 
 `request()` accepts `method`, `body`, `timeout`, `context`, `onSuccess`, and `onError`. It prefixes the fixed loopback base URL and emits `requestSucceeded` or `requestFailed`.
@@ -81,27 +81,29 @@ GET     /api/version
 GET     /api/geodata
 POST    /api/geodata/install
 DELETE  /api/geodata/install
-POST    /api/place-reports
-GET     /api/place-reports/{id}
-DELETE  /api/place-reports/{id}
+POST    /api/timelines
+GET     /api/timelines/{id}
+DELETE  /api/timelines/{id}
 ```
 
 The embedded manifest advertises only immutable, hash-pinned WhereAmI-hosted
 Xiangshan artifacts. The application never falls back to mutable upstream URLs.
 
-Place-report jobs use one worker, permit at most eight queued jobs, track at most
+Timeline jobs use one worker, permit at most eight queued jobs, track at most
 sixteen jobs, and expire terminal results after fifteen minutes. Each running
 job has a ten-minute execution deadline; queue time does not consume that
 budget. Date ranges are limited to 7,320 inclusive UTC calendar days. Backend
 errors are logged locally; API failures use fixed messages so observation paths
 and coordinates cannot leak through error responses.
 
-`GET /api/place-reports/{id}` omits the potentially large report payload by
+`GET /api/timelines/{id}` omits the potentially large timeline payload by
 default. Add `?result=true` after the state reaches `completed` to fetch it.
-The authenticated result contains coordinates only for its significant journey
+The authenticated result contains coordinates only for its significant timeline
 stops so the local QML map can navigate between them. Administrative aggregate
-rows remain coordinate-free, and source paths are never serialized in the
-result.
+rows remain coordinate-free; each carries only the index of its most recent
+safely represented significant timeline stop for local navigation. The index is
+`-1` when truncation prevents a reliable destination. Source paths are never
+serialized in the result.
 
 ## Signals
 
@@ -135,8 +137,8 @@ Location, import, and search:
 - `versionFetchStarted`, `versionFetched`, `versionFetchFailed`
 - `geodataStatusFetched`, `geodataStatusFailed`
 - `geodataInstallAccepted`, `geodataInstallFailed`, `geodataCancelAccepted`, `geodataCancelFailed`
-- `placeReportSubmitted`, `placeReportSubmitFailed`
-- `placeReportStatusFetched`, `placeReportStatusFailed`, `placeReportCancelAccepted`, `placeReportCancelFailed`
+- `timelineSubmitted`, `timelineSubmitFailed`
+- `timelineStatusFetched`, `timelineStatusFailed`, `timelineCancelAccepted`, `timelineCancelFailed`
 
 ## Data Shapes
 
