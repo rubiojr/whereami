@@ -112,6 +112,8 @@ Rectangle {
     // Tag filtering (injected from parent MapView)
     property bool tagFilterActive: false
     property var tagFilteredWaypoints: []
+    property bool combinedFilterActive: false
+    property var filteredWaypoints: []
     // External selection (read-only here). We never assign to these to keep parent binding intact.
     property var externalSelectedWaypoint: null
     property int externalSelectedWaypointIndex: -1
@@ -213,6 +215,8 @@ Rectangle {
 
     // Source list factoring in clustering/filter but not viewport
     function effectiveSource() {
+        if (combinedFilterActive)
+            return filteredWaypoints || [];
         // Table should reflect active filters (tag filter has highest priority).
         if (tagFilterActive)
             return tagFilteredWaypoints || [];
@@ -327,6 +331,8 @@ Rectangle {
     onClusteringEnabledChanged: scheduleRecompute()
     onTagFilterActiveChanged: scheduleRecompute()
     onTagFilteredWaypointsChanged: scheduleRecompute()
+    onCombinedFilterActiveChanged: scheduleRecompute()
+    onFilteredWaypointsChanged: scheduleRecompute()
     onOpenChanged: {
         if (open) {
             recomputeVisible();

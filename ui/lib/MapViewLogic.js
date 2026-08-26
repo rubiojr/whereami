@@ -150,6 +150,130 @@ function extractBookmarkWaypoints(waypoints) {
     return bookmarks;
 }
 
+function utcDateKey(date) {
+    if (!date || isNaN(date.getTime()))
+        return "";
+    var month = date.getUTCMonth() + 1;
+    var day = date.getUTCDate();
+    return date.getUTCFullYear() + "-" + (month < 10 ? "0" : "") + month + "-" + (day < 10 ? "0" : "") + day;
+}
+
+function dateFromKey(key) {
+    if (!key || key.length !== 10)
+        return null;
+    var parts = key.split("-");
+    if (parts.length !== 3)
+        return null;
+    var year = Number(parts[0]);
+    var month = Number(parts[1]) - 1;
+    var day = Number(parts[2]);
+    var date = new Date(Date.UTC(year, month, day));
+    if (isNaN(date.getTime()) || date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day)
+        return null;
+    return date;
+}
+
+function shiftDateKeyDays(key, amount) {
+    var date = dateFromKey(key);
+    if (!date)
+        return "";
+    date.setUTCDate(date.getUTCDate() + amount);
+    return utcDateKey(date);
+}
+
+function shiftDateKeyYears(key, amount) {
+    var date = dateFromKey(key);
+    if (!date)
+        return "";
+    var targetYear = date.getUTCFullYear() + amount;
+    var month = date.getUTCMonth();
+    var day = date.getUTCDate();
+    var lastDay = new Date(Date.UTC(targetYear, month + 1, 0)).getUTCDate();
+    var clamped = new Date(Date.UTC(targetYear, month, Math.min(day, lastDay)));
+    return utcDateKey(clamped);
+}
+
+function datePresetRange(preset, nowValue) {
+    var now = nowValue !== undefined ? new Date(nowValue) : new Date();
+    if (isNaN(now.getTime()))
+        return null;
+    var today = utcDateKey(now);
+
+    if (preset === "today")
+        return { start: today, end: today };
+    if (preset === "yesterday") {
+        var yesterday = shiftDateKeyDays(today, -1);
+        return { start: yesterday, end: yesterday };
+    }
+    if (preset === "last-year") {
+        var lastYear = shiftDateKeyYears(today, -1);
+        return { start: lastYear, end: lastYear };
+    }
+    if (preset === "last-7")
+        return { start: shiftDateKeyDays(today, -6), end: today };
+    if (preset === "last-30")
+        return { start: shiftDateKeyDays(today, -29), end: today };
+    if (preset === "this-month")
+        return { start: now.getUTCFullYear() + "-" + (now.getUTCMonth() < 9 ? "0" : "") + (now.getUTCMonth() + 1) + "-01", end: today };
+    if (preset === "last-month") {
+        var lastMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+        var lastMonthStart = new Date(Date.UTC(lastMonthEnd.getUTCFullYear(), lastMonthEnd.getUTCMonth(), 1));
+        return { start: utcDateKey(lastMonthStart), end: utcDateKey(lastMonthEnd) };
+    }
+    return null;
+}
+
+// Return the UTC calendar date (YYYY-MM-DD) carried by a waypoint timestamp.
+function waypointDateKey(waypoint) {
+    if (!waypoint || !waypoint.time)
+        return "";
+
+    var timestamp = Date.parse(waypoint.time);
+    if (isNaN(timestamp))
+        return "";
+    return utcDateKey(new Date(timestamp));
+}
+
+// Filter waypoints by an inclusive UTC calendar-date range.
+function filterWaypointsByDateRange(waypoints, startDate, endDate) {
+    if (!waypoints || !Array.isArray(waypoints))
+        return [];
+    if (!startDate)
+        return waypoints.slice();
+
+    var rangeStart = startDate;
+    var rangeEnd = endDate || startDate;
+    if (rangeEnd < rangeStart) {
+        var swap = rangeStart;
+        rangeStart = rangeEnd;
+        rangeEnd = swap;
+    }
+
+    var matches = [];
+    for (var i = 0; i < waypoints.length; i++) {
+        var waypoint = waypoints[i];
+        var key = waypointDateKey(waypoint);
+        if (key !== "" && key >= rangeStart && key <= rangeEnd)
+            matches.push(waypoint);
+    }
+    return matches;
+}
+
+// Compose bookmark and date filters over an already tag-filtered (or full) list.
+function filterWaypointsForMap(waypoints, showNonBookmarkWaypoints, startDate, endDate) {
+    if (!waypoints || !Array.isArray(waypoints))
+        return [];
+
+    var source = waypoints;
+    if (!showNonBookmarkWaypoints)
+        source = extractBookmarkWaypoints(source);
+    return filterWaypointsByDateRange(source, startDate, endDate);
+}
+
+function containsWaypoint(waypoints, targetWaypoint) {
+    return findWaypointIndex(waypoints, targetWaypoint) !== -1;
+}
+
 // Build tag vocabulary from waypoints
 function buildTagVocabulary(waypoints) {
     if (!waypoints || !Array.isArray(waypoints)) {

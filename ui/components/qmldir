@@ -18,6 +18,7 @@ WaypointTable 1.0 WaypointTable.qml
 SnackBar 1.0 SnackBar.qml
 SearchBox 1.0 SearchBox.qml
 MapToolBar 1.0 MapToolBar.qml
+DateRangePicker 1.0 DateRangePicker.qml
 MapStatusBar 1.0 MapStatusBar.qml
 AboutOverlay 1.0 AboutOverlay.qml
 HelpOverlay 1.0 HelpOverlay.qml

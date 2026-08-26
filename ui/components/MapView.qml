@@ -415,13 +415,24 @@ ApplicationWindow {
     property var tagFilteredWaypoints: []
     // Aggregated unique tag vocabulary (kept in sync with waypoints)
     property var allTags: []
-    // Local cluster model for tag-filtered waypoints (constructed client-side)
-    property var tagClusterModel: []
+    // Local cluster model for waypoints narrowed by tag and/or date filters.
+    property var localClusterModel: []
+
+    // Inclusive UTC date filter selected from the toolbar.
+    property bool dateFilterActive: false
+    property string dateFilterStart: ""
+    property string dateFilterEnd: ""
 
     // Filtering: toggle visibility of non-bookmark waypoints.
     // When false, only bookmark (`bookmark: true`) waypoints are shown.
     property bool showNonBookmarkWaypoints: true
     property var bookmarkOnlyWaypoints: []
+    readonly property bool localFilterActive: tagFilterActive || dateFilterActive
+    readonly property var activeWaypoints: MapViewLogic.filterWaypointsForMap(
+        tagFilterActive ? tagFilteredWaypoints : waypoints,
+        showNonBookmarkWaypoints,
+        dateFilterActive ? dateFilterStart : "",
+        dateFilterActive ? dateFilterEnd : "")
 
     onWaypointsChanged: {
         // Recompute bookmarkOnlyWaypoints (avoid mutating original objects)
@@ -435,6 +446,16 @@ ApplicationWindow {
 
         // Clear selection if hidden by filter
         if (MapViewLogic.shouldClearSelection(showNonBookmarkWaypoints, selectedWaypoint)) {
+            window.selectedWaypoint = null;
+            window.selectedWaypointIndex = -1;
+        }
+    }
+
+    onActiveWaypointsChanged: {
+        if (clusteringEnabled)
+            clusterFetchDebounce.restart();
+
+        if (selectedWaypoint && !selectedWaypoint.transient && !MapViewLogic.containsWaypoint(activeWaypoints, selectedWaypoint)) {
             window.selectedWaypoint = null;
             window.selectedWaypointIndex = -1;
         }
@@ -601,14 +622,54 @@ ApplicationWindow {
         if (!map)
             return;
 
-        // If a tag filter is active, build clusters locally over the filtered subset.
-        if (tagFilterActive) {
-            tagClusterModel = MapViewLogic.buildLocalClusters(tagFilteredWaypoints || [], map.zoomLevel, clusterGridSize);
+        // Filtered subsets are clustered locally because the backend only knows the full list.
+        if (localFilterActive) {
+            localClusterModel = MapViewLogic.buildLocalClusters(activeWaypoints, map.zoomLevel, clusterGridSize);
             return;
         }
 
         // Normal (non tag-filter) clustering via backend (with bookmark-only subset if requested)
         api.getClusters(Math.round(map.zoomLevel), clusterGridSize, !showNonBookmarkWaypoints);
+    }
+
+    function applyDateRange(startDate, endDate) {
+        var normalizedEnd = endDate || startDate;
+        dateFilterStart = startDate <= normalizedEnd ? startDate : normalizedEnd;
+        dateFilterEnd = startDate <= normalizedEnd ? normalizedEnd : startDate;
+        dateFilterActive = true;
+
+        var source = tagFilterActive ? tagFilteredWaypoints : waypoints;
+        var matches = MapViewLogic.filterWaypointsForMap(source, showNonBookmarkWaypoints, dateFilterStart, dateFilterEnd);
+        if (matches.length === 1) {
+            selectedWaypoint = matches[0];
+            selectedWaypointIndex = MapViewLogic.findWaypointIndex(waypoints, matches[0]);
+            map.center = QtPositioning.coordinate(matches[0].lat, matches[0].lon);
+            map.zoomLevel = knobs.searchZoomLevel;
+        } else if (matches.length > 1) {
+            var bounds = MapViewLogic.calculateWaypointBounds(matches);
+            if (bounds) {
+                map.center = QtPositioning.coordinate(bounds.centerLat, bounds.centerLon);
+                map.zoomLevel = bounds.zoom;
+            }
+        }
+
+        if (locationSnack && locationSnack.show) {
+            locationSnack.autoHide = true;
+            locationSnack.durationMs = 4000;
+            var rangeText = dateFilterStart === dateFilterEnd ? dateFilterStart : dateFilterStart + " to " + dateFilterEnd;
+            locationSnack.show(matches.length + " waypoint(s) on " + rangeText);
+        }
+    }
+
+    function clearDateRange() {
+        dateFilterActive = false;
+        dateFilterStart = "";
+        dateFilterEnd = "";
+        if (locationSnack && locationSnack.show) {
+            locationSnack.autoHide = true;
+            locationSnack.durationMs = 3000;
+            locationSnack.show("Date filter cleared");
+        }
     }
 
     // Focus a waypoint by (case-insensitive) name. Returns true if found (bookmark preferred).
@@ -651,18 +712,25 @@ ApplicationWindow {
         id: toolbar
         cornerRadius: 12
         rootWindow: window
+        dateFilterActive: window.dateFilterActive
+        dateRangeStart: window.dateFilterStart
+        dateRangeEnd: window.dateFilterEnd
         // onSearchLocation removed (legacy GeocodeModel path)
         onOpenFile: {
             // Open directory picker
             gpxDirDialog.open();
         }
         onFitToWaypoints: {
-            var bounds = MapViewLogic.calculateWaypointBounds(waypoints);
+            var bounds = MapViewLogic.calculateWaypointBounds(activeWaypoints);
             if (bounds && map) {
                 map.center = QtPositioning.coordinate(bounds.centerLat, bounds.centerLon);
                 map.zoomLevel = bounds.zoom;
             }
         }
+        onDateRangeSelected: function (startDate, endDate) {
+            window.applyDateRange(startDate, endDate);
+        }
+        onDateRangeCleared: window.clearDateRange()
         onToggleWaypointsTable: {
             waypointTableVisible = !waypointTableVisible;
             if (waypointTableVisible)
@@ -689,7 +757,7 @@ ApplicationWindow {
         rootWindow: window
         mouseCoordinates: window.mouseCoordinates
         zoomLevel: map.zoomLevel
-        waypointCount: window.waypoints.length
+        waypointCount: window.activeWaypoints.length
     }
 
     RowLayout {
@@ -914,19 +982,17 @@ ApplicationWindow {
                 // Waypoint / Cluster markers (restored inline implementation)
                 MapItemView {
                     id: markersView
-                    model: window.tagFilterActive ? (window.clusteringEnabled ? window.tagClusterModel : window.tagFilteredWaypoints) : (window.clusteringEnabled ? window.clusterModel : (!window.showNonBookmarkWaypoints ? window.bookmarkOnlyWaypoints : window.waypoints))
+                    model: window.clusteringEnabled ? (window.localFilterActive ? window.localClusterModel : window.clusterModel) : window.activeWaypoints
 
                     // Keep selection valid when models change (clusters / filters toggled)
                     onModelChanged: {
                         if (!window.selectedWaypoint)
                             return;
                         var visible = false;
-                        var activeList = model;
+                        var activeList = window.activeWaypoints;
                         for (var i = 0; i < activeList.length; i++) {
                             var it = activeList[i];
                             if (!it)
-                                continue;
-                            if (it.type === "cluster")
                                 continue;
                             if (it.name === window.selectedWaypoint.name && Math.abs(it.lat - window.selectedWaypoint.lat) < 1e-9 && Math.abs(it.lon - window.selectedWaypoint.lon) < 1e-9) {
                                 visible = true;
@@ -1267,7 +1333,8 @@ ApplicationWindow {
 
                         // When tag filter becomes active and has matches, zoom to fit all tagged waypoints
                         if (active && matches && matches.length > 0 && map) {
-                            var bounds = MapViewLogic.calculateWaypointBounds(matches);
+                            var visibleMatches = MapViewLogic.filterWaypointsForMap(matches, window.showNonBookmarkWaypoints, window.dateFilterActive ? window.dateFilterStart : "", window.dateFilterActive ? window.dateFilterEnd : "");
+                            var bounds = MapViewLogic.calculateWaypointBounds(visibleMatches);
                             if (bounds) {
                                 map.center = QtPositioning.coordinate(bounds.centerLat, bounds.centerLon);
                                 map.zoomLevel = bounds.zoom;
@@ -1342,6 +1409,8 @@ ApplicationWindow {
                     showNonBookmarkWaypoints: window.showNonBookmarkWaypoints
                     tagFilterActive: window.tagFilterActive
                     tagFilteredWaypoints: window.tagFilteredWaypoints
+                    combinedFilterActive: window.localFilterActive
+                    filteredWaypoints: window.activeWaypoints
                     externalSelectedWaypoint: window.selectedWaypoint
                     externalSelectedWaypointIndex: window.selectedWaypointIndex
                     z: 10

@@ -155,8 +155,14 @@ ToolBar {
     signal searchLocation(string query)
     signal toggleWaypointsTable
     signal toggleInfoCard
+    signal dateRangeSelected(string startDate, string endDate)
+    signal dateRangeCleared
     signal helpRequested
     signal quitRequested
+
+    property bool dateFilterActive: false
+    property string dateRangeStart: ""
+    property string dateRangeEnd: ""
 
     RowLayout {
         anchors.fill: parent
@@ -211,6 +217,29 @@ ToolBar {
             onClicked: {
                 if (toolbar.toggleWaypointsTable)
                     toolbar.toggleWaypointsTable();
+            }
+        }
+
+        ToolButton {
+            id: dateRangeButton
+            icon.source: "qrc:/icons/calendar.svg"
+            icon.width: theme.toolbarButtonSize
+            icon.height: theme.toolbarButtonSize
+            icon.color: toolbar.dateFilterActive || hovered ? theme.toolbarIconHover : theme.toolbarIcon
+            Accessible.name: toolbar.dateFilterActive ? "Clear waypoint date filter" : "Filter waypoints by date"
+            CustomToolTip {
+                tooltipText: toolbar.dateFilterActive ? ("Clear date filter: " + toolbar.dateRangeStart + (toolbar.dateRangeEnd !== toolbar.dateRangeStart ? " to " + toolbar.dateRangeEnd : "")) : "Find where I was by date"
+                visible: dateRangeButton.hovered
+                position: "bottom"
+            }
+            onClicked: {
+                if (toolbar.dateFilterActive) {
+                    dateRangePicker.close();
+                    toolbar.dateRangeCleared();
+                    return;
+                }
+                dateRangePicker.setRange("", "");
+                dateRangePicker.open();
             }
         }
 
@@ -298,6 +327,15 @@ ToolBar {
                 if (toolbar.quitRequested)
                     toolbar.quitRequested();
             }
+        }
+    }
+
+    DateRangePicker {
+        id: dateRangePicker
+        x: Math.max(4, Math.min(dateRangeButton.x, toolbar.width - width - 4))
+        y: toolbar.height + 4
+        onRangeApplied: function (startDate, endDate) {
+            toolbar.dateRangeSelected(startDate, endDate);
         }
     }
 }
