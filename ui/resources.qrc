@@ -3,6 +3,8 @@
     <file>components/Main.qml</file>
     <file>components/MapView.qml</file>
     <file>components/PlacesReport.qml</file>
+    <file>components/TravelTimeline.qml</file>
+    <file>components/PlacesDetailsSheet.qml</file>
     <file>components/AddWaypointDialog.qml</file>
     <file>components/Knobs.qml</file>
     <file>components/MapControlButton.qml</file>
@@ -23,9 +25,6 @@
     <file>services/ShortcutsController.qml</file>
     <file>lib/SearchBoxLogic.js</file>
     <file>lib/MapViewLogic.js</file>
-    <file>tests/tst_SearchBoxLogic.qml</file>
-    <file>tests/tst_MapViewLogic.qml</file>
-    <file>tests/tst_MainNavigation.qml</file>
     <file>icons/magnifier.svg</file>
     <file>icons/folder.svg</file>
     <file>icons/info.svg</file>

@@ -51,3 +51,17 @@ func TestAppendBookmarkDoesNotOverwriteMalformedFile(t *testing.T) {
 		t.Errorf("bookmarks changed after failed append: got %q, want %q", got, original)
 	}
 }
+
+func TestCollectGPXWaypointsIgnoresImportStagingDirectories(t *testing.T) {
+	root := t.TempDir()
+	writeImportGPX(t, filepath.Join(root, "kept.gpx"), "kept", 41)
+	writeImportGPX(t, filepath.Join(root, "imports", ".staging-orphan", "staged.gpx"), "staged", 42)
+
+	waypoints, err := collectGPXWaypoints(root, true, "")
+	if err != nil {
+		t.Fatalf("collectGPXWaypoints() error = %v", err)
+	}
+	if len(waypoints) != 1 || waypoints[0].Name != "kept" {
+		t.Fatalf("collectGPXWaypoints() = %+v, want only kept waypoint", waypoints)
+	}
+}

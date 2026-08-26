@@ -108,6 +108,18 @@ mandatory polygon containment and reports deterministic hierarchy counts for
 imported GPX waypoint observations. The application does not distribute the
 candidate bytes and never downloads Xiangshan's mutable upstream URLs.
 
+Once a verified generation is active, a single low-impact background worker
+resolves distinct reportable coordinates into a private SQLite cache under the
+application cache directory. Results are namespaced by immutable dataset
+version, survive restarts, and include successful unresolved/ocean lookups.
+Imports and geodata activation schedule another cache pass. An interactive
+report preempts the active background pass, releasing its observation snapshot
+and resolver lease before resolving cache misses at foreground priority. Warming
+restarts afterward, so reports get faster as the local cache fills without
+delaying application startup. Cache entries for generations that are neither
+active nor retained for rollback are pruned after the active generation finishes
+warming.
+
 Nearby POI enrichment is intentionally deferred. Xiangshan contains
 administrative divisions, not places of interest, and no immutable local
 Overture Places shard format or inference policy has been selected. Reports do

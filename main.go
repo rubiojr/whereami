@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"errors"
 	"flag"
 	"io"
 	"net"
@@ -14,6 +15,9 @@ import (
 
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/qml"
+	"github.com/rubiojr/whereami/internal/admincache"
+	"github.com/rubiojr/whereami/internal/admingeo"
+	"github.com/rubiojr/whereami/internal/geodata"
 	"github.com/rubiojr/whereami/pkg/logger"
 )
 
@@ -111,7 +115,48 @@ func main() {
 	}
 	var reportService *placeReportService
 	if observationRepo != nil && geoService != nil {
-		reportService = newPlaceReportService(observationRepo, geoService.manager)
+		var resolutionCache *admincache.Store
+		resolutionCache, err = admincache.Open(filepath.Join(cacheDir, "observations", "administrative.sqlite"))
+		if err != nil {
+			logger.Error("Failed to initialize administrative resolution cache: %v", err)
+		} else {
+			defer resolutionCache.Close()
+		}
+
+		var resolutionWarmer *admincache.Warmer
+		if resolutionCache != nil {
+			resolutionWarmer, err = admincache.NewWarmer(observationRepo, resolutionCache, func() (admingeo.Resolver, error) {
+				lease, acquireErr := geoService.manager.Acquire()
+				if acquireErr != nil {
+					if errors.Is(acquireErr, geodata.ErrNoActiveGeneration) {
+						return nil, nil
+					}
+					return nil, acquireErr
+				}
+				return lease, nil
+			}, func() []admingeo.DatasetVersion {
+				status := geoService.manager.Status()
+				versions := make([]admingeo.DatasetVersion, 0, 2)
+				if status.Current.Valid {
+					versions = append(versions, status.Current.DatasetVersion)
+				}
+				if status.Previous.Valid {
+					versions = append(versions, status.Previous.DatasetVersion)
+				}
+				return versions
+			}, func(warmErr error) {
+				logger.Error("Administrative resolution cache warming failed: %v", warmErr)
+			})
+			if err != nil {
+				logger.Error("Failed to start administrative resolution cache warmer: %v", err)
+			} else {
+				defer resolutionWarmer.Close()
+				observationIndexRebuilt = resolutionWarmer.Trigger
+				geoService.SetActivationCallback(resolutionWarmer.Trigger)
+				resolutionWarmer.Trigger()
+			}
+		}
+		reportService = newPlaceReportService(observationRepo, geoService.manager, resolutionCache, resolutionWarmer)
 		defer reportService.Close()
 	}
 

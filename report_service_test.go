@@ -101,6 +101,68 @@ func TestPlaceReportCancellation(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestPlaceReportDeadlineStartsWhenJobRuns(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondDeadline := make(chan bool, 1)
+	runCount := 0
+	service := newPlaceReportJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (reports.Report, error) {
+		runCount++
+		if runCount == 1 {
+			close(firstStarted)
+			<-releaseFirst
+			return reports.Report{}, nil
+		}
+		_, hasDeadline := ctx.Deadline()
+		secondDeadline <- hasDeadline
+		return reports.Report{}, nil
+	})
+	t.Cleanup(service.Close)
+	t.Cleanup(func() {
+		select {
+		case <-releaseFirst:
+		default:
+			close(releaseFirst)
+		}
+	})
+
+	_, err := service.Submit("2024-01-01", "2024-01-01")
+	require.NoError(t, err)
+	<-firstStarted
+	secondID, err := service.Submit("2024-01-01", "2024-01-01")
+	require.NoError(t, err)
+	service.mu.Lock()
+	_, queuedHasDeadline := service.jobs[secondID].ctx.Deadline()
+	service.mu.Unlock()
+	assert.False(t, queuedHasDeadline)
+
+	close(releaseFirst)
+	select {
+	case hasDeadline := <-secondDeadline:
+		assert.True(t, hasDeadline)
+	case <-time.After(time.Second):
+		t.Fatal("queued report did not start")
+	}
+}
+
+func TestPlaceReportPrunesExpiredResults(t *testing.T) {
+	now := time.Now()
+	service := &placeReportService{
+		jobs: map[string]*placeReportJob{
+			"expired": {id: "expired", state: "completed", result: &reports.Report{}, finished: now.Add(-placeReportRetention)},
+			"recent":  {id: "recent", state: "completed", result: &reports.Report{}, finished: now},
+			"running": {id: "running", state: "running"},
+		},
+		order: []string{"expired", "recent", "running"},
+	}
+
+	service.pruneExpiredLocked(now)
+	assert.NotContains(t, service.jobs, "expired")
+	assert.Contains(t, service.jobs, "recent")
+	assert.Contains(t, service.jobs, "running")
+	assert.Equal(t, []string{"recent", "running"}, service.order)
+}
+
 func TestPlaceReportQueueIsBounded(t *testing.T) {
 	started := make(chan struct{})
 	service := newPlaceReportJobService(nil, func(ctx context.Context, _, _ time.Time, _ func(int64)) (reports.Report, error) {

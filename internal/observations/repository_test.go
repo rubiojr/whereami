@@ -1,6 +1,7 @@
 package observations
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +52,55 @@ func TestRepositoryRecursesAndExcludesExplicitBookmarks(t *testing.T) {
 	require.Len(t, observations, 1)
 	assert.Equal(t, "import", observations[0].Name)
 	assert.Equal(t, "imports/day/track.GPX", observations[0].Source)
+}
+
+func TestAddSourcesIndexesNewFilesWithoutDroppingExistingSources(t *testing.T) {
+	dataRoot := t.TempDir()
+	existingPath := filepath.Join(dataRoot, "existing.gpx")
+	addedPath := filepath.Join(dataRoot, "imports", "added.gpx")
+	writeGPX(t, existingPath, waypoint("existing", "1", "2", "2024-01-01T00:00:00Z"))
+
+	repository := openTestRepository(t)
+	require.NoError(t, repository.Rebuild(dataRoot, ""))
+	oldRevision := snapshotRevision(t, repository)
+	writeGPX(t, addedPath, waypoint("added", "3", "4", "2024-01-02T00:00:00Z"))
+
+	require.NoError(t, repository.AddSources(dataRoot, "", []string{addedPath, addedPath}))
+	snapshot := openTestSnapshot(t, repository)
+	observations := scanPeriod(t, snapshot, mustTime(t, "2024-01-01T00:00:00Z"), mustTime(t, "2024-01-03T00:00:00Z"))
+
+	require.Len(t, observations, 2)
+	assert.Equal(t, []string{"existing", "added"}, observationNames(observations))
+	assert.Equal(t, []string{"existing.gpx", "imports/added.gpx"}, observationSources(observations))
+	incrementalRevision := snapshot.Revision()
+	assert.NotEqual(t, oldRevision, incrementalRevision)
+	require.NoError(t, snapshot.Close())
+	require.NoError(t, repository.Rebuild(dataRoot, ""))
+	assert.Equal(t, incrementalRevision, snapshotRevision(t, repository))
+
+	writeGPX(t, addedPath, waypoint("updated", "5", "6", "2024-01-02T00:00:00Z"))
+	require.NoError(t, repository.AddSources(dataRoot, "", []string{addedPath}))
+	updatedSnapshot := openTestSnapshot(t, repository)
+	updated := scanPeriod(t, updatedSnapshot, mustTime(t, "2024-01-01T00:00:00Z"), mustTime(t, "2024-01-03T00:00:00Z"))
+	require.Len(t, updated, 2)
+	assert.Equal(t, []string{"existing", "updated"}, observationNames(updated))
+}
+
+func TestRepositoryIgnoresImportStagingDirectories(t *testing.T) {
+	dataRoot := t.TempDir()
+	bookmarksPath := filepath.Join(dataRoot, "bookmarks.gpx")
+	writeGPX(t, filepath.Join(dataRoot, "imported.gpx"), waypoint("imported", "1", "2", "2024-01-01T00:00:00Z"))
+	writeGPX(t, filepath.Join(dataRoot, "imports", ".staging-orphan", "staged.gpx"), waypoint("staged", "3", "4", "2024-01-01T00:00:00Z"))
+	writeGPX(t, bookmarksPath, waypoint("bookmark", "5", "6", "2024-01-01T00:00:00Z"))
+
+	repository := openTestRepository(t)
+	require.NoError(t, repository.Rebuild(dataRoot, bookmarksPath))
+	snapshot := openTestSnapshot(t, repository)
+	observations := scanPeriod(t, snapshot, mustTime(t, "2024-01-01T00:00:00Z"), mustTime(t, "2024-01-02T00:00:00Z"))
+
+	require.Len(t, observations, 1)
+	assert.Equal(t, "imported", observations[0].Name)
+	require.Error(t, repository.AddSources(dataRoot, bookmarksPath, []string{bookmarksPath}))
 }
 
 func TestScanPeriodUsesExactUTCBoundaries(t *testing.T) {
@@ -110,6 +160,63 @@ func TestTimeStatusesAndCoordinateValidationRetainObservations(t *testing.T) {
 	assert.False(t, observations[2].CoordinatesValid)
 	assert.Equal(t, "NaN", observations[2].RawLatitude)
 	assert.Equal(t, "-Inf", observations[2].RawLongitude)
+}
+
+func TestScanResolvableCoordinatesDeduplicatesOrdersAndFilters(t *testing.T) {
+	dataRoot := t.TempDir()
+	writeGPX(t, filepath.Join(dataRoot, "coordinates.gpx"),
+		waypoint("last", "20", "10", "2024-01-01T00:00:00Z")+
+			waypoint("first-latitude", "-1", "-5", "2024-01-01T00:00:01Z")+
+			waypoint("duplicate", "20.0", "10.0", "2024-01-01T00:00:02Z")+
+			waypoint("second-latitude", "30", "-5", "2024-01-01T00:00:03Z")+
+			waypoint("missing-time", "40", "40", "")+
+			waypoint("invalid-time", "50", "50", "not-a-time")+
+			waypoint("invalid-coordinate", "91", "60", "2024-01-01T00:00:04Z"))
+
+	repository := openTestRepository(t)
+	require.NoError(t, repository.Rebuild(dataRoot, ""))
+	snapshot := openTestSnapshot(t, repository)
+
+	var coordinates [][2]float64
+	require.NoError(t, snapshot.ScanResolvableCoordinates(context.Background(), func(longitude, latitude float64) error {
+		coordinates = append(coordinates, [2]float64{longitude, latitude})
+		return nil
+	}))
+	assert.Equal(t, [][2]float64{{-5, -1}, {-5, 30}, {10, 20}}, coordinates)
+
+	var indexSQL string
+	require.NoError(t, snapshot.tx.QueryRow(`SELECT sql FROM sqlite_schema WHERE name = 'observations_resolvable_coordinates'`).Scan(&indexSQL))
+	assert.Contains(t, indexSQL, "ON observations(longitude, latitude)")
+	assert.Contains(t, indexSQL, "coordinates_valid = 1 AND time_status = 'valid'")
+}
+
+func TestScanResolvableCoordinatesHonorsCancellation(t *testing.T) {
+	dataRoot := t.TempDir()
+	writeGPX(t, filepath.Join(dataRoot, "coordinates.gpx"),
+		waypoint("one", "1", "1", "2024-01-01T00:00:00Z")+
+			waypoint("two", "2", "2", "2024-01-01T00:00:01Z"))
+
+	repository := openTestRepository(t)
+	require.NoError(t, repository.Rebuild(dataRoot, ""))
+	snapshot := openTestSnapshot(t, repository)
+	ctx, cancel := context.WithCancel(context.Background())
+	visits := 0
+
+	err := snapshot.ScanResolvableCoordinates(ctx, func(_, _ float64) error {
+		visits++
+		cancel()
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, visits)
+
+	canceled, cancelBeforeScan := context.WithCancel(context.Background())
+	cancelBeforeScan()
+	err = snapshot.ScanResolvableCoordinates(canceled, func(_, _ float64) error {
+		t.Fatal("callback called after cancellation")
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRebuildReplacesChangedSourcesAndRemovesDeletedSources(t *testing.T) {
@@ -191,6 +298,7 @@ func TestRevisionIsDeterministicAndContentBased(t *testing.T) {
 
 func TestDatabasePermissions(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "private", "index")
+	require.NoError(t, os.MkdirAll(parent, 0o755))
 	dbPath := filepath.Join(parent, "observations.sqlite")
 	repository, err := Open(dbPath)
 	require.NoError(t, err)

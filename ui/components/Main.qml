@@ -9,6 +9,8 @@ ApplicationWindow {
     visible: true
     width: 1300
     height: 800
+    minimumWidth: 360
+    minimumHeight: 470
     title: qsTr("WhereAmI - GPX Waypoint Viewer")
     flags: Qt.FramelessWindowHint
     color: "transparent"

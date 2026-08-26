@@ -91,11 +91,20 @@ Page {
             if (summary && typeof summary === "object") {
                 var importedCount = (summary.count !== undefined ? summary.count : waypoints.length);
                 var skippedCount = (summary.skipped !== undefined ? summary.skipped : 0);
-                if (skippedCount > 0) {
-                    msg = "Imported " + importedCount + " waypoint(s); skipped " + skippedCount + " duplicate file(s)";
+                var failedCount = (summary.failed !== undefined ? summary.failed : 0);
+                var addedFiles = (summary.added !== undefined ? summary.added : summary.files || 0);
+                var replacedFiles = (summary.replaced !== undefined ? summary.replaced : 0);
+                if (replacedFiles > 0 && addedFiles > 0) {
+                    msg = "Imported " + addedFiles + " and updated " + replacedFiles + " GPX file(s)";
+                } else if (replacedFiles > 0) {
+                    msg = "Updated " + replacedFiles + " GPX file(s)";
                 } else {
                     msg = "Imported " + importedCount + " waypoint(s)";
                 }
+                if (failedCount > 0)
+                    msg += "; ignored " + failedCount + " invalid file(s)";
+                if (skippedCount > 0)
+                    msg += "; skipped " + skippedCount + " file(s)";
             } else {
                 msg = "GPX import complete";
             }

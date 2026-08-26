@@ -61,15 +61,24 @@ type geodataAPIStatus struct {
 }
 
 type geodataService struct {
-	mu        sync.Mutex
-	manager   *geodata.Manager
-	available []geodataAvailableGeneration
-	known     map[string]struct{}
-	status    geodata.Status
-	install   geodataInstallStatus
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	closed    bool
+	mu          sync.Mutex
+	manager     *geodata.Manager
+	available   []geodataAvailableGeneration
+	known       map[string]struct{}
+	status      geodata.Status
+	install     geodataInstallStatus
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	closed      bool
+	onActivated func()
+}
+
+// SetActivationCallback registers work to run after a generation is installed
+// and activated. The callback runs asynchronously from the requesting API call.
+func (s *geodataService) SetActivationCallback(callback func()) {
+	s.mu.Lock()
+	s.onActivated = callback
+	s.mu.Unlock()
 }
 
 func openGeodataService(root string) (*geodataService, error) {
@@ -195,6 +204,8 @@ func (s *geodataService) runInstall(ctx context.Context, generationID string) {
 	s.status = status
 	s.cancel = nil
 	s.install.Error = ""
+	activated := err == nil && !s.closed
+	onActivated := s.onActivated
 	switch {
 	case err == nil:
 		s.install.State = "installed"
@@ -207,6 +218,9 @@ func (s *geodataService) runInstall(ctx context.Context, generationID string) {
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if activated && onActivated != nil {
+		onActivated()
 	}
 }
 
@@ -227,6 +241,7 @@ func (s *geodataService) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.onActivated = nil
 	if s.cancel != nil {
 		s.cancel()
 	}

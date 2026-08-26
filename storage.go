@@ -81,18 +81,41 @@ func parseGPXFile(path string) ([]Waypoint, error) {
 // collectGPXWaypoints walks a directory collecting waypoints from *.gpx files,
 // optionally recursively. It skips the `exclude` path if provided.
 func collectGPXWaypoints(dir string, recursive bool, exclude string) ([]Waypoint, error) {
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	excluded := ""
+	if exclude != "" {
+		excluded, err = filepath.EvalSymlinks(exclude)
+		if err != nil {
+			excluded, err = filepath.Abs(exclude)
+		} else {
+			excluded, err = filepath.Abs(excluded)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 	var all []Waypoint
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if d.IsDir() {
-			if !recursive && p != dir {
+			if strings.HasPrefix(d.Name(), ".staging-") {
+				return filepath.SkipDir
+			}
+			if !recursive && p != root {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if filepath.Clean(p) == filepath.Clean(exclude) {
+		if excluded != "" && filepath.Clean(p) == filepath.Clean(excluded) {
 			return nil
 		}
 		if strings.EqualFold(filepath.Ext(d.Name()), ".gpx") {

@@ -103,6 +103,7 @@ QtObject {
 
     // Default timeout (ms) for requests
     property int requestTimeoutMs: 8000
+    property int placeReportResultTimeoutMs: 60000
 
     // --- Generic signals ---
     signal requestSucceeded(string kind, var result, var context)
@@ -182,7 +183,7 @@ QtObject {
     signal placeReportSubmitted(string requestId, string jobId)
     signal placeReportSubmitFailed(string requestId, string errorMessage)
     signal placeReportStatusFetched(string jobId, var status)
-    signal placeReportStatusFailed(string jobId, string errorMessage)
+    signal placeReportStatusFailed(string jobId, string errorMessage, bool includedResult)
     signal placeReportCancelAccepted(string jobId)
     signal placeReportCancelFailed(string jobId, string errorMessage)
 
@@ -413,12 +414,17 @@ QtObject {
             try {
                 resp = JSON.parse(txt);
             } catch (e) {}
+            if (!resp || typeof resp !== "object") {
+                importFailed("invalid import response", params);
+                requestFailed("POST /api/import", "invalid import response", params);
+                return;
+            }
             importCompleted(resp, params);
             requestSucceeded("POST /api/import", resp, params);
         }, function (err) {
             importFailed(err, params);
             requestFailed("POST /api/import", err, params);
-        }, 60000);
+        }, 110000);
     }
 
     // Suggest (search)
@@ -860,21 +866,26 @@ QtObject {
     }
 
     function getPlaceReport(jobId, includeResult) {
-        var suffix = includeResult === true ? "?result=true" : "";
+        var includedResult = includeResult === true;
+        var suffix = includedResult ? "?result=true" : "";
         _xhr("GET", "/api/place-reports/" + encodeURIComponent(jobId) + suffix, null, function (txt) {
             var status = {};
             try {
                 status = JSON.parse(txt);
             } catch (e) {
-                api.placeReportStatusFailed(jobId, "invalid place report status response");
+                api.placeReportStatusFailed(jobId, "invalid place report status response", includedResult);
+                return;
+            }
+            if (!status || typeof status !== "object") {
+                api.placeReportStatusFailed(jobId, "invalid place report status response", includedResult);
                 return;
             }
             api.placeReportStatusFetched(jobId, status);
             api.requestSucceeded("GET /api/place-reports", status, jobId);
         }, function (err) {
-            api.placeReportStatusFailed(jobId, err);
+            api.placeReportStatusFailed(jobId, err, includedResult);
             api.requestFailed("GET /api/place-reports", err, jobId);
-        });
+        }, includedResult ? api.placeReportResultTimeoutMs : undefined);
     }
 
     function cancelPlaceReport(jobId) {

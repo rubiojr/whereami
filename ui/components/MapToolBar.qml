@@ -276,8 +276,6 @@ ToolBar {
 
         ToolButton {
             id: placesButton
-            text: toolbar.width >= 720 ? "Places" : ""
-            display: text !== "" ? AbstractButton.TextBesideIcon : AbstractButton.IconOnly
             icon.source: "qrc:/icons/places.svg"
             icon.width: theme.toolbarButtonSize
             icon.height: theme.toolbarButtonSize

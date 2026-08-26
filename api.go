@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -42,7 +43,10 @@ import (
 
 // -------- Tile proxy configuration and metrics -----
 
-var locationOnce sync.Once
+var (
+	locationOnce sync.Once
+	importMu     sync.Mutex
+)
 
 // Environment variable keys
 var (
@@ -586,7 +590,7 @@ func handlePostBookmark(bookmarksPath string) http.HandlerFunc {
 		}
 		saved.Bookmark = true
 		allWaypointsMu.Lock()
-		allWaypoints = append(allWaypoints, saved)
+		allWaypoints = DedupeWaypoints(append(allWaypoints, saved))
 		allWaypointsMu.Unlock()
 
 		// Persist tags (best‑effort; non-fatal on error)
@@ -895,7 +899,10 @@ func handleGetLocation(w http.ResponseWriter, _ *http.Request) {
 
 // --------------- Import GPX ---------------
 
-func handlePostImport(w http.ResponseWriter, r *http.Request) {
+func handlePostImport(bookmarksPath string, w http.ResponseWriter, r *http.Request) {
+	importMu.Lock()
+	defer importMu.Unlock()
+
 	var req struct {
 		Dir       string `json:"dir"`
 		Recursive bool   `json:"recursive"`
@@ -913,87 +920,487 @@ func handlePostImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a directory", http.StatusBadRequest)
 		return
 	}
-	dir := effectiveDataDir()
-	if dir == "" {
+	dataRoot := effectiveDataDir()
+	if dataRoot == "" {
 		http.Error(w, "no data directory available", http.StatusInternalServerError)
 		return
 	}
-	importBase := filepath.Join(dir, "imports")
-	if err := os.MkdirAll(importBase, 0o755); err != nil {
-		http.Error(w, "cannot create imports dir: "+err.Error(), http.StatusInternalServerError)
+	importBase := filepath.Join(dataRoot, "imports")
+	if err := os.MkdirAll(importBase, 0o700); err != nil {
+		logger.Error("create imports directory %s: %v", importBase, err)
+		http.Error(w, "cannot create imports directory", http.StatusInternalServerError)
 		return
 	}
-
-	var importedFiles []string
-	var skipped []string
-	err = filepath.WalkDir(req.Dir, func(p string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			if !req.Recursive && p != req.Dir {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.EqualFold(filepath.Ext(d.Name()), ".gpx") {
-			return nil
-		}
-		destPath := filepath.Join(importBase, d.Name())
-		if _, err := os.Stat(destPath); err == nil {
-			skipped = append(skipped, d.Name())
-			return nil
-		}
-		src, err := os.Open(p)
-		if err != nil {
-			return nil
-		}
-		defer src.Close()
-		dst, err := os.Create(destPath)
-		if err != nil {
-			return nil
-		}
-		defer dst.Close()
-		_, _ = io.Copy(dst, src)
-		importedFiles = append(importedFiles, destPath)
-		return nil
-	})
+	importInfo, err := os.Lstat(importBase)
+	if err != nil || !importInfo.IsDir() {
+		http.Error(w, "imports directory must be a regular directory", http.StatusInternalServerError)
+		return
+	}
+	if err := os.Chmod(importBase, 0o700); err != nil {
+		http.Error(w, "cannot secure imports directory", http.StatusInternalServerError)
+		return
+	}
+	canonicalDataRoot, canonicalImportBase, err := canonicalImportPaths(dataRoot, importBase)
 	if err != nil {
-		http.Error(w, "import error: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "imports directory must not be a symlink", http.StatusInternalServerError)
+		return
+	}
+	dataRoot = canonicalDataRoot
+	importBase = canonicalImportBase
+
+	result, err := importGPXDirectory(req.Dir, importBase, req.Recursive)
+	if err != nil {
+		logger.Error("import GPX directory %s failed: %v", req.Dir, err)
+		http.Error(w, "GPX import failed", http.StatusInternalServerError)
 		return
 	}
 
 	var newly []Waypoint
-	for _, f := range importedFiles {
-		if wps, err := parseGPXFile(f); err == nil {
-			newly = append(newly, wps...)
+	replacedSource := false
+	replacedFiles := 0
+	observationPaths := make([]string, 0, len(result.imported))
+	for _, imported := range result.imported {
+		newly = append(newly, imported.waypoints...)
+		observationPaths = append(observationPaths, imported.path)
+		replacedSource = replacedSource || imported.replaced
+		if imported.replaced {
+			replacedFiles++
 		}
 	}
 
+	var indexErr error
+	if err := addObservationSources(observationPaths); err != nil {
+		logger.Error("incremental observation index update after import failed: %v", err)
+		if rebuildErr := rebuildObservationIndex(); rebuildErr != nil {
+			logger.Error("observation index rebuild after import failed: %v", rebuildErr)
+			indexErr = errors.Join(err, rebuildErr)
+		}
+	}
 	var dedupCount int
-	if len(newly) > 0 {
+	if replacedSource {
+		bookmarkMu.Lock()
+		rebuilt := RebuildAllWaypoints(bookmarksPath, dataRoot)
 		allWaypointsMu.Lock()
-		combined := append(allWaypoints, newly...)
-		allWaypoints = DedupeWaypoints(combined)
+		allWaypoints = rebuilt
 		dedupCount = len(allWaypoints)
 		allWaypointsMu.Unlock()
+		bookmarkMu.Unlock()
 	} else {
+		allWaypointsMu.Lock()
+		allWaypoints = DedupeWaypoints(append(allWaypoints, newly...))
 		dedupCount = len(allWaypoints)
+		allWaypointsMu.Unlock()
 	}
-	if err := rebuildObservationIndex(); err != nil {
-		logger.Error("observation index rebuild after import failed: %v", err)
+	if indexErr != nil {
+		http.Error(w, "GPX files were imported but the report index could not be updated", http.StatusInternalServerError)
+		return
 	}
+
+	skipped := make([]string, 0, len(result.duplicates)+len(result.unsupported))
+	skipped = append(skipped, result.duplicates...)
+	skipped = append(skipped, result.unsupported...)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"imported":      true,
-		"dir":           req.Dir,
-		"count":         len(newly),
-		"files":         len(importedFiles),
-		"skipped_files": skipped,
-		"skipped":       len(skipped),
-		"dedup_count":   dedupCount,
+		"imported":          true,
+		"dir":               req.Dir,
+		"count":             len(newly),
+		"files":             len(result.imported),
+		"added":             len(result.imported) - replacedFiles,
+		"replaced":          replacedFiles,
+		"skipped_files":     skipped,
+		"skipped":           len(skipped),
+		"duplicate_files":   result.duplicates,
+		"duplicates":        len(result.duplicates),
+		"unsupported_files": result.unsupported,
+		"unsupported":       len(result.unsupported),
+		"failed_files":      result.failed,
+		"failed":            len(result.failed),
+		"dedup_count":       dedupCount,
 	})
+}
+
+type importedGPXFile struct {
+	path      string
+	waypoints []Waypoint
+	replaced  bool
+}
+
+type pendingGPXImport struct {
+	stagedPath      string
+	destinationPath string
+	waypoints       []Waypoint
+	replace         bool
+}
+
+type gpxImportResult struct {
+	imported    []importedGPXFile
+	duplicates  []string
+	unsupported []string
+	failed      []string
+}
+
+var errUnsupportedImportDestination = errors.New("unsupported import destination")
+
+type committedGPXImport struct {
+	destinationPath string
+	backupPath      string
+	replaced        bool
+}
+
+func importGPXDirectory(sourceRoot, importBase string, recursive bool) (gpxImportResult, error) {
+	sourceRoot, err := filepath.EvalSymlinks(sourceRoot)
+	if err != nil {
+		return gpxImportResult{}, fmt.Errorf("resolve source directory symlinks: %w", err)
+	}
+	sourceRoot, err = filepath.Abs(sourceRoot)
+	if err != nil {
+		return gpxImportResult{}, fmt.Errorf("resolve source directory: %w", err)
+	}
+	importBase, err = filepath.EvalSymlinks(importBase)
+	if err != nil {
+		return gpxImportResult{}, fmt.Errorf("resolve imports directory symlinks: %w", err)
+	}
+	importBase, err = filepath.Abs(importBase)
+	if err != nil {
+		return gpxImportResult{}, fmt.Errorf("resolve imports directory: %w", err)
+	}
+	if err := cleanupImportStaging(importBase); err != nil {
+		return gpxImportResult{}, err
+	}
+	stagingRoot, err := os.MkdirTemp(importBase, ".staging-")
+	if err != nil {
+		return gpxImportResult{}, fmt.Errorf("create import staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+	if err := os.Chmod(stagingRoot, 0o700); err != nil {
+		return gpxImportResult{}, fmt.Errorf("secure import staging directory: %w", err)
+	}
+
+	result, pending, err := stageGPXImports(sourceRoot, importBase, stagingRoot, recursive)
+	if err != nil {
+		return gpxImportResult{}, err
+	}
+	result.imported, err = commitGPXImports(importBase, stagingRoot, pending)
+	if err != nil {
+		return gpxImportResult{}, err
+	}
+	return result, nil
+}
+
+func stageGPXImports(sourceRoot, importBase, stagingRoot string, recursive bool) (gpxImportResult, []pendingGPXImport, error) {
+	result := gpxImportResult{
+		imported:    []importedGPXFile{},
+		duplicates:  []string{},
+		unsupported: []string{},
+		failed:      []string{},
+	}
+	var pending []pendingGPXImport
+	claimedDestinations := make(map[string]struct{})
+	stagedCount := 0
+	err := filepath.WalkDir(sourceRoot, func(sourcePath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if pathWithin(importBase, sourcePath) {
+				return filepath.SkipDir
+			}
+			if !recursive && sourcePath != sourceRoot {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ".gpx") {
+			return nil
+		}
+
+		relativePath, err := filepath.Rel(sourceRoot, sourcePath)
+		if err != nil || relativePath == "." || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+			return errors.New("invalid GPX source path")
+		}
+		displayPath := filepath.ToSlash(relativePath)
+		if entry.Type()&os.ModeSymlink != 0 {
+			result.unsupported = append(result.unsupported, displayPath)
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			result.unsupported = append(result.unsupported, displayPath)
+			return nil
+		}
+
+		stagedPath := filepath.Join(stagingRoot, fmt.Sprintf("%06d.gpx", stagedCount))
+		stagedCount++
+		if err := copyImportedGPXFile(sourcePath, stagedPath, info); err != nil {
+			return fmt.Errorf("stage GPX %q: %w", displayPath, err)
+		}
+		waypoints, err := parseGPXFile(stagedPath)
+		if err != nil {
+			result.failed = append(result.failed, displayPath)
+			if removeErr := os.Remove(stagedPath); removeErr != nil {
+				return fmt.Errorf("discard invalid GPX %q: %w", displayPath, removeErr)
+			}
+			return nil
+		}
+
+		destinationPath := filepath.Join(importBase, relativePath)
+		destinationKey := strings.ToLower(filepath.Clean(destinationPath))
+		if _, claimed := claimedDestinations[destinationKey]; claimed {
+			result.unsupported = append(result.unsupported, displayPath)
+			if removeErr := os.Remove(stagedPath); removeErr != nil {
+				return fmt.Errorf("discard colliding GPX %q: %w", displayPath, removeErr)
+			}
+			return nil
+		}
+		duplicate, replace, err := inspectImportDestination(stagedPath, destinationPath)
+		if errors.Is(err, errUnsupportedImportDestination) {
+			result.unsupported = append(result.unsupported, displayPath)
+			if removeErr := os.Remove(stagedPath); removeErr != nil {
+				return fmt.Errorf("discard unsupported GPX %q: %w", displayPath, removeErr)
+			}
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect destination for GPX %q: %w", displayPath, err)
+		}
+		if duplicate {
+			claimedDestinations[destinationKey] = struct{}{}
+			result.duplicates = append(result.duplicates, displayPath)
+			if err := os.Remove(stagedPath); err != nil {
+				return fmt.Errorf("discard duplicate GPX %q: %w", displayPath, err)
+			}
+			return nil
+		}
+		claimedDestinations[destinationKey] = struct{}{}
+		pending = append(pending, pendingGPXImport{
+			stagedPath:      stagedPath,
+			destinationPath: destinationPath,
+			waypoints:       waypoints,
+			replace:         replace,
+		})
+		return nil
+	})
+	if err != nil {
+		return result, nil, err
+	}
+	return result, pending, nil
+}
+
+func commitGPXImports(importBase, stagingRoot string, pending []pendingGPXImport) ([]importedGPXFile, error) {
+	imported := make([]importedGPXFile, 0, len(pending))
+	committed := make([]committedGPXImport, 0, len(pending))
+	for index, candidate := range pending {
+		if err := ensureImportParent(importBase, candidate.destinationPath); err != nil {
+			return nil, rollbackImportedGPX(committed, err)
+		}
+		commit := committedGPXImport{destinationPath: candidate.destinationPath, replaced: candidate.replace}
+		if candidate.replace {
+			commit.backupPath = filepath.Join(stagingRoot, fmt.Sprintf(".backup-%06d.gpx", index))
+			if err := os.Link(candidate.destinationPath, commit.backupPath); err != nil {
+				return nil, rollbackImportedGPX(committed, fmt.Errorf("back up replaced GPX: %w", err))
+			}
+			if err := os.Rename(candidate.stagedPath, candidate.destinationPath); err != nil {
+				return nil, rollbackImportedGPX(committed, fmt.Errorf("replace imported GPX: %w", err))
+			}
+		} else if err := os.Link(candidate.stagedPath, candidate.destinationPath); err != nil {
+			return nil, rollbackImportedGPX(committed, fmt.Errorf("commit imported GPX: %w", err))
+		}
+		committed = append(committed, commit)
+		imported = append(imported, importedGPXFile{
+			path:      candidate.destinationPath,
+			waypoints: candidate.waypoints,
+			replaced:  candidate.replace,
+		})
+	}
+	return imported, nil
+}
+
+func inspectImportDestination(stagedPath, destinationPath string) (bool, bool, error) {
+	info, err := os.Lstat(destinationPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	} else if err != nil {
+		return false, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, false, errUnsupportedImportDestination
+	}
+	equal, err := filesHaveSameContent(stagedPath, destinationPath)
+	if err != nil {
+		return false, false, err
+	}
+	if equal {
+		return true, false, nil
+	}
+	return false, true, nil
+}
+
+func filesHaveSameContent(leftPath, rightPath string) (bool, error) {
+	left, err := fileSHA256(leftPath)
+	if err != nil {
+		return false, err
+	}
+	right, err := fileSHA256(rightPath)
+	if err != nil {
+		return false, err
+	}
+	return left == right, nil
+}
+
+func fileSHA256(path string) ([sha256.Size]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	var sum [sha256.Size]byte
+	copy(sum[:], hash.Sum(nil))
+	return sum, nil
+}
+
+func rollbackImportedGPX(imports []committedGPXImport, importErr error) error {
+	errs := []error{importErr}
+	for index := len(imports) - 1; index >= 0; index-- {
+		committed := imports[index]
+		if committed.replaced {
+			if err := os.Rename(committed.backupPath, committed.destinationPath); err != nil {
+				errs = append(errs, fmt.Errorf("restore replaced GPX: %w", err))
+			}
+		} else if err := os.Remove(committed.destinationPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("remove imported GPX: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func cleanupImportStaging(importBase string) error {
+	entries, err := os.ReadDir(importBase)
+	if err != nil {
+		return fmt.Errorf("inspect import staging directories: %w", err)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), ".staging-") {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(importBase, entry.Name())); err != nil {
+			return fmt.Errorf("remove stale import staging directory: %w", err)
+		}
+	}
+	return nil
+}
+
+func canonicalImportPaths(dataRoot, importBase string) (string, string, error) {
+	canonicalDataRoot, err := filepath.EvalSymlinks(dataRoot)
+	if err != nil {
+		return "", "", err
+	}
+	canonicalDataRoot, err = filepath.Abs(canonicalDataRoot)
+	if err != nil {
+		return "", "", err
+	}
+	canonicalImportBase, err := filepath.EvalSymlinks(importBase)
+	if err != nil {
+		return "", "", err
+	}
+	canonicalImportBase, err = filepath.Abs(canonicalImportBase)
+	if err != nil {
+		return "", "", err
+	}
+	if filepath.Clean(canonicalImportBase) != filepath.Join(filepath.Clean(canonicalDataRoot), "imports") {
+		return "", "", errors.New("imports directory resolves outside the data root")
+	}
+	return canonicalDataRoot, canonicalImportBase, nil
+}
+
+func ensureImportParent(importBase, destinationPath string) error {
+	parent := filepath.Dir(destinationPath)
+	relativeParent, err := filepath.Rel(importBase, parent)
+	if err != nil || relativeParent == ".." || strings.HasPrefix(relativeParent, ".."+string(filepath.Separator)) {
+		return errors.New("import destination is outside the imports directory")
+	}
+	current := importBase
+	if relativeParent == "." {
+		return nil
+	}
+	for _, component := range strings.Split(relativeParent, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.Mkdir(current, 0o700); err != nil {
+				return fmt.Errorf("create import destination directory: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect import destination directory: %w", err)
+		}
+		if !info.IsDir() {
+			return errors.New("import destination parent is not a directory")
+		}
+		if err := os.Chmod(current, 0o700); err != nil {
+			return fmt.Errorf("secure import destination directory: %w", err)
+		}
+	}
+	return nil
+}
+
+func pathWithin(basePath, candidatePath string) bool {
+	relativePath, err := filepath.Rel(basePath, candidatePath)
+	return err == nil && relativePath != ".." && !strings.HasPrefix(relativePath, ".."+string(filepath.Separator))
+}
+
+func copyImportedGPX(sourcePath, destinationPath string) error {
+	expected, err := os.Lstat(sourcePath)
+	if err != nil {
+		return err
+	}
+	return copyImportedGPXFile(sourcePath, destinationPath, expected)
+}
+
+func copyImportedGPXFile(sourcePath, destinationPath string, expected os.FileInfo) error {
+	if !expected.Mode().IsRegular() {
+		return errors.New("GPX source is not a regular file")
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	actual, err := source.Stat()
+	if err != nil {
+		return err
+	}
+	if !actual.Mode().IsRegular() || !os.SameFile(expected, actual) {
+		return errors.New("GPX source changed before it could be copied")
+	}
+
+	destination, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	removeDestination := true
+	defer func() {
+		if removeDestination {
+			_ = os.Remove(destinationPath)
+		}
+	}()
+	if _, err := io.Copy(destination, source); err != nil {
+		_ = destination.Close()
+		return err
+	}
+	if err := destination.Close(); err != nil {
+		return err
+	}
+	removeDestination = false
+	return nil
 }
 
 // --------------- Suggestions & Tags ---------------
@@ -2060,7 +2467,9 @@ func RegisterAPI(mux *http.ServeMux, bookmarksPath string, debug bool) {
 	mux.HandleFunc("GET /api/location", handleGetLocation)
 
 	// Import
-	mux.HandleFunc("POST /api/import", handlePostImport)
+	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
+		handlePostImport(bookmarksPath, w, r)
+	})
 
 	// Tag management
 	mux.HandleFunc("GET /api/tags", handleGetTags)

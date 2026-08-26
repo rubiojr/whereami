@@ -184,6 +184,122 @@ func (r *Repository) Rebuild(dataRoot, bookmarksPath string) error {
 	return nil
 }
 
+// AddSources indexes newly added GPX files without rescanning the data root.
+// Each path must resolve to a regular non-bookmark file beneath dataRoot.
+func (r *Repository) AddSources(dataRoot, bookmarksPath string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	root, err := filepath.EvalSymlinks(dataRoot)
+	if err != nil {
+		return fmt.Errorf("resolve observation data root symlinks: %w", err)
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve observation data root: %w", err)
+	}
+	excluded := ""
+	if bookmarksPath != "" {
+		excluded = bookmarksPath
+		if !filepath.IsAbs(excluded) {
+			excluded = filepath.Join(root, excluded)
+		}
+		if resolved, resolveErr := filepath.EvalSymlinks(excluded); resolveErr == nil {
+			excluded = resolved
+		}
+		excluded, err = filepath.Abs(excluded)
+		if err != nil {
+			return fmt.Errorf("resolve bookmarks path: %w", err)
+		}
+	}
+
+	prepared := make([]struct {
+		source       sourceFile
+		observations []Observation
+	}, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		absolutePath := path
+		if !filepath.IsAbs(absolutePath) {
+			absolutePath = filepath.Join(root, absolutePath)
+		}
+		absolutePath, err = filepath.Abs(absolutePath)
+		if err != nil {
+			return fmt.Errorf("resolve observation source: %w", err)
+		}
+		relativePath, err := filepath.Rel(root, absolutePath)
+		if err != nil || relativePath == "." || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+			return errors.New("observation source is outside the data root")
+		}
+		if excluded != "" && filepath.Clean(absolutePath) == filepath.Clean(excluded) {
+			return errors.New("bookmarks cannot be added as an observation source")
+		}
+		relativePath = filepath.ToSlash(relativePath)
+		if _, duplicate := seen[relativePath]; duplicate {
+			continue
+		}
+		seen[relativePath] = struct{}{}
+		info, err := os.Lstat(absolutePath)
+		if err != nil {
+			return fmt.Errorf("inspect observation source %q: %w", relativePath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("observation source %q is not a regular file", relativePath)
+		}
+		content, err := os.ReadFile(absolutePath)
+		if err != nil {
+			return fmt.Errorf("read observation source %q: %w", relativePath, err)
+		}
+		source := sourceFile{
+			path:         relativePath,
+			absolutePath: absolutePath,
+			hash:         sha256.Sum256(content),
+		}
+		observations, err := parseSource(relativePath, content)
+		if err != nil {
+			return err
+		}
+		prepared = append(prepared, struct {
+			source       sourceFile
+			observations []Observation
+		}{source: source, observations: observations})
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("observation repository is closed")
+	}
+	tx, err := r.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("begin observation source update: %w", err)
+	}
+	defer tx.Rollback()
+	for _, item := range prepared {
+		if err := replaceSource(tx, item.source, item.observations); err != nil {
+			return err
+		}
+	}
+	hashes, err := sourceHashes(tx)
+	if err != nil {
+		return err
+	}
+	sources := make([]sourceFile, 0, len(hashes))
+	for path, hash := range hashes {
+		sources = append(sources, sourceFile{path: path, hash: hash})
+	}
+	sort.Slice(sources, func(i, j int) bool { return sources[i].path < sources[j].path })
+	revision := calculateRevision(sources)
+	if _, err := tx.Exec(`INSERT INTO metadata(key, value) VALUES(?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, revisionKey, revision); err != nil {
+		return fmt.Errorf("store observation revision: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit observation source update: %w", err)
+	}
+	return nil
+}
+
 // Snapshot opens an isolated, read-only view of the current repository state.
 func (r *Repository) Snapshot() (*Snapshot, error) {
 	r.mu.Lock()
@@ -266,6 +382,55 @@ func (s *Snapshot) ScanPeriod(start, end time.Time, visit func(Observation) erro
 	return nil
 }
 
+// ScanResolvableCoordinates visits each distinct coordinate which can
+// participate in a report, ordered by longitude and then latitude.
+func (s *Snapshot) ScanResolvableCoordinates(ctx context.Context, visit func(longitude, latitude float64) error) error {
+	if ctx == nil {
+		return errors.New("observation coordinate scan context is nil")
+	}
+	if visit == nil {
+		return errors.New("observation coordinate scan callback is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("observation snapshot is closed")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	rows, err := s.tx.QueryContext(ctx, scanResolvableCoordinatesSQL)
+	if err != nil {
+		return fmt.Errorf("query resolvable observation coordinates: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var longitude, latitude float64
+		if err := rows.Scan(&longitude, &latitude); err != nil {
+			return fmt.Errorf("scan resolvable observation coordinate: %w", err)
+		}
+		if err := visit(longitude, latitude); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("scan resolvable observation coordinates: %w", err)
+	}
+	return nil
+}
+
 // TimeStatusCounts counts every indexed observation, including observations
 // which cannot participate in period scans.
 func (s *Snapshot) TimeStatusCounts() (TimeStatusCounts, error) {
@@ -325,18 +490,18 @@ type gpxWaypoint struct {
 }
 
 func prepareDBParent(parent string) error {
-	_, err := os.Stat(parent)
+	info, err := os.Stat(parent)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := os.MkdirAll(parent, 0o700); err != nil {
 			return fmt.Errorf("create observation database directory: %w", err)
 		}
-		if err := os.Chmod(parent, 0o700); err != nil {
-			return fmt.Errorf("secure observation database directory: %w", err)
-		}
-		return nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return fmt.Errorf("inspect observation database directory: %w", err)
+	} else if !info.IsDir() {
+		return fmt.Errorf("observation database parent %q is not a directory", parent)
+	}
+	if err := os.Chmod(parent, 0o700); err != nil {
+		return fmt.Errorf("secure observation database directory: %w", err)
 	}
 	return nil
 }
@@ -384,7 +549,10 @@ func createSchema(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS observations_period
 			ON observations(time_unix_seconds, time_nanosecond, source_path, ordinal)
-			WHERE time_status = 'valid';`
+			WHERE time_status = 'valid';
+		CREATE INDEX IF NOT EXISTS observations_resolvable_coordinates
+			ON observations(longitude, latitude)
+			WHERE coordinates_valid = 1 AND time_status = 'valid';`
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("initialize observation database: %w", err)
 	}
@@ -395,7 +563,11 @@ func createSchema(db *sql.DB) error {
 }
 
 func discoverSources(dataRoot, bookmarksPath string) ([]sourceFile, error) {
-	root, err := filepath.Abs(dataRoot)
+	root, err := filepath.EvalSymlinks(dataRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve observation data root symlinks: %w", err)
+	}
+	root, err = filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve observation data root: %w", err)
 	}
@@ -414,6 +586,13 @@ func discoverSources(dataRoot, bookmarksPath string) ([]sourceFile, error) {
 		} else {
 			excluded = filepath.Join(root, bookmarksPath)
 		}
+		if resolved, resolveErr := filepath.EvalSymlinks(excluded); resolveErr == nil {
+			excluded = resolved
+		}
+		excluded, err = filepath.Abs(excluded)
+		if err != nil {
+			return nil, fmt.Errorf("resolve bookmarks path: %w", err)
+		}
 	}
 
 	var sources []sourceFile
@@ -421,7 +600,13 @@ func discoverSources(dataRoot, bookmarksPath string) ([]sourceFile, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".gpx") {
+		if entry.IsDir() {
+			if strings.HasPrefix(entry.Name(), ".staging-") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ".gpx") {
 			return nil
 		}
 		absPath, err := filepath.Abs(path)
@@ -620,6 +805,12 @@ const scanPeriodSQL = `
 		AND (time_unix_seconds > ? OR (time_unix_seconds = ? AND time_nanosecond >= ?))
 		AND (time_unix_seconds < ? OR (time_unix_seconds = ? AND time_nanosecond < ?))
 	ORDER BY time_unix_seconds, time_nanosecond, source_path, ordinal`
+
+const scanResolvableCoordinatesSQL = `
+	SELECT DISTINCT longitude, latitude
+	FROM observations
+	WHERE coordinates_valid = 1 AND time_status = 'valid'
+	ORDER BY longitude, latitude`
 
 type rowScanner interface {
 	Scan(dest ...any) error

@@ -113,6 +113,8 @@ func TestGeodataAPIInstallsInBackground(t *testing.T) {
 	service, err := newGeodataService(root, manifest, server.Client(), serviceTestFactory)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	activated := make(chan struct{}, 1)
+	service.SetActivationCallback(func() { activated <- struct{}{} })
 	mux := http.NewServeMux()
 	RegisterGeodataAPI(mux, service)
 
@@ -127,6 +129,11 @@ func TestGeodataAPIInstallsInBackground(t *testing.T) {
 	status := service.Status()
 	assert.Equal(t, "test-v1", status.Current.GenerationID)
 	assert.True(t, status.Current.Valid)
+	select {
+	case <-activated:
+	case <-time.After(time.Second):
+		t.Fatal("activation callback was not called")
+	}
 }
 
 func TestGeodataAPICancelsInstall(t *testing.T) {

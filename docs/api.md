@@ -37,7 +37,7 @@ Child components receive the same service through an `api` property and react to
 | `renameWaypoint(wp, newName)` | `PATCH /api/bookmarks` | Renames a matching bookmark |
 | `getClusters(zoom, gridSize, bookmarksOnly)` | `GET /api/clusters?zoom=&grid=&bookmarksOnly=1` | Requests server clusters; the final parameter is optional |
 | `getLocation()` | `GET /api/location` | Emits the parsed GeoClue fix; an HTTP 204 empty response is emitted as `locationFetched(null)` |
-| `importGpxDirectory(params)` | `POST /api/import` | Imports a directory; `params` is `{dir,recursive}` and the QML timeout is 60 seconds |
+| `importGpxDirectory(params)` | `POST /api/import` | Atomically imports regular GPX files from a directory; `params` is `{dir,recursive}` and the QML timeout is 110 seconds |
 | `suggest(query)` | `GET /api/suggest?q=` | Returns local waypoint/tag results and, for normal text, geocoding results |
 | `getRecentSearches(limit)` | `GET /api/recent_suggest?limit=` | Loads distinct recent queries and optional coordinates |
 | `recordHistory(query, lat, lon)` | `POST /api/history` | Records a query with optional coordinates |
@@ -50,7 +50,7 @@ Child components receive the same service through an `api` property and react to
 | `installGeodata(id)` | `POST /api/geodata/install` | Starts one verified background install for a build-selected generation |
 | `cancelGeodataInstall()` | `DELETE /api/geodata/install` | Cancels the active geodata install |
 | `submitPlaceReport(start, end)` | `POST /api/place-reports` | Queues an offline UTC report for inclusive calendar dates |
-| `getPlaceReport(id, includeResult)` | `GET /api/place-reports/{id}` | Polls job state; `includeResult=true` fetches a completed result once |
+| `getPlaceReport(id, includeResult)` | `GET /api/place-reports/{id}` | Polls job state; `includeResult=true` fetches a completed result with a longer timeout |
 | `cancelPlaceReport(id)` | `DELETE /api/place-reports/{id}` | Cancels a queued or running report |
 | `request(path, options)` | Caller-selected | Low-level request helper for an API path |
 
@@ -86,18 +86,22 @@ GET     /api/place-reports/{id}
 DELETE  /api/place-reports/{id}
 ```
 
-The default source manifest contains no downloadable generation until immutable
-WhereAmI-hosted Xiangshan artifacts are published. The application never falls
-back to mutable upstream artifact URLs.
+The embedded manifest advertises only immutable, hash-pinned WhereAmI-hosted
+Xiangshan artifacts. The application never falls back to mutable upstream URLs.
 
-Place-report jobs use one worker, permit at most eight queued jobs, retain at
-most sixteen terminal jobs, and have a two-minute end-to-end deadline. Date
-ranges are limited to 7,320 inclusive UTC calendar days. Backend errors are
-logged locally; API failures use fixed messages so observation paths and
-coordinates cannot leak through error responses.
+Place-report jobs use one worker, permit at most eight queued jobs, track at most
+sixteen jobs, and expire terminal results after fifteen minutes. Each running
+job has a ten-minute execution deadline; queue time does not consume that
+budget. Date ranges are limited to 7,320 inclusive UTC calendar days. Backend
+errors are logged locally; API failures use fixed messages so observation paths
+and coordinates cannot leak through error responses.
 
 `GET /api/place-reports/{id}` omits the potentially large report payload by
 default. Add `?result=true` after the state reaches `completed` to fetch it.
+The authenticated result contains coordinates only for its significant journey
+stops so the local QML map can navigate between them. Administrative aggregate
+rows remain coordinate-free, and source paths are never serialized in the
+result.
 
 ## Signals
 
@@ -208,11 +212,21 @@ Coordinates are optional. The backend accepts limits from 1 through 200 and defa
   "dir": "/path/to/gpx",
   "count": 42,
   "files": 3,
+  "added": 2,
+  "replaced": 1,
   "skipped_files": ["existing.gpx"],
   "skipped": 1,
+  "duplicate_files": ["existing.gpx"],
+  "duplicates": 1,
+  "unsupported_files": [],
+  "unsupported": 0,
+  "failed_files": ["broken.gpx"],
+  "failed": 1,
   "dedup_count": 120
 }
 ```
+
+Relative paths are preserved below the private imports directory. A changed file replaces its previous relative path atomically. Unsupported entries, exact duplicates, and malformed GPX files are reported separately; valid files in the same request can still be imported.
 
 ## Persistence
 

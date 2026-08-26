@@ -26,6 +26,13 @@ Page {
     property string submittedStartDate: ""
     property string submittedEndDate: ""
     property bool resultRequested: false
+    property bool statusRequestPending: false
+    property int resultRetryCount: 0
+    readonly property int maxResultRetries: 3
+    property int currentView: 0
+    property alias detailsButton: detailsToggle
+    property alias timelineView: journeyTimeline
+    property alias detailsPanel: detailsOverlay
     readonly property int currentUTCYear: new Date().getUTCFullYear()
     readonly property int selectedYear: {
         var year = Number(startDate.substring(0, 4));
@@ -48,21 +55,6 @@ Page {
         return startDate === endDate ? startDate : startDate + " to " + endDate;
     }
 
-    function hierarchy(place) {
-        var parts = [];
-        if (place.locality)
-            parts.push(place.locality);
-        if (place.local_admin && place.local_admin !== place.locality)
-            parts.push(place.local_admin);
-        if (place.county)
-            parts.push(place.county);
-        if (place.region)
-            parts.push(place.region);
-        if (place.country)
-            parts.push(place.country);
-        return parts.join(" · ");
-    }
-
     function beginReport() {
         if (!api || startDate === "" || endDate === "") {
             errorMessage = "Choose a valid date range.";
@@ -79,21 +71,71 @@ Page {
         jobState = "submitting";
         errorMessage = "";
         result = null;
+        currentView = 0;
         resultRequested = false;
+        statusRequestPending = false;
+        resultRetryCount = 0;
         processedObservations = 0;
         api.submitPlaceReport(startDate, endDate, submissionId);
     }
 
+    function requestReportStatus(includeResult) {
+        if (!api || jobId === "" || statusRequestPending)
+            return;
+        statusRequestPending = true;
+        resultRequested = includeResult === true;
+        api.getPlaceReport(jobId, resultRequested);
+    }
+
+    function retryCompletedResult(message) {
+        resultRequested = false;
+        resultRetryCount += 1;
+        if (resultRetryCount >= maxResultRetries) {
+            errorMessage = message + " Select Retry result to try again.";
+            return;
+        }
+        errorMessage = message + " Retrying.";
+        resultRetryTimer.interval = Math.min(8000, 1000 * Math.pow(2, resultRetryCount - 1));
+        if (active && jobState === "completed")
+            resultRetryTimer.restart();
+    }
+
     function leaveReport() {
-        if (api && jobId !== "" && (jobState === "queued" || jobState === "running" || jobState === "cancelling"))
-            api.cancelPlaceReport(jobId);
+        cancelActiveReport();
+        currentView = 0;
         submissionId = "";
         backRequested();
     }
 
+    function cancelActiveReport() {
+        if (!api || jobId === "" || (jobState !== "queued" && jobState !== "running"))
+            return;
+        jobState = "cancelling";
+        api.cancelPlaceReport(jobId);
+    }
+
+    function invalidateCachedReport() {
+        cancelActiveReport();
+        resultRetryTimer.stop();
+        submissionId = "";
+        jobId = "";
+        jobState = "idle";
+        result = null;
+        resultStartDate = "";
+        resultEndDate = "";
+        resultRequested = false;
+        statusRequestPending = false;
+        resultRetryCount = 0;
+        errorMessage = "";
+    }
+
     onActiveChanged: {
-        if (active && !(jobState === "completed" && result && resultStartDate === startDate && resultEndDate === endDate))
+        if (active && jobState === "completed" && !result && jobId !== "" && submittedStartDate === startDate && submittedEndDate === endDate)
+            requestReportStatus(true);
+        else if (active && !(jobState === "completed" && result && resultStartDate === startDate && resultEndDate === endDate))
             beginReport();
+        else if (!active)
+            cancelActiveReport();
     }
 
     Connections {
@@ -107,7 +149,7 @@ Page {
             }
             report.jobId = id;
             report.jobState = "queued";
-            report.api.getPlaceReport(id);
+            report.requestReportStatus(false);
         }
 
         function onPlaceReportSubmitFailed(requestId, message) {
@@ -121,6 +163,13 @@ Page {
         function onPlaceReportStatusFetched(id, status) {
             if (id !== report.jobId)
                 return;
+            var includedResult = report.resultRequested;
+            report.statusRequestPending = false;
+            if (!status || typeof status !== "object") {
+                report.resultRequested = false;
+                report.errorMessage = "Report status response was invalid.";
+                return;
+            }
             if ((report.jobState === "completed" || report.jobState === "failed" || report.jobState === "cancelled")
                     && status.state !== report.jobState)
                 return;
@@ -128,24 +177,48 @@ Page {
             report.errorMessage = status.error || "";
             report.processedObservations = status.processed_observations || 0;
             if (status.result) {
+                report.resultRequested = false;
+                report.resultRetryCount = 0;
                 report.result = status.result;
                 report.resultStartDate = report.submittedStartDate;
                 report.resultEndDate = report.submittedEndDate;
-            } else if (status.state === "completed" && !report.resultRequested) {
-                report.resultRequested = true;
-                report.api.getPlaceReport(id, true);
+            } else if (status.state === "completed") {
+                report.resultRequested = false;
+                if (includedResult) {
+                    report.retryCompletedResult("The completed report returned no result.");
+                } else {
+                    report.requestReportStatus(true);
+                }
             }
         }
 
-        function onPlaceReportStatusFailed(id, message) {
+        function onPlaceReportStatusFailed(id, message, includedResult) {
             if (id !== report.jobId)
                 return;
-            report.jobState = "failed";
-            report.errorMessage = message;
+            report.statusRequestPending = false;
+            if (message.indexOf("HTTP 404") === 0) {
+                report.resultRequested = false;
+                report.jobState = "failed";
+                report.errorMessage = "The place report is no longer available.";
+                return;
+            }
+            if (includedResult) {
+                report.retryCompletedResult("Could not load the completed report.");
+                return;
+            }
+            report.errorMessage = "Report status is temporarily unavailable; retrying.";
         }
 
         function onGeodataStatusFetched(status) {
             report.geodataStatus = status;
+        }
+
+        function onImportCompleted(summary, params) {
+            if (!summary || Number(summary.files || 0) === 0)
+                return;
+            report.invalidateCachedReport();
+            if (report.active)
+                Qt.callLater(report.beginReport);
         }
 
         function onGeodataInstallAccepted(generationId) {
@@ -162,7 +235,17 @@ Page {
         interval: 250
         repeat: true
         running: report.active && report.api !== null && report.jobId !== "" && (report.jobState === "queued" || report.jobState === "running" || report.jobState === "cancelling")
-        onTriggered: report.api.getPlaceReport(report.jobId)
+        onTriggered: report.requestReportStatus(false)
+    }
+
+    Timer {
+        id: resultRetryTimer
+        interval: 1000
+        repeat: false
+        onTriggered: {
+            if (report.active && report.jobState === "completed" && !report.result)
+                report.requestReportStatus(true);
+        }
     }
 
     Timer {
@@ -239,7 +322,7 @@ Page {
 
             Label {
                 Layout.fillWidth: true
-                text: "Places report"
+                text: "Where was I?"
                 color: theme.toolbarText
                 font.bold: true
                 font.pixelSize: theme.scale(3)
@@ -254,79 +337,29 @@ Page {
         }
     }
 
-    ColumnLayout {
+    Item {
         anchors.fill: parent
-        anchors.margins: 24
-        spacing: 14
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-
-                Label {
-                    text: "Recorded places"
-                    color: theme.primaryText
-                    font.bold: true
-                    font.pixelSize: theme.scale(6)
-                }
-
-                Label {
-                    text: report.reportPeriod() + " · UTC"
-                    color: theme.accent
-                    font.pixelSize: theme.scale(2)
-                }
-            }
-
-            RowLayout {
-                spacing: 4
-
-                ToolButton {
-                    text: "‹"
-                    Accessible.name: "Previous year"
-                    enabled: report.selectedYear > 1
-                    onClicked: report.yearRequested(report.selectedYear - 1)
-                }
-
-                Label {
-                    Layout.preferredWidth: 58
-                    text: report.selectedYear
-                    color: theme.primaryText
-                    font.bold: true
-                    font.pixelSize: theme.scale(3)
-                    horizontalAlignment: Text.AlignHCenter
-                }
-
-                ToolButton {
-                    text: "›"
-                    Accessible.name: "Next year"
-                    enabled: report.selectedYear < report.currentUTCYear
-                    onClicked: report.yearRequested(report.selectedYear + 1)
-                }
-
-                Button {
-                    text: "This year"
-                    visible: report.selectedYear !== report.currentUTCYear
-                    onClicked: report.yearRequested(report.currentUTCYear)
-                }
-            }
-
-            Button {
-                text: "Run again"
-                visible: report.jobState === "completed" || report.jobState === "failed" || report.jobState === "cancelled"
-                onClicked: report.beginReport()
-            }
+        TravelTimeline {
+            id: journeyTimeline
+            anchors.fill: parent
+            visible: report.result !== null
+            result: report.result
+            year: report.selectedYear
+            active: report.active
+            controlsVisible: report.currentView === 0
         }
 
         Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: statusContent.implicitHeight + 24
-            radius: 10
-            color: theme.toolbarBackground
-            border.color: theme.toolbarBorder
+            id: statusCard
+            objectName: "placesStatusCard"
+            anchors.centerIn: parent
+            width: Math.max(0, Math.min(520, parent.width - 32))
+            height: statusContent.implicitHeight + 28
+            radius: 16
+            color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.96)
+            visible: report.result === null && report.jobState !== "unavailable"
+            z: 20
 
             RowLayout {
                 id: statusContent
@@ -349,7 +382,7 @@ Page {
                         Layout.fillWidth: true
                         text: {
                             if (report.jobState === "completed")
-                                return "Report ready";
+                                return report.result ? "Report ready" : "Report result unavailable";
                             if (report.jobState === "unavailable")
                                 return "Administrative place data required";
                             if (report.jobState === "failed")
@@ -360,7 +393,7 @@ Page {
                                 return "Report queued";
                             if (report.jobState === "cancelling")
                                 return "Cancelling report";
-                            return "Resolving recorded observations locally";
+                            return "Building your local journey";
                         }
                         color: theme.toolbarText
                         font.bold: true
@@ -369,59 +402,24 @@ Page {
 
                     Label {
                         Layout.fillWidth: true
-                        text: report.errorMessage !== "" ? report.errorMessage : (report.processedObservations > 0 ? report.processedObservations + " recorded observations processed" : "No online geocoding is used.")
+                        text: report.errorMessage !== "" ? report.errorMessage : (report.processedObservations > 0 ? report.processedObservations + " recorded observations processed" : "Cached places are reused; missing places get foreground priority.")
                         color: theme.toolbarTextSecondary
                         wrapMode: Text.WordWrap
                     }
                 }
 
                 Button {
-                    visible: report.jobState === "queued" || report.jobState === "running"
-                    text: "Cancel"
-                    onClicked: report.api.cancelPlaceReport(report.jobId)
-                }
-            }
-        }
-
-        GridLayout {
-            Layout.fillWidth: true
-            columns: report.width >= 760 ? 4 : 2
-            columnSpacing: 10
-            rowSpacing: 10
-            visible: report.result !== null
-
-            Repeater {
-                model: report.result ? [
-                    { label: "Recorded", value: report.result.summary.recorded_observations || 0 },
-                    { label: "Resolved", value: report.result.summary.resolved_observations || 0 },
-                    { label: "Outside boundaries", value: report.result.summary.unresolved_observations || 0 },
-                    { label: "Invalid coordinates", value: report.result.summary.invalid_coordinates || 0 }
-                ] : []
-
-                delegate: Rectangle {
-                    id: summaryCard
-                    required property var modelData
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 72
-                    radius: 8
-                    color: theme.toolbarBackgroundHover
-                    border.color: theme.toolbarSeparator
-
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 2
-                        Label {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: summaryCard.modelData.value
-                            color: theme.primaryText
-                            font.bold: true
-                            font.pixelSize: theme.scale(4)
-                        }
-                        Label {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: summaryCard.modelData.label
-                            color: theme.secondaryText
-                            font.pixelSize: theme.scale(1)
+                    visible: report.jobState === "queued" || report.jobState === "running" || report.jobState === "completed" || report.jobState === "failed" || report.jobState === "cancelled"
+                    text: report.jobState === "queued" || report.jobState === "running" ? "Cancel" : (report.jobState === "completed" ? "Retry result" : "Retry")
+                    onClicked: {
+                        if (report.jobState === "queued" || report.jobState === "running") {
+                            report.cancelActiveReport();
+                        } else if (report.jobState === "completed") {
+                            report.resultRetryCount = 0;
+                            report.errorMessage = "";
+                            report.requestReportStatus(true);
+                        } else {
+                            report.beginReport();
                         }
                     }
                 }
@@ -429,105 +427,18 @@ Page {
         }
 
         Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            radius: 10
-            color: theme.toolbarBackground
-            border.color: theme.toolbarBorder
-            visible: report.result !== null
-
-            ListView {
-                id: placesList
-                anchors.fill: parent
-                anchors.margins: 1
-                clip: true
-                model: report.result ? report.result.places : []
-                spacing: 1
-
-                header: Rectangle {
-                    width: placesList.width
-                    height: 42
-                    color: theme.toolbarBackgroundHover
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        Label { Layout.fillWidth: true; text: "Administrative place"; color: theme.toolbarText; font.bold: true }
-                        Label { Layout.preferredWidth: 110; text: "Observations"; color: theme.toolbarTextSecondary; horizontalAlignment: Text.AlignRight }
-                        Label { Layout.preferredWidth: 70; text: "Days"; color: theme.toolbarTextSecondary; horizontalAlignment: Text.AlignRight }
-                    }
-                }
-
-                delegate: Rectangle {
-                    id: placeRow
-                    required property var modelData
-                    required property int index
-                    width: placesList.width
-                    height: 62
-                    color: placeRow.index % 2 === 0 ? theme.toolbarBackground : theme.toolbarBackgroundHover
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 16
-                        spacing: 12
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 2
-                            Label {
-                                Layout.fillWidth: true
-                                text: placeRow.modelData.locality || placeRow.modelData.local_admin || placeRow.modelData.county || placeRow.modelData.region || placeRow.modelData.country || "Unnamed administrative area"
-                                color: theme.primaryText
-                                font.bold: true
-                                font.pixelSize: theme.scale(2)
-                                elide: Text.ElideRight
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: report.hierarchy(placeRow.modelData)
-                                color: theme.secondaryText
-                                font.pixelSize: theme.scale(1)
-                                elide: Text.ElideRight
-                            }
-                        }
-                        Label {
-                            Layout.preferredWidth: 110
-                            text: placeRow.modelData.recorded_observations
-                            color: theme.toolbarText
-                            font.bold: true
-                            horizontalAlignment: Text.AlignRight
-                        }
-                        Label {
-                            Layout.preferredWidth: 70
-                            text: placeRow.modelData.recorded_days
-                            color: theme.toolbarTextSecondary
-                            horizontalAlignment: Text.AlignRight
-                        }
-                    }
-                }
-
-                Label {
-                    anchors.centerIn: parent
-                    visible: placesList.count === 0
-                    text: "No administrative places were resolved for this period."
-                    color: theme.secondaryText
-                }
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            radius: 10
-            color: theme.toolbarBackground
-            border.color: theme.toolbarBorder
+            anchors.centerIn: parent
+            width: Math.max(0, Math.min(560, parent.width - 32))
+            height: unavailableContent.implicitHeight + 36
+            radius: 16
+            color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.97)
             visible: report.jobState === "unavailable"
+            z: 20
 
             ColumnLayout {
-                anchors.centerIn: parent
-                width: Math.min(520, parent.width - 48)
+                id: unavailableContent
+                anchors.fill: parent
+                anchors.margins: 18
                 spacing: 12
 
                 Label {
@@ -572,25 +483,129 @@ Page {
             }
         }
 
-        Label {
-            Layout.fillWidth: true
-            visible: report.result !== null
-            text: report.result ? "Recorded observations only · " + report.result.dataset.attribution + " · " + report.result.dataset.license : ""
-            color: theme.secondaryText
-            font.pixelSize: theme.scale(1)
-            elide: Text.ElideRight
+        PlacesDetailsSheet {
+            id: detailsOverlay
+            anchors.fill: parent
+            result: report.result
+            period: report.reportPeriod()
+            open: report.currentView === 1
+            topInset: yearPill.y + yearPill.height + 10
+            z: 30
+            onCloseRequested: {
+                report.currentView = 0;
+                Qt.callLater(detailsToggle.forceActiveFocus);
+            }
+            onRefreshRequested: report.beginReport()
         }
-    }
 
-    footer: Rectangle {
-        height: 30
-        color: theme.background
+        Rectangle {
+            id: yearPill
+            objectName: "placesYearPill"
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.topMargin: 16
+            anchors.leftMargin: 16
+            width: yearControls.implicitWidth + 8
+            height: 42
+            radius: 21
+            color: Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.94)
+            visible: report.currentView === 0
+            z: 40
+
+            RowLayout {
+                id: yearControls
+                anchors.fill: parent
+                anchors.leftMargin: 4
+                anchors.rightMargin: 4
+                spacing: 0
+
+                ToolButton {
+                    id: previousYearButton
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    text: "‹"
+                    Accessible.name: "Previous year"
+                    enabled: report.selectedYear > 1
+                    onClicked: report.yearRequested(report.selectedYear - 1)
+                    contentItem: Text {
+                        text: previousYearButton.text
+                        color: previousYearButton.enabled ? theme.primaryText : theme.toolbarIconDisabled
+                        font.bold: true
+                        font.pixelSize: theme.scale(4)
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 20
+                        color: previousYearButton.down ? theme.toolbarBackgroundHover : "transparent"
+                    }
+                }
+
+                Label {
+                    Layout.preferredWidth: 58
+                    text: report.selectedYear
+                    color: theme.primaryText
+                    font.bold: true
+                    font.pixelSize: theme.scale(2)
+                    horizontalAlignment: Text.AlignHCenter
+                }
+
+                ToolButton {
+                    id: nextYearButton
+                    Layout.preferredWidth: 40
+                    Layout.preferredHeight: 40
+                    text: "›"
+                    Accessible.name: "Next year"
+                    enabled: report.selectedYear < report.currentUTCYear
+                    onClicked: report.yearRequested(report.selectedYear + 1)
+                    contentItem: Text {
+                        text: nextYearButton.text
+                        color: nextYearButton.enabled ? theme.primaryText : theme.toolbarIconDisabled
+                        font.bold: true
+                        font.pixelSize: theme.scale(4)
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 20
+                        color: nextYearButton.down ? theme.toolbarBackgroundHover : "transparent"
+                    }
+                }
+            }
+        }
+
+        Button {
+            id: detailsToggle
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.topMargin: 16
+            anchors.rightMargin: 16
+            width: 98
+            height: 42
+            visible: report.result !== null
+            text: report.currentView === 0 ? "Details" : "Journey"
+            Accessible.name: report.currentView === 0 ? "Open report details" : "Return to journey"
+            z: 40
+            onClicked: report.currentView = report.currentView === 0 ? 1 : 0
+            contentItem: Text {
+                text: detailsToggle.text
+                color: theme.primaryText
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            background: Rectangle {
+                radius: 21
+                color: detailsToggle.down ? theme.toolbarBackgroundHover : Qt.rgba(theme.toolbarBackground.r, theme.toolbarBackground.g, theme.toolbarBackground.b, 0.94)
+            }
+        }
 
         MouseArea {
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             width: 18
             height: 18
+            z: 100
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.SizeBDiagCursor
             onPressed: {
@@ -604,6 +619,7 @@ Page {
             anchors.bottom: parent.bottom
             width: 18
             height: 18
+            z: 100
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.SizeFDiagCursor
             onPressed: {

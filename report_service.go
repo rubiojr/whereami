@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rubiojr/whereami/internal/admincache"
+	"github.com/rubiojr/whereami/internal/admingeo"
 	"github.com/rubiojr/whereami/internal/geodata"
 	"github.com/rubiojr/whereami/internal/observations"
 	"github.com/rubiojr/whereami/internal/reports"
@@ -22,7 +24,9 @@ const (
 	maxQueuedPlaceReports   = 8
 	maxRetainedPlaceReports = 16
 	maxPlaceReportDays      = 7320
-	maxPlaceReportDuration  = 2 * time.Minute
+	maxPlaceReportDuration  = 10 * time.Minute
+	placeReportRetention    = 15 * time.Minute
+	placeReportPruneEvery   = time.Minute
 )
 
 var (
@@ -45,6 +49,7 @@ type placeReportJob struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	cancelled bool
+	finished  time.Time
 }
 
 type placeReportJobStatus struct {
@@ -70,7 +75,7 @@ type placeReportService struct {
 	closed  bool
 }
 
-func newPlaceReportService(repository *observations.Repository, manager *geodata.Manager) *placeReportService {
+func newPlaceReportService(repository *observations.Repository, manager *geodata.Manager, cache *admincache.Store, warmer *admincache.Warmer) *placeReportService {
 	service := newPlaceReportJobService(func() error {
 		if repository == nil || manager == nil {
 			return errors.New("place report data is unavailable")
@@ -81,6 +86,10 @@ func newPlaceReportService(repository *observations.Repository, manager *geodata
 		}
 		return lease.Close()
 	}, func(ctx context.Context, start, end time.Time, progress func(int64)) (reports.Report, error) {
+		if warmer != nil {
+			release := warmer.BeginForeground()
+			defer release()
+		}
 		snapshot, err := repository.Snapshot()
 		if err != nil {
 			return reports.Report{}, err
@@ -91,8 +100,22 @@ func newPlaceReportService(repository *observations.Repository, manager *geodata
 			return reports.Report{}, err
 		}
 		defer lease.Close()
+		var resolver admingeo.Resolver = lease
+		var session *admincache.Session
+		if cache != nil {
+			session, err = admincache.NewSession(cache, lease)
+			if err != nil {
+				return reports.Report{}, err
+			}
+			resolver = session
+			defer func() {
+				if err := session.Close(); err != nil {
+					logger.Error("Administrative resolution cache flush failed: %v", err)
+				}
+			}()
+		}
 		generation := lease.Generation()
-		return reports.Generate(ctx, snapshot, lease, reports.DatasetMetadata{
+		return reports.Generate(ctx, snapshot, resolver, reports.DatasetMetadata{
 			DatasetVersion: generation.DatasetVersion,
 			SourceVersion:  generation.SourceVersion,
 			Attribution:    generation.Attribution,
@@ -132,7 +155,7 @@ func (s *placeReportService) Submit(startDate, endDate string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), maxPlaceReportDuration)
+	ctx, cancel := context.WithCancel(context.Background())
 	job := &placeReportJob{
 		id: id, state: "queued", startDate: startDate, endDate: endDate,
 		start: start, end: end, ctx: ctx, cancel: cancel,
@@ -191,6 +214,7 @@ func (s *placeReportService) Cancel(id string) (bool, bool) {
 		job.cancel()
 		job.cancelled = true
 		job.state = "cancelled"
+		job.finished = time.Now()
 		s.removePendingLocked(id)
 		return true, true
 	case "running":
@@ -216,6 +240,7 @@ func (s *placeReportService) Close() {
 		job.cancelled = true
 		if job.state == "queued" {
 			job.state = "cancelled"
+			job.finished = time.Now()
 		}
 	}
 	s.pending = nil
@@ -225,10 +250,16 @@ func (s *placeReportService) Close() {
 
 func (s *placeReportService) worker() {
 	defer s.wg.Done()
+	ticker := time.NewTicker(placeReportPruneEvery)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-s.stop:
 			return
+		case now := <-ticker.C:
+			s.mu.Lock()
+			s.pruneExpiredLocked(now)
+			s.mu.Unlock()
 		case <-s.wake:
 			for {
 				id, ok := s.nextPending()
@@ -236,6 +267,9 @@ func (s *placeReportService) worker() {
 					break
 				}
 				s.runJob(id)
+				s.mu.Lock()
+				s.pruneExpiredLocked(time.Now())
+				s.mu.Unlock()
 			}
 		}
 	}
@@ -250,9 +284,10 @@ func (s *placeReportService) runJob(id string) {
 	}
 	job.state = "running"
 	run := s.run
-	ctx, start, end := job.ctx, job.start, job.end
+	queuedCtx, start, end := job.ctx, job.start, job.end
 	s.mu.Unlock()
 
+	ctx, cancel := context.WithTimeout(queuedCtx, maxPlaceReportDuration)
 	result, err := run(ctx, start, end, func(processed int64) {
 		s.mu.Lock()
 		if current := s.jobs[id]; current != nil {
@@ -261,6 +296,7 @@ func (s *placeReportService) runJob(id string) {
 		s.mu.Unlock()
 	})
 	ctxErr := ctx.Err()
+	cancel()
 	job.cancel()
 
 	s.mu.Lock()
@@ -270,12 +306,13 @@ func (s *placeReportService) runJob(id string) {
 		return
 	}
 	job.err = ""
+	job.finished = time.Now()
 	switch {
 	case job.cancelled || errors.Is(err, context.Canceled):
 		job.state = "cancelled"
 	case errors.Is(err, context.DeadlineExceeded) || errors.Is(ctxErr, context.DeadlineExceeded):
 		job.state = "failed"
-		job.err = "place report exceeded the two-minute limit"
+		job.err = "place report exceeded the ten-minute limit"
 	case err != nil:
 		job.state = "failed"
 		job.err = "place report generation failed"
@@ -322,6 +359,19 @@ func (s *placeReportService) pruneLocked() {
 			return
 		}
 	}
+}
+
+func (s *placeReportService) pruneExpiredLocked(now time.Time) {
+	retained := s.order[:0]
+	for _, id := range s.order {
+		job := s.jobs[id]
+		if job != nil && !job.finished.IsZero() && now.Sub(job.finished) >= placeReportRetention {
+			delete(s.jobs, id)
+			continue
+		}
+		retained = append(retained, id)
+	}
+	s.order = retained
 }
 
 func parsePlaceReportDates(startDate, endDate string) (time.Time, time.Time, error) {

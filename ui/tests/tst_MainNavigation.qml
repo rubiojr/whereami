@@ -70,4 +70,30 @@ TestCase {
         compare(application.reportStartDate, application.currentUTCYear + "-01-01");
         compare(application.reportEndDate, application.currentUTCYear + "-12-31");
     }
+
+    function test_escapeClosesDetailsWithoutMapShortcutConflict() {
+        var application = createTemporaryObject(mainComponent, null, { visible: true });
+        verify(application !== null);
+        application.mapPage.apiService.apiPort = -1;
+        application.currentPage = 1;
+        application.placesPage.result = {
+            summary: {},
+            places: [],
+            timeline: []
+        };
+        application.placesPage.currentView = 1;
+        verify(!application.mapPage.active);
+        verify(application.placesPage.detailsPanel.visible);
+
+        application.requestActivate();
+        tryVerify(function() { return application.active; });
+        application.placesPage.detailsPanel.forceActiveFocus();
+        tryVerify(function() { return application.placesPage.detailsPanel.activeFocus; });
+        keyClick(Qt.Key_Escape);
+
+        compare(application.placesPage.currentView, 0);
+        compare(application.currentPage, 1);
+        verify(application.visible);
+        tryVerify(function() { return application.placesPage.detailsButton.activeFocus; });
+    }
 }

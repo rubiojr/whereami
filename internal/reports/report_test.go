@@ -33,11 +33,12 @@ func (reportResolver) Resolve(_ context.Context, coordinate admingeo.Coordinate)
 func (reportResolver) Version() admingeo.DatasetVersion { return "dataset-v1" }
 func (reportResolver) Close() error                     { return nil }
 
-func TestGeneratePreservesRecordedObservationsAndOmitsCoordinates(t *testing.T) {
+func TestGeneratePreservesRecordedObservationsAndOmitsSources(t *testing.T) {
 	root := t.TempDir()
 	writeReportGPX(t, filepath.Join(root, "one.gpx"),
 		reportWaypoint("first", "41", "2", "2024-01-01T00:00:00Z")+
-			reportWaypoint("duplicate", "41", "2", "2024-01-01T00:00:00Z")+
+			reportWaypoint("duplicate", "41", "2", "2024-01-01T12:34:00Z")+
+			reportWaypoint("offset-still-utc-day", "41", "2", "2024-01-02T00:30:00+01:00")+
 			reportWaypoint("ocean", "0", "3", "2024-01-01T01:00:00Z")+
 			reportWaypoint("bad-coordinate", "91", "181", "2024-01-01T02:00:00Z")+
 			reportWaypoint("excluded-end", "41", "2", "2024-01-03T00:00:00Z")+
@@ -63,25 +64,66 @@ func TestGeneratePreservesRecordedObservationsAndOmitsCoordinates(t *testing.T) 
 		progress = processed
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), report.Summary.RecordedObservations)
-	assert.Equal(t, int64(3), report.Summary.ResolvedObservations)
+	assert.Equal(t, int64(6), report.Summary.RecordedObservations)
+	assert.Equal(t, int64(4), report.Summary.ResolvedObservations)
 	assert.Equal(t, int64(1), report.Summary.UnresolvedObservations)
 	assert.Equal(t, int64(1), report.Summary.InvalidCoordinates)
-	assert.Equal(t, int64(6), report.Summary.IndexedValidTimes)
+	assert.Equal(t, int64(7), report.Summary.IndexedValidTimes)
 	assert.Equal(t, int64(1), report.Summary.IndexedMissingTimes)
-	assert.Equal(t, int64(5), progress)
+	assert.Equal(t, int64(6), progress)
 	require.Len(t, report.Places, 1)
-	assert.Equal(t, int64(3), report.Places[0].RecordedObservations)
+	assert.Equal(t, int64(4), report.Places[0].RecordedObservations)
 	assert.Equal(t, 2, report.Places[0].RecordedDays)
 	assert.Equal(t, 2, report.Places[0].SourceFiles)
+	assert.Equal(t, 100.0, report.JourneySeparationMeters)
+	require.Len(t, report.Timeline, 3)
+	assert.Equal(t, "2024-01-01", report.Timeline[0].DateUTC)
+	assert.Equal(t, int64(1), report.Timeline[0].RecordedObservations)
+	assert.Equal(t, "Barcelona", report.Timeline[0].Locality)
+	assert.Equal(t, 41.0, report.Timeline[0].Latitude)
+	assert.Equal(t, 2.0, report.Timeline[0].Longitude)
+	assert.Empty(t, report.Timeline[1].Country)
+	assert.Equal(t, 0.0, report.Timeline[1].Latitude)
+	assert.Equal(t, 3.0, report.Timeline[1].Longitude)
+	assert.Equal(t, "2024-01-02", report.Timeline[2].DateUTC)
+	assert.Equal(t, int64(3), report.Timeline[2].RecordedObservations)
+	assert.Equal(t, "2024-01-01T12:34:00Z", report.Timeline[2].FirstObservationUTC)
+	assert.Equal(t, "2024-01-02T00:00:00Z", report.Timeline[2].LastObservationUTC)
 
 	encoded, err := json.Marshal(report)
 	require.NoError(t, err)
 	response := strings.ToLower(string(encoded))
-	assert.NotContains(t, response, "latitude")
-	assert.NotContains(t, response, "longitude")
+	assert.Contains(t, response, `"latitude":41`)
+	assert.Contains(t, response, `"longitude":2`)
 	assert.NotContains(t, response, "one.gpx")
 	assert.NotContains(t, response, "two.gpx")
+}
+
+func TestGenerateJourneyCollapsesMovementBelowOneHundredMeters(t *testing.T) {
+	root := t.TempDir()
+	writeReportGPX(t, filepath.Join(root, "journey.gpx"),
+		reportWaypoint("start", "41", "2", "2024-01-01T00:00:00Z")+
+			reportWaypoint("nearby", "41", "2.0005", "2024-01-01T01:00:00Z")+
+			reportWaypoint("far", "41", "2.002", "2024-01-01T02:00:00Z"))
+
+	repository, err := observations.Open(filepath.Join(t.TempDir(), "observations.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	require.NoError(t, repository.Rebuild(root, ""))
+	snapshot, err := repository.Snapshot()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, snapshot.Close()) })
+
+	report, err := reports.Generate(context.Background(), snapshot, reportResolver{}, reports.DatasetMetadata{
+		DatasetVersion: "dataset-v1",
+	}, mustReportTime(t, "2024-01-01T00:00:00Z"), mustReportTime(t, "2024-01-02T00:00:00Z"), nil)
+	require.NoError(t, err)
+	require.Len(t, report.Timeline, 2)
+	assert.Equal(t, int64(2), report.Timeline[0].RecordedObservations)
+	assert.Equal(t, 2.0, report.Timeline[0].Longitude)
+	assert.Equal(t, "2024-01-01T01:00:00Z", report.Timeline[0].LastObservationUTC)
+	assert.Equal(t, int64(1), report.Timeline[1].RecordedObservations)
+	assert.Equal(t, 2.002, report.Timeline[1].Longitude)
 }
 
 func TestGenerateValidatesRangeVersionAndCancellation(t *testing.T) {
