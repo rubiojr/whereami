@@ -263,4 +263,40 @@ TestCase {
         compare(timeline.currentStop.locality, "Seville");
         tryVerify(function() { return focusSpy.count > 0; }, 2000);
     }
+
+    function test_attributionStaysClearOfTimelinePanel_data() {
+        return [
+            { tag: "wide", width: 1000, height: 700 },
+            { tag: "medium", width: 640, height: 600 },
+            { tag: "narrow", width: 420, height: 640 },
+            { tag: "very narrow", width: 330, height: 600 }
+        ];
+    }
+
+    // Attribution is a licensing requirement, so it must never be covered by
+    // the timeline panel, including when it wraps at small widths.
+    function test_attributionStaysClearOfTimelinePanel(data) {
+        var win = createTemporaryObject(timelineWindowComponent, null,
+                                        { width: data.width, height: data.height });
+        verify(win !== null);
+        tryCompare(win.timeline, "mapReady", true, 2000);
+
+        var attribution = findChild(win, "mapAttribution");
+        var panel = findChild(win, "timelinePanel");
+        verify(attribution !== null);
+        verify(panel !== null);
+        verify(attribution.width > 0);
+        verify(attribution.height > 0);
+
+        var a = attribution.mapToItem(null, 0, 0, attribution.width, attribution.height);
+        var pr = panel.mapToItem(null, 0, 0, panel.width, panel.height);
+        var overlaps = a.y < pr.y + pr.height && a.y + a.height > pr.y
+                    && a.x < pr.x + pr.width && a.x + a.width > pr.x;
+        verify(!overlaps);
+
+        // Fully inside the view, not clipped off the bottom or the left edge.
+        verify(a.x >= 0);
+        verify(a.y + a.height <= data.height);
+    }
+
 }

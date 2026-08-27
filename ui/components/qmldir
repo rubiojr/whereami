@@ -21,6 +21,8 @@ SearchBox 1.0 SearchBox.qml
 MapToolBar 1.0 MapToolBar.qml
 DateRangePicker 1.0 DateRangePicker.qml
 MapStatusBar 1.0 MapStatusBar.qml
+MapProviderOverlay 1.0 MapProviderOverlay.qml
+OpenFreeMapPlugin 1.0 OpenFreeMapPlugin.qml
 AboutOverlay 1.0 AboutOverlay.qml
 HelpOverlay 1.0 HelpOverlay.qml
 Knobs 1.0 Knobs.qml

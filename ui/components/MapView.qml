@@ -846,42 +846,10 @@ Page {
                     }
                 }
 
-                plugin: Plugin {
-                    name: "osm"
-                    // Identify client
-                    PluginParameter {
-                        name: "osm.useragent"
-                        value: "WhereAmI GPX Viewer"
-                    }
-                    // Disable remote provider repository (removes redirect parsing noise)
-                    PluginParameter {
-                        name: "osm.mapping.providersrepository.disabled"
-                        value: "true"
-                    }
-                    // Custom tile host now proxied locally to reduce upstream load & enable caching
-                    PluginParameter {
-                        name: "osm.mapping.custom.host"
-                        value: "http://127.0.0.1:43098/api/tiles/%z/%x/%y.png"
-                    }
-                    // Caching (reduce repeated tile fetches / HTTP2 resets)
-                    PluginParameter {
-                        name: "osm.mapping.cache.disk.size"
-                        value: "0"            // 128 MB
-                    }
-                    // High DPI tiles (set to false if hitting provider limits)
-                    PluginParameter {
-                        name: "osm.mapping.highdpi_tiles"
-                        value: "true"
-                    }
-                    // Copyright / attribution
-                    PluginParameter {
-                        name: "osm.mapping.custom.mapcopyright"
-                        value: "Carto"
-                    }
-                    PluginParameter {
-                        name: "osm.mapping.custom.datacopyright"
-                        value: "OpenStreetMap contributors"
-                    }
+                copyrightsVisible: false
+
+                plugin: OpenFreeMapPlugin {
+                    id: mapPlugin
                 }
 
                 // Gesture handlers
@@ -1484,6 +1452,17 @@ Page {
                     }
                 }
             } // Map
+
+            // Provider attribution and the missing-renderer notice. Sits beside the
+            // map rather than inside it so it shares a coordinate space with the
+            // other map-area overlays and cannot be painted over by them.
+            MapProviderOverlay {
+                id: mapOverlay
+                anchors.fill: parent
+                z: 6
+                mapLibreAvailable: mapPlugin.mapLibreAvailable
+                theme: theme
+            }
 
             // Map Controls (zoom, reset) anchored over the map
             MapControls {

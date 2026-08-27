@@ -6,9 +6,9 @@ This document describes the HTTP integration implemented by `api.go`, `geodata_s
 
 The Go process serves an authenticated HTTP API on the fixed loopback address `127.0.0.1:43098`. A random bearer token is generated for each process, injected into QML, and attached by `API.qml` to every private API request.
 
-Semantic XHR operations from QML components go through `ui/services/API.qml`. The map tile path is the exception: QtLocation requests `http://127.0.0.1:43098/api/tiles/%z/%x/%y.png` directly from the local tile proxy.
+Semantic XHR operations from QML components go through `ui/services/API.qml`. The OpenFreeMap basemap is rendered by the MapLibre QtLocation provider, which fetches its style and vector tiles directly rather than using the Go HTTP API.
 
-The API is loopback-only. Coordinate requests matching `GET /api/tiles/{z}/{x}/{y}.png` are the only unauthenticated routes because QtLocation cannot attach the bearer token. Tile statistics and malformed tile-like paths remain private. The server does not grant browser CORS access.
+The API is loopback-only. Every `/api/` route requires the bearer token, and the server does not grant browser CORS access.
 
 ## QML Usage
 
@@ -61,14 +61,11 @@ Child components receive the same service through an `api` property and react to
 `RegisterAPI` registers these method-aware routes:
 
 ```text
-OPTIONS /api/bookmarks
 POST    /api/bookmarks
 PATCH   /api/bookmarks
 DELETE  /api/bookmarks
 GET     /api/waypoints
 GET     /api/clusters
-GET     /api/tiles/stats
-GET     /api/tiles/{z}/{x}/{y}.png
 GET     /api/location
 POST    /api/import
 GET     /api/tags
@@ -233,7 +230,7 @@ Relative paths are preserved below the private imports directory. A changed file
 ## Persistence
 
 - `bookmarks.gpx`, copied imports, `tags.sqlite`, and `history.sqlite` live in the effective data directory.
-- `geocode.sqlite` and the default `tiles/` tree live in the effective cache directory.
+- `geocode.sqlite` and the MapLibre map cache (`maplibre/maplibre.db`) live in the effective cache directory.
 - Search history is separate from the geocoding cache.
 
 ## Offline Preview Mode

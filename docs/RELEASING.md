@@ -1,79 +1,64 @@
 # Releasing WhereAmI
 
-This repository has three release targets, all defined in `Makefile`.
+The application is distributed as a Flatpak. Packaging lives in a separate
+repository, [whereami-flatpak](https://github.com/rubiojr/whereami-flatpak),
+which builds both WhereAmI and the MapLibre Native Qt renderer against a pinned
+KDE runtime. This repository produces no distributable packages of its own.
 
-## Snapshot Release
+## Application Release
 
-`make release-snapshot` runs GoReleaser v2 on the host without publishing:
-
-```bash
-make release-snapshot
-```
-
-Host requirements are Go, GoReleaser v2, GCC/G++, Qt 6 development files, and `miqt-rcc`. The target runs `scripts/build.sh --check-deps` before GoReleaser.
-
-Install the two Go tools with:
-
-```bash
-go install github.com/goreleaser/goreleaser/v2@latest
-go install github.com/mappu/miqt/cmd/miqt-rcc@v0.14.0
-```
-
-## Fedora RPM Snapshot
-
-`make release-rpm` delegates to `scripts/build-podman`:
-
-```bash
-make release-rpm
-```
-
-This path requires Podman on the host. The script creates or reuses a Fedora 43 container, installs the build dependencies, runs a GoReleaser snapshot, and copies `dist/` back to the repository. Its supported options are:
-
-```text
---fedora-version VERSION
---container-name NAME
---clean
---help
-```
-
-## Published Release
-
-The current commit must have an exact Git tag before `make release` will run:
+Tag this repository first:
 
 ```bash
 git tag -a v1.0.0 -m "Release v1.0.0"
 git push origin v1.0.0
-make release
 ```
 
-`make release` invokes `goreleaser release --clean`. The GoReleaser configuration creates a draft GitHub release.
+Then build the exact tag from the packaging repository:
 
-## Current Artifacts
+```bash
+cd ../whereami-flatpak
+./build release v1.0.0 ../whereami
+```
 
-`.goreleaser.yml` currently builds Linux AMD64 only. It produces:
+Release mode requires a clean WhereAmI checkout with the requested tag at
+`HEAD`. It regenerates Flatpak Go dependency sources, builds that exact local
+Git commit, and writes `io.github.rubiojr.whereami.flatpak`. It does not commit,
+push, create a GitHub release, or upload the bundle.
 
-- A `tar.gz` archive containing the executable, README, MIT and ODbL licenses, desktop entry, and icons
-- A Fedora-named RPM containing the executable, desktop entry, icons, README, and MIT and ODbL licenses
-- `checksums.txt` using SHA-256
+The MapLibre commit is pinned separately in `maplibre-native-qt.yml`. Changing
+it is a deliberate, separately tested step, and the bundle's licensing notes
+depend on it staying accurate.
 
-The RPM also creates `/usr/share/whereami/` as an empty application directory. The default `bookmarks.gpx` is embedded in the executable and is written to the user's data directory on first run; it is not installed under `/usr/share`.
+## Verification
 
-## RPM Paths
+Before tagging:
 
-- `/usr/bin/whereami`
-- `/usr/share/applications/io.github.rubiojr.whereami.desktop`
-- `/usr/share/icons/hicolor/.../io.github.rubiojr.whereami.{svg,png}`
-- `/usr/share/doc/whereami/README.md`
-- `/usr/share/doc/whereami/LICENSE`
-- `/usr/share/doc/whereami/ODbL-1.0.txt`
-- `/usr/share/doc/whereami/GEODATA.md`
-- `/usr/share/whereami/`
+```bash
+go test ./...
+go vet ./...
+make lint-qml
+make qml-test
+make build
+```
 
-The dependency list and package metadata are defined in the `nfpms` section of `.goreleaser.yml`. Post-install and post-remove scripts refresh the desktop and icon caches when the corresponding tools are available; the post-install script also refreshes the MIME database when available.
+Then verify the packaged application, which is the only build that includes the
+map renderer:
+
+```bash
+cd ../whereami-flatpak
+./build dev ../whereami
+flatpak install --user --reinstall io.github.rubiojr.whereami.flatpak
+flatpak run --user io.github.rubiojr.whereami
+```
+
+Confirm the basemap renders and the OpenFreeMap attribution is visible. A source
+build without the MapLibre geoservice falls back to an overlay-only map, so this
+check cannot be made from this repository alone.
 
 ## Administrative Geodata
 
-Administrative geodata is released separately from the application archives.
+Administrative geodata is released separately from the application.
 Before advertising a generation in `geodata_manifest.json`:
 
 1. Pin an Overture release and Xiangshan version. Record both in `docs/GEODATA.md`.
@@ -89,32 +74,3 @@ The complete ODbL 1.0 text is distributed at `licenses/ODbL-1.0.txt`. Only gener
 `dist/geodata/`. The configured base URL is
 `https://files.rbel.co/whereami/geodata`; see `docs/GEODATA.md` for build,
 local-install, upload, and post-upload verification commands.
-
-## Verification
-
-Before tagging:
-
-```bash
-go test ./...
-go vet ./...
-make qml-test
-goreleaser check
-```
-
-Inspect snapshot artifacts with:
-
-```bash
-rpm -qpl dist/*.rpm
-rpm -qpi dist/*.rpm
-rpm -qpR dist/*.rpm
-```
-
-Install an RPM locally on Fedora with:
-
-```bash
-sudo dnf install ./dist/*.rpm
-```
-
-## Configuration
-
-The release process uses one configuration file: `.goreleaser.yml`. Version selection comes from Git tags. The package dependencies, metadata, files, scripts, archive contents, and build flags are all declared in that file.

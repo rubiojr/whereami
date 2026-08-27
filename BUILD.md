@@ -1,18 +1,21 @@
 # Building WhereAmI
 
-## Container Build
+## Flatpak Build
 
-With Podman installed, the RPM build runs in a Fedora container:
-
-```bash
-make release-rpm
-```
-
-`scripts/build-podman` uses Fedora 43 by default and writes artifacts to `dist/`. Pass a different Fedora version directly to the script when needed:
+The supported distribution build lives in
+[whereami-flatpak](https://github.com/rubiojr/whereami-flatpak). It builds the
+application and MapLibre Native Qt against the same pinned KDE/Qt runtime,
+which is required because the QtLocation provider uses private Qt APIs.
 
 ```bash
-./scripts/build-podman --fedora-version 44
+git clone https://github.com/rubiojr/whereami-flatpak.git
+cd whereami-flatpak
+./build dev ../whereami
 ```
+
+The Flatpak manifest pins MapLibre Native Qt commit
+`c924d8f4723c51eee9fd3dadad0ac3df53441c2c`. Do not substitute a prebuilt
+MapLibre artifact from another Qt distribution or runtime.
 
 ## Local Build
 
@@ -22,6 +25,11 @@ make release-rpm
 - Qt 6.5 or newer
 - GCC and G++ for CGO and the Qt bindings
 - `miqt-rcc` for embedding QML resources
+
+The application build does not link MapLibre. For a functional basemap, the
+runtime must provide the `maplibre` QtLocation geoservice built against the
+same Qt version. The application falls back to QtLocation's overlay-only
+provider when MapLibre is absent so source builds and QML tests still work.
 
 On Fedora, install the native dependencies with:
 
@@ -78,3 +86,4 @@ make qml-test
 - `rcc` not found: add the Qt 6 libexec directory to `PATH`.
 - Qt package errors: install the Qt base, declarative, positioning, location, and SVG development packages.
 - CGO compiler errors: install GCC and G++ and ensure `CGO_ENABLED=1`.
+- Basemap unavailable: use the Flatpak, or install a MapLibre Native QtLocation provider built against the exact local Qt private ABI.

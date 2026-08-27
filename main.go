@@ -36,7 +36,7 @@ var allWaypointsMu sync.RWMutex
 
 func main() {
 	// Command-line flags
-	debugFlag := flag.Bool("debug", false, "enable debug logging (verbose tile proxy requests)")
+	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	themeFlag := flag.String("theme", "", "theme variant (orange|green|purple|adwaita-dark|nord-polar|nord-frost)")
 	dataDirFlag := flag.String("data-dir", "", "custom data directory (overrides XDG_DATA_HOME)")
 	configDirFlag := flag.String("config-dir", "", "custom config directory (overrides XDG_CONFIG_HOME)")
@@ -161,7 +161,7 @@ func main() {
 	}
 
 	// Register HTTP API handlers.
-	RegisterAPI(http.DefaultServeMux, bookmarksPath, debug)
+	RegisterAPI(http.DefaultServeMux, bookmarksPath)
 	RegisterGeodataAPI(http.DefaultServeMux, geoService)
 	RegisterTimelineAPI(http.DefaultServeMux, timelineService)
 
@@ -206,6 +206,7 @@ func main() {
 	qt.NewQApplication(qtArgs)
 	engine := qml.NewQQmlApplicationEngine()
 	engine.RootContext().SetContextProperty2("whereamiApiToken", qt.NewQVariant14(apiToken))
+	engine.RootContext().SetContextProperty2("whereamiMapCacheDir", qt.NewQVariant14(mapCacheDir()))
 
 	// Load QML from Qt resources (qrc:/)
 	engine.Load(qt.NewQUrl3("qrc:/components/Main.qml"))
@@ -214,6 +215,19 @@ func main() {
 	}
 	logger.Debug("Bookmark API fixed port: http://127.0.0.1:%d/api/bookmarks", apiPort)
 	qt.QApplication_Exec()
+}
+
+// mapCacheDir resolves the directory holding MapLibre's persistent vector map
+// cache. It keeps the map cache under the effective cache directory so
+// --cache-dir governs it like every other cached artifact. An empty result
+// leaves the renderer with an in-memory cache for the session.
+func mapCacheDir() string {
+	dir := filepath.Join(effectiveCacheDir(), "maplibre")
+	if err := ensureDir(dir); err != nil {
+		logger.Error("Failed to create map cache dir %s: %v", dir, err)
+		return ""
+	}
+	return dir
 }
 
 // copyEmbeddedBookmarks writes the embedded bookmarks.gpx to the specified path.

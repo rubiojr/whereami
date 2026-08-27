@@ -20,7 +20,7 @@ The fixed HTTP port is also configured in `MapView.qml` and `API.qml`.
 
 ```text
 main.go                 Qt startup, flags, directories, and HTTP server
-api.go                  HTTP handlers, tags/history/geocode databases, tile proxy
+api.go                  HTTP handlers, tags/history/geocode databases
 storage.go              GPX parsing and bookmark persistence
 dedupe.go               waypoint merging and deduplication
 location.go             GeoClue integration
@@ -65,17 +65,17 @@ Bookmark writes are serialized by `bookmarkMu`. `writeBookmarks` writes `bookmar
 Persistent state is split by purpose:
 
 - Data directory: `bookmarks.gpx`, `imports/`, `tags.sqlite`, and `history.sqlite`
-- Cache directory: `geocode.sqlite` and `tiles/`
+- Cache directory: `geocode.sqlite`, the rebuildable observation index, administrative geodata state, and `maplibre/maplibre.db`
 
 The command-line directory flags override the XDG-derived defaults.
 
 ## HTTP Boundary
 
-`RegisterAPI` uses method-aware `http.ServeMux` patterns for bookmarks, waypoints, clusters, tiles, location, GPX import, tags, suggestions, search history, and version information. [docs/api.md](docs/api.md) is the endpoint and QML-service reference.
+`RegisterAPI` uses method-aware `http.ServeMux` patterns for bookmarks, waypoints, clusters, location, GPX import, tags, suggestions, search history, and version information. [docs/api.md](docs/api.md) is the endpoint and QML-service reference.
 
 `ui/services/API.qml` owns semantic XHR calls used by the visual components. It provides operation-specific signals plus generic `requestSucceeded` and `requestFailed` signals. Components such as `SearchBox`, `WaypointInfoCard`, and `AboutOverlay` receive the service as a property rather than constructing their own XHR objects.
 
-QtLocation tile traffic is the deliberate exception. `MapView.qml` configures the OSM plugin to request the local `/api/tiles/%z/%x/%y.png` URL directly.
+OpenFreeMap traffic does not cross the local HTTP boundary. `OpenFreeMapPlugin.qml` configures the MapLibre QtLocation provider with the remote Liberty vector style, and MapLibre fetches the style and vector tiles directly.
 
 ## QML State
 
@@ -96,7 +96,26 @@ Array updates are generally made by copying and reassigning the array so QML bin
 
 ## Map Rendering
 
-The map uses QtLocation's OSM plugin with a custom tile host pointing at the local Go tile proxy. Panning uses `DragHandler`, wheel zoom uses `WheelHandler`, and touch zoom/rotation uses `PinchHandler`.
+Both maps use `OpenFreeMapPlugin.qml`, which selects the MapLibre QtLocation provider and the OpenFreeMap Liberty vector style. If the native provider is absent, it selects QtLocation's overlay-only provider so waypoint interaction remains available and `MapProviderOverlay.qml` explains that the basemap is unavailable. The Flatpak builds MapLibre against its pinned KDE/Qt runtime because the provider uses Qt private APIs.
+
+`MapProviderOverlay.qml` supplies explicit, clickable OpenFreeMap, OpenMapTiles,
+and OpenStreetMap attribution. Each view declares it beside its map rather than
+inside it, so the attribution shares a coordinate space with the other map-area
+overlays and cannot be painted over; the Timeline panel reserves room for it
+through `attributionHeight`.
+
+The main map is directly navigable: panning uses `DragHandler`, wheel zoom uses
+`WheelHandler`, and touch zoom/rotation uses `PinchHandler`. The Timeline map
+declares no gesture handlers; its camera is driven entirely by timeline
+navigation.
+
+MapLibre caches tiles, styles, glyphs, and sprites itself. `main.go` injects the
+`whereamiMapCacheDir` context property so the cache stays under the effective
+cache directory and honours `--cache-dir`; `OpenFreeMapPlugin.qml` passes it as
+`maplibre.cache.directory` together with a 256 MB `maplibre.cache.size`. Both
+map views instantiate the plugin separately and share that one cache database.
+Without the injected directory MapLibre falls back to an in-memory cache and the
+plugin logs a warning.
 
 The active waypoint, cluster, current-location, and search-result marker delegates are defined inline in `MapView.qml`. The standalone marker QML files registered in `ui/components/qmldir` are not themselves listed in `ui/resources.qrc`; the `qmldir` registry is embedded.
 

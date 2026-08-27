@@ -48,48 +48,6 @@ func TestSecureAPIRequiresBearerToken(t *testing.T) {
 	}
 }
 
-func TestSecureAPIAllowsTileGETWithoutToken(t *testing.T) {
-	handler := secureAPI("secret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/api/tiles/2/2/3.png", nil)
-	resp := httptest.NewRecorder()
-
-	handler.ServeHTTP(resp, req)
-
-	assert.Equal(t, http.StatusNoContent, resp.Code)
-}
-
-func TestSecureAPIProtectsNonTilePathsUnderTilePrefix(t *testing.T) {
-	handler := secureAPI("secret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	for _, path := range []string{
-		"/api/tiles/stats",
-		"/api/tiles/1/2/not-a-tile",
-		"/api/tiles/1/2/-3.png",
-		"/api/tiles/21/0/0.png",
-		"/api/tiles/2/4/0.png",
-		"/api/tiles/+2/1/1.png",
-	} {
-		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, path, nil)
-			resp := httptest.NewRecorder()
-			handler.ServeHTTP(resp, req)
-			assert.Equal(t, http.StatusUnauthorized, resp.Code)
-		})
-	}
-
-	t.Run("browser origin", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/tiles/2/2/3.png", nil)
-		req.Header.Set("Origin", "https://example.com")
-		resp := httptest.NewRecorder()
-		handler.ServeHTTP(resp, req)
-		assert.Equal(t, http.StatusUnauthorized, resp.Code)
-	})
-}
-
 func TestSecureAPIRequiresJSONAndLimitsBody(t *testing.T) {
 	const token = "secret"
 	handler := secureAPI(token, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

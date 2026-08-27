@@ -38,6 +38,10 @@ Item {
         id: theme
     }
 
+    OpenFreeMapPlugin {
+        id: mapPlugin
+    }
+
     onResultChanged: {
         selectedPlace = null;
         currentIndex = -1;
@@ -232,16 +236,9 @@ Item {
                 onTriggered: timelineMap.alignCoordinateToPoint(timelineMap.deferredAlignmentCoordinate, timelineView.mapFocusPoint())
             }
 
-            plugin: Plugin {
-                name: "osm"
-                PluginParameter { name: "osm.useragent"; value: "WhereAmI GPX Viewer" }
-                PluginParameter { name: "osm.mapping.providersrepository.disabled"; value: "true" }
-                PluginParameter { name: "osm.mapping.custom.host"; value: "http://127.0.0.1:43098/api/tiles/%z/%x/%y.png" }
-                PluginParameter { name: "osm.mapping.cache.disk.size"; value: "0" }
-                PluginParameter { name: "osm.mapping.highdpi_tiles"; value: "true" }
-                PluginParameter { name: "osm.mapping.custom.mapcopyright"; value: "Carto" }
-                PluginParameter { name: "osm.mapping.custom.datacopyright"; value: "OpenStreetMap contributors" }
-            }
+            copyrightsVisible: false
+
+            plugin: mapPlugin
 
             Component.onCompleted: {
                 if (supportedMapTypes.length > 0)
@@ -471,7 +468,7 @@ Item {
         readonly property int contentMargin: compact ? 12 : 16
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 30
+        anchors.bottomMargin: Math.max(30, mapOverlay.attributionHeight + 14)
         width: Math.max(0, Math.min(760, parent.width - 24))
         height: Math.max(compact ? 194 : 174, detailContent.implicitHeight + contentMargin * 2)
         radius: 18
@@ -720,5 +717,15 @@ Item {
                 restoreMode: Binding.RestoreBindingOrValue
             }
         }
+    }
+
+    // Declared last so provider attribution always paints above the timeline
+    // panel and scrubber; the panel reserves room for it via attributionHeight.
+    MapProviderOverlay {
+        id: mapOverlay
+        anchors.fill: parent
+        z: 100
+        mapLibreAvailable: mapPlugin.mapLibreAvailable
+        theme: theme
     }
 }

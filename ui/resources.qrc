@@ -11,6 +11,8 @@
     <file>components/CustomToolTip.qml</file>
     <file>components/MapStatusBar.qml</file>
     <file>components/MapToolBar.qml</file>
+    <file>components/MapProviderOverlay.qml</file>
+    <file>components/OpenFreeMapPlugin.qml</file>
     <file>components/DateRangePicker.qml</file>
     <file>components/SearchBox.qml</file>
     <file>components/SnackBar.qml</file>

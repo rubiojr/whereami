@@ -1,7 +1,7 @@
 #!/bin/bash
 # build.sh - Build helper script for whereami
 #
-# This script ensures proper build environment setup for GoReleaser builds,
+# This script ensures proper build environment setup for local builds,
 # particularly for Qt resource generation with miqt-rcc.
 #
 # Usage:

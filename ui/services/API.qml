@@ -19,8 +19,8 @@ import QtQuick 2.15
     - Errors are surfaced as human-readable strings (status code + response tail where possible).
     - The service never mutates external arrays or objects; it only emits signals / returns via callbacks.
 
-  QtLocation tile requests are configured directly in MapView.qml and do not
-  pass through this service.
+  Map rendering is configured in OpenFreeMapPlugin.qml and does not pass
+  through this service.
 
   Signals overview (extended):
     Generic:

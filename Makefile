@@ -3,7 +3,6 @@
 # Provides convenience targets for:
 #  - Local Go build / run / lint
 #  - Local desktop install (binary + .desktop + icon)
-#  - GoReleaser snapshots, releases, and containerized RPM builds
 #
 # Requirements (host):
 #  - Go toolchain (matching go.mod version)
@@ -53,8 +52,7 @@ HOST_OS   := $(shell uname -s)
 HOST_ARCH := $(shell uname -m)
 
 .PHONY: all build run clean lint fmt vet tidy qml-test \
-        install uninstall print-vars help \
-        release release-snapshot release-rpm check-release-deps \
+        install uninstall print-vars help lint-qml \
         geodata-build geodata-dist geodata-install-local geodata-run-local
 
 all: build
@@ -204,52 +202,6 @@ uninstall:
 	@echo "==> Uninstall complete"
 
 ########################################
-# GoReleaser targets for releases and RPMs
-########################################
-
-# Check if goreleaser is installed
-check-release-deps:
-	@echo "==> Checking release dependencies"
-	@if ! command -v goreleaser >/dev/null 2>&1; then \
-		echo "Error: goreleaser not found!"; \
-		echo "Install with one of:"; \
-		echo "  go install github.com/goreleaser/goreleaser/v2@latest"; \
-		echo "  brew install goreleaser"; \
-		echo "  snap install goreleaser"; \
-		exit 1; \
-	fi
-	@echo "    ✓ goreleaser found: $$(goreleaser --version)"
-	@if [ -x scripts/build.sh ]; then \
-		./scripts/build.sh --check-deps; \
-	fi
-
-# Build a snapshot release (without publishing)
-release-snapshot: check-release-deps
-	@echo "==> Building snapshot release with GoReleaser"
-	goreleaser release --snapshot --clean
-
-# Build RPMs using the generic configuration
-release-rpm:
-	@echo "==> Building RPMs with build-podman"
-	@if [ ! -x scripts/build-podman ]; then \
-		echo "Error: scripts/build-podman not found or not executable"; \
-		exit 1; \
-	fi
-	./scripts/build-podman
-
-
-
-# Create a full release (requires git tag)
-release: check-release-deps
-	@echo "==> Creating release with GoReleaser"
-	@if ! git describe --exact-match --tags HEAD 2>/dev/null; then \
-		echo "Error: Current commit is not tagged!"; \
-		echo "Create a tag first: git tag -a v1.0.0 -m 'Release v1.0.0'"; \
-		exit 1; \
-	fi
-	goreleaser release --clean
-
-########################################
 # Utility / Help
 ########################################
 
@@ -271,9 +223,6 @@ help:
 	@echo "  geodata-run-local Build and run against the local generation"
 	@echo "  install           Install binary, desktop file & icon to ~/.local"
 	@echo "  uninstall         Remove installed binary/desktop/icon"
-	@echo "  release-snapshot  Build snapshot release with GoReleaser"
-	@echo "  release-rpm       Build RPMs using build-podman"
-	@echo "  release           Create full release (requires git tag)"
 	@echo "  print-vars        Show variable values"
 	@echo "  help              This message"
 	@echo ""
@@ -284,9 +233,5 @@ help:
 	@echo "Override install prefix:"
 	@echo "  make INSTALL_PREFIX=/opt/local install"
 	@echo ""
-	@echo "Release examples:"
-	@echo "  make release-snapshot    # Test build without publishing"
-	@echo "  make release-rpm         # Build RPMs in Fedora container"
-	@echo "  git tag -a v1.0.0 -m 'Release v1.0.0'"
-	@echo "  make release             # Create GitHub release"
+	@echo "Releases are built from the whereami-flatpak repository."
 	@echo ""

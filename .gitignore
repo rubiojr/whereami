@@ -9,3 +9,4 @@ dist/
 /.octmp
 /vendor
 /web
+/whereami-flatpak
