@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WhereAmI Demo" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Demo World Tour 2023</name><desc>Synthetic worldwide observations for WhereAmI.</desc></metadata>
+  <wpt lat="-34.603684" lon="-58.381559"><ele>25</ele><time>2023-01-19T12:15:00Z</time><name>Buenos Aires - Obelisk</name><desc>Summer morning on Avenida 9 de Julio.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-34.603440" lon="-58.381270"><ele>27</ele><time>2023-01-19T23:25:00Z</time><name>Buenos Aires - Obelisk</name><desc>Late dinner after an evening tango show.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-13.163141" lon="-72.544963"><ele>2430</ele><time>2023-03-08T12:00:00Z</time><name>Machu Picchu - Citadel</name><desc>First view across the terraces.</desc><sym>Summit</sym><type>demo</type></wpt>
+  <wpt lat="-13.162905" lon="-72.544701"><ele>2432</ele><time>2023-03-08T18:35:00Z</time><name>Machu Picchu - Citadel</name><desc>Afternoon clouds over the ruins.</desc><sym>Summit</sym><type>demo</type></wpt>
+  <wpt lat="40.712776" lon="-74.005974"><ele>10</ele><time>2023-05-24T13:20:00Z</time><name>New York - City Hall</name><desc>Morning walk across Lower Manhattan.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="40.713014" lon="-74.005682"><ele>12</ele><time>2023-05-25T00:45:00Z</time><name>New York - City Hall</name><desc>Returned after a Broadway performance.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="51.507351" lon="-0.127758"><ele>20</ele><time>2023-07-15T08:10:00Z</time><name>London - Trafalgar Square</name><desc>Quiet morning before the crowds.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="51.507595" lon="-0.127461"><ele>21</ele><time>2023-07-15T20:15:00Z</time><name>London - Trafalgar Square</name><desc>Evening return from the South Bank.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="48.856614" lon="2.352222"><ele>35</ele><time>2023-09-02T07:40:00Z</time><name>Paris - Hotel de Ville</name><desc>Morning coffee beside the Seine.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="48.856850" lon="2.352514"><ele>36</ele><time>2023-09-02T19:35:00Z</time><name>Paris - Hotel de Ville</name><desc>City lights after a museum day.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="30.044420" lon="31.235712"><ele>23</ele><time>2023-11-27T06:25:00Z</time><name>Cairo - Downtown</name><desc>Early morning before visiting Giza.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="30.044661" lon="31.235990"><ele>25</ele><time>2023-11-27T18:50:00Z</time><name>Cairo - Downtown</name><desc>Evening beside the Nile.</desc><sym>City</sym><type>demo</type></wpt>
+</gpx>

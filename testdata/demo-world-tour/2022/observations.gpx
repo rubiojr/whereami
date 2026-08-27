@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WhereAmI Demo" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Demo World Tour 2022</name><desc>Synthetic worldwide observations for WhereAmI.</desc></metadata>
+  <wpt lat="64.146582" lon="-21.942635"><ele>22</ele><time>2022-02-03T10:20:00Z</time><name>Reykjavik - Tjornin</name><desc>Winter morning beside the city pond.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="64.146820" lon="-21.942301"><ele>23</ele><time>2022-02-03T20:45:00Z</time><name>Reykjavik - Tjornin</name><desc>Returned after searching for northern lights.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="38.722252" lon="-9.139337"><ele>32</ele><time>2022-04-17T08:00:00Z</time><name>Lisbon - Baixa</name><desc>Morning tram ride through central Lisbon.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="38.722491" lon="-9.139051"><ele>34</ele><time>2022-04-17T19:10:00Z</time><name>Lisbon - Baixa</name><desc>Sunset after climbing the city hills.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-1.292066" lon="36.821946"><ele>1795</ele><time>2022-06-28T06:35:00Z</time><name>Nairobi - City Centre</name><desc>Early start before visiting Nairobi National Park.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-1.291801" lon="36.822201"><ele>1797</ele><time>2022-06-28T17:50:00Z</time><name>Nairobi - City Centre</name><desc>Back in town after the wildlife drive.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-33.868820" lon="151.209296"><ele>24</ele><time>2022-08-11T00:10:00Z</time><name>Sydney - Circular Quay</name><desc>Harbour morning near the ferries.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-33.868581" lon="151.209604"><ele>25</ele><time>2022-08-11T10:25:00Z</time><name>Sydney - Circular Quay</name><desc>Evening view toward the Opera House.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="35.676191" lon="139.650311"><ele>40</ele><time>2022-10-22T00:30:00Z</time><name>Tokyo - Shinjuku</name><desc>Morning among the Shinjuku towers.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="35.676428" lon="139.650603"><ele>42</ele><time>2022-10-22T12:40:00Z</time><name>Tokyo - Shinjuku</name><desc>Night walk through the neon streets.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="1.352083" lon="103.819836"><ele>15</ele><time>2022-12-06T01:05:00Z</time><name>Singapore - Botanic Gardens</name><desc>Humid morning in the gardens.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="1.352341" lon="103.820099"><ele>16</ele><time>2022-12-06T11:55:00Z</time><name>Singapore - Botanic Gardens</name><desc>Evening return after exploring the city.</desc><sym>City</sym><type>demo</type></wpt>
+</gpx>

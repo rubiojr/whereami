@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WhereAmI Demo" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Demo World Tour 2025</name><desc>Synthetic worldwide observations for WhereAmI.</desc></metadata>
+  <wpt lat="-33.924869" lon="18.424055"><ele>15</ele><time>2025-02-14T06:45:00Z</time><name>Cape Town - City Bowl</name><desc>Morning under Table Mountain.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-33.924628" lon="18.424340"><ele>17</ele><time>2025-02-14T18:30:00Z</time><name>Cape Town - City Bowl</name><desc>Sunset after visiting the Atlantic coast.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-22.560881" lon="17.065755"><ele>1655</ele><time>2025-04-03T06:10:00Z</time><name>Windhoek - Independence Avenue</name><desc>Cool desert morning in central Windhoek.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-22.560640" lon="17.066031"><ele>1657</ele><time>2025-04-03T17:45:00Z</time><name>Windhoek - Independence Avenue</name><desc>Evening after a day outside the city.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="41.902782" lon="12.496366"><ele>21</ele><time>2025-06-19T07:20:00Z</time><name>Rome - Historic Centre</name><desc>Morning espresso near the ancient city.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="41.903020" lon="12.496650"><ele>23</ele><time>2025-06-19T20:05:00Z</time><name>Rome - Historic Centre</name><desc>Evening stroll after dinner.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="37.983810" lon="23.727539"><ele>70</ele><time>2025-08-07T06:55:00Z</time><name>Athens - Monastiraki</name><desc>Morning beneath the Acropolis.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="37.984049" lon="23.727821"><ele>72</ele><time>2025-08-07T18:50:00Z</time><name>Athens - Monastiraki</name><desc>Evening in the old neighbourhood.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="50.075539" lon="14.437800"><ele>200</ele><time>2025-10-18T08:25:00Z</time><name>Prague - Old Town</name><desc>Autumn morning near the astronomical clock.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="50.075781" lon="14.438091"><ele>202</ele><time>2025-10-18T19:15:00Z</time><name>Prague - Old Town</name><desc>Evening after crossing Charles Bridge.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="60.169856" lon="24.938379"><ele>26</ele><time>2025-12-02T09:35:00Z</time><name>Helsinki - Senate Square</name><desc>Snowy morning in Senate Square.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="60.170101" lon="24.938687"><ele>27</ele><time>2025-12-02T18:20:00Z</time><name>Helsinki - Senate Square</name><desc>Warm cafe stop after dusk.</desc><sym>City</sym><type>demo</type></wpt>
+</gpx>

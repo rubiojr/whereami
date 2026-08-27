@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WhereAmI Demo" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Demo World Tour 2026</name><desc>Synthetic worldwide observations for WhereAmI.</desc></metadata>
+  <wpt lat="35.011636" lon="135.768029"><ele>50</ele><time>2026-01-11T00:15:00Z</time><name>Kyoto - Gion</name><desc>Quiet morning among traditional streets.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="35.011875" lon="135.768315"><ele>52</ele><time>2026-01-11T11:40:00Z</time><name>Kyoto - Gion</name><desc>Lantern-lit evening after temple visits.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="37.566535" lon="126.977969"><ele>38</ele><time>2026-03-09T00:40:00Z</time><name>Seoul - City Hall</name><desc>Early spring morning in central Seoul.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="37.566779" lon="126.978254"><ele>40</ele><time>2026-03-09T12:30:00Z</time><name>Seoul - City Hall</name><desc>Evening return from the palace district.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="1.290270" lon="103.851959"><ele>11</ele><time>2026-05-22T01:10:00Z</time><name>Singapore - Marina Bay</name><desc>Morning beside Marina Bay.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="1.290515" lon="103.852227"><ele>12</ele><time>2026-05-22T12:55:00Z</time><name>Singapore - Marina Bay</name><desc>Night skyline across the water.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-6.208763" lon="106.845599"><ele>8</ele><time>2026-06-30T00:05:00Z</time><name>Jakarta - Merdeka</name><desc>Morning near Merdeka Square.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-6.208520" lon="106.845872"><ele>9</ele><time>2026-06-30T12:10:00Z</time><name>Jakarta - Merdeka</name><desc>Evening after navigating the city.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-0.180653" lon="-78.467834"><ele>2850</ele><time>2026-07-19T13:25:00Z</time><name>Quito - Historic Centre</name><desc>High-altitude morning in the old city.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-0.180411" lon="-78.467558"><ele>2852</ele><time>2026-07-19T23:15:00Z</time><name>Quito - Historic Centre</name><desc>Evening lights across the Andean valley.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="45.501689" lon="-73.567256"><ele>35</ele><time>2026-08-20T12:35:00Z</time><name>Montreal - Old Port</name><desc>Summer morning along the Saint Lawrence.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="45.501931" lon="-73.566971"><ele>36</ele><time>2026-08-20T23:05:00Z</time><name>Montreal - Old Port</name><desc>Festival evening in the old port.</desc><sym>City</sym><type>demo</type></wpt>
+</gpx>

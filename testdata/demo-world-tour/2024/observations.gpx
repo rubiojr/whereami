@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WhereAmI Demo" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Demo World Tour 2024</name><desc>Synthetic worldwide observations for WhereAmI.</desc></metadata>
+  <wpt lat="25.204849" lon="55.270783"><ele>12</ele><time>2024-01-08T05:50:00Z</time><name>Dubai - Downtown</name><desc>Sunrise among the downtown towers.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="25.205102" lon="55.271054"><ele>14</ele><time>2024-01-08T16:15:00Z</time><name>Dubai - Downtown</name><desc>Evening fountain show.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="28.613939" lon="77.209021"><ele>216</ele><time>2024-03-16T03:40:00Z</time><name>New Delhi - India Gate</name><desc>Cool morning walk around India Gate.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="28.614180" lon="77.209300"><ele>218</ele><time>2024-03-16T15:05:00Z</time><name>New Delhi - India Gate</name><desc>Returned after exploring Old Delhi.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="13.756331" lon="100.501762"><ele>8</ele><time>2024-05-04T00:25:00Z</time><name>Bangkok - Grand Palace</name><desc>Morning near the Chao Phraya River.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="13.756580" lon="100.502041"><ele>9</ele><time>2024-05-04T12:20:00Z</time><name>Bangkok - Grand Palace</name><desc>Night market after a temple tour.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="21.027764" lon="105.834160"><ele>14</ele><time>2024-07-12T00:10:00Z</time><name>Hanoi - Old Quarter</name><desc>Breakfast noodles in the old quarter.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="21.028003" lon="105.834443"><ele>16</ele><time>2024-07-12T11:50:00Z</time><name>Hanoi - Old Quarter</name><desc>Evening around Hoan Kiem Lake.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-37.813629" lon="144.963058"><ele>31</ele><time>2024-09-23T00:30:00Z</time><name>Melbourne - Federation Square</name><desc>Spring morning beside the Yarra.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-37.813391" lon="144.963354"><ele>32</ele><time>2024-09-23T10:40:00Z</time><name>Melbourne - Federation Square</name><desc>Evening after exploring the laneways.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-36.848461" lon="174.763336"><ele>12</ele><time>2024-11-10T19:20:00Z</time><name>Auckland - Waterfront</name><desc>Morning on the Waitemata waterfront.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="-36.848218" lon="174.763630"><ele>13</ele><time>2024-11-11T07:15:00Z</time><name>Auckland - Waterfront</name><desc>Evening return from a harbour ferry.</desc><sym>City</sym><type>demo</type></wpt>
+</gpx>

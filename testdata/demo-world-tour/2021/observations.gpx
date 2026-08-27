@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WhereAmI Demo" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Demo World Tour 2021</name><desc>Synthetic worldwide observations for WhereAmI.</desc></metadata>
+  <wpt lat="41.385064" lon="2.173404"><ele>15</ele><time>2021-01-12T08:15:00Z</time><name>Barcelona - Gothic Quarter</name><desc>Morning walk near the cathedral.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="41.385302" lon="2.173701"><ele>17</ele><time>2021-01-12T18:40:00Z</time><name>Barcelona - Gothic Quarter</name><desc>Evening tapas after exploring the old city.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="31.629472" lon="-7.981084"><ele>466</ele><time>2021-03-21T07:55:00Z</time><name>Marrakesh - Medina</name><desc>Morning in the souks near Jemaa el-Fnaa.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="31.629690" lon="-7.980820"><ele>468</ele><time>2021-03-21T20:05:00Z</time><name>Marrakesh - Medina</name><desc>Night market visit in the medina.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="41.008238" lon="28.978359"><ele>40</ele><time>2021-06-05T06:45:00Z</time><name>Istanbul - Sultanahmet</name><desc>Sunrise between the Blue Mosque and Hagia Sophia.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="41.008506" lon="28.978604"><ele>42</ele><time>2021-06-05T17:30:00Z</time><name>Istanbul - Sultanahmet</name><desc>Returned after a Bosphorus ferry ride.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="59.329323" lon="18.068581"><ele>28</ele><time>2021-08-18T09:10:00Z</time><name>Stockholm - Gamla Stan</name><desc>Breakfast beside the old town waterfront.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="59.329588" lon="18.068902"><ele>27</ele><time>2021-08-18T19:20:00Z</time><name>Stockholm - Gamla Stan</name><desc>Evening walk through cobbled streets.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="37.774929" lon="-122.419416"><ele>16</ele><time>2021-10-09T16:30:00Z</time><name>San Francisco - Civic Center</name><desc>Afternoon arrival in San Francisco.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="37.775180" lon="-122.419101"><ele>18</ele><time>2021-10-10T01:15:00Z</time><name>San Francisco - Civic Center</name><desc>Late dinner after crossing the city.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="19.432608" lon="-99.133209"><ele>2240</ele><time>2021-12-14T14:05:00Z</time><name>Mexico City - Zocalo</name><desc>Morning at the historic central square.</desc><sym>City</sym><type>demo</type></wpt>
+  <wpt lat="19.432852" lon="-99.132934"><ele>2242</ele><time>2021-12-15T02:10:00Z</time><name>Mexico City - Zocalo</name><desc>Evening lights around the plaza.</desc><sym>City</sym><type>demo</type></wpt>
+</gpx>
