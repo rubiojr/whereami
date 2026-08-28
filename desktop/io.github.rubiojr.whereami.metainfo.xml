@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Sergio Rubio -->
+<component type="desktop-application">
+  <id>io.github.rubiojr.whereami</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <name>WhereAmI</name>
+  <summary>Explore and manage GPX location history</summary>
+  <developer id="io.github.rubiojr">
+    <name>Sergio Rubio</name>
+  </developer>
+
+  <description>
+    <p>
+      WhereAmI is a desktop waypoint and GPX viewer for exploring and managing
+      location data on an interactive vector map.
+    </p>
+    <p>Use WhereAmI to:</p>
+    <ul>
+      <li>Import GPX files and search recorded waypoints</li>
+      <li>Add, rename, tag, and remove bookmarked locations</li>
+      <li>Filter location history by tag or date</li>
+      <li>Explore significant locations with timelines and place summaries</li>
+      <li>Cache previously viewed map areas for offline use</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.rubiojr.whereami.desktop</launchable>
+  <provides>
+    <binary>whereami</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/rubiojr/whereami</url>
+  <url type="bugtracker">https://github.com/rubiojr/whereami/issues</url>
+  <url type="vcs-browser">https://github.com/rubiojr/whereami</url>
+
+  <content_rating type="oars-1.1"/>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/rubiojr/whereami/v0.2.0/docs/screenshots/whereami.png</image>
+      <caption>Viewing imported waypoints on the world map</caption>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="0.2.0" date="2026-08-27">
+      <url type="details">https://github.com/rubiojr/whereami/releases/tag/v0.2.0</url>
+      <description>
+        <p>WhereAmI 0.2.0 adds worldwide vector maps and new ways to explore location history.</p>
+        <ul>
+          <li>Navigate significant locations with travel timelines and map-first journeys</li>
+          <li>Review private on-device country, region, locality, and date summaries</li>
+          <li>Filter observations by day, date range, or preset</li>
+          <li>Use more reliable GPX imports and safer bookmark storage</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>
