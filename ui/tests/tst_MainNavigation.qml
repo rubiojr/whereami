@@ -71,6 +71,45 @@ TestCase {
         compare(application.timelineEndDate, application.currentUTCYear + "-12-31");
     }
 
+    function test_waypointFocusAtDetailZoomDoesNotZoomOut() {
+        var application = createTemporaryObject(mainComponent, null);
+        verify(application !== null);
+        application.mapPage.apiService.apiPort = -1;
+        application.mapPage.mapZoomLevel = 17;
+        tryCompare(application.mapPage, "mapZoomLevel", 17, 1000);
+        application.mapPage.waypoints = [{
+            name: "destination",
+            lat: 41.3874,
+            lon: 2.1686,
+            bookmark: true,
+            time: "2024-01-15T12:00:00Z"
+        }];
+
+        verify(application.mapPage.focusWaypointByName("destination"));
+        wait(400);
+        verify(application.mapPage.mapZoomLevel > 16.9);
+        tryCompare(application.mapPage, "mapZoomLevel", 17, 1000);
+    }
+
+    function test_waypointFocusPreservesCloserZoom() {
+        var application = createTemporaryObject(mainComponent, null);
+        verify(application !== null);
+        application.mapPage.apiService.apiPort = -1;
+        application.mapPage.mapZoomLevel = 19;
+        tryCompare(application.mapPage, "mapZoomLevel", 19, 1200);
+        application.mapPage.waypoints = [{
+            name: "nearby",
+            lat: 41.3874,
+            lon: 2.1686,
+            bookmark: true,
+            time: "2024-01-15T12:00:00Z"
+        }];
+
+        verify(application.mapPage.focusWaypointByName("nearby"));
+        wait(1000);
+        verify(application.mapPage.mapZoomLevel > 18.9);
+    }
+
     function test_escapeClosesDetailsWithoutMapShortcutConflict() {
         var application = createTemporaryObject(mainComponent, null, { visible: true });
         verify(application !== null);

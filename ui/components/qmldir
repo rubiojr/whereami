@@ -23,6 +23,9 @@ DateRangePicker 1.0 DateRangePicker.qml
 MapStatusBar 1.0 MapStatusBar.qml
 MapProviderOverlay 1.0 MapProviderOverlay.qml
 OpenFreeMapPlugin 1.0 OpenFreeMapPlugin.qml
+MapAdapter 1.0 MapAdapter.qml
+ProjectedMapItem 1.0 ProjectedMapItem.qml
+ProjectedMapPolyline 1.0 ProjectedMapPolyline.qml
 AboutOverlay 1.0 AboutOverlay.qml
 HelpOverlay 1.0 HelpOverlay.qml
 Knobs 1.0 Knobs.qml

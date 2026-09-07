@@ -3,7 +3,6 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 
 import QtQuick.Layouts 1.15
-import QtLocation 6.5
 import QtPositioning 6.5
 import Qt.labs.platform 1.1
 import "../services"
@@ -491,30 +490,12 @@ Page {
         }
     }
 
-    // Sequential animation for zoom-out-then-center-then-zoom-in behavior
+    // Center first, then zoom in once the center animation has completed.
     SequentialAnimation {
         id: centerThenZoomAnimation
         property var targetCenter: null
         property real targetZoom: 17
-        property real originalZoom: 0
 
-        // First, store original zoom and zoom out if we're already at target zoom
-        ScriptAction {
-            script: {
-                if (map) {
-                    centerThenZoomAnimation.originalZoom = map.zoomLevel;
-                    // If already at target zoom, zoom out first to make movement visible
-                    if (Math.abs(centerThenZoomAnimation.originalZoom - centerThenZoomAnimation.targetZoom) < 0.1) {
-                        map.zoomLevel = 6;
-                    }
-                }
-            }
-        }
-        // Brief pause for zoom out animation
-        PauseAnimation {
-            duration: map && Math.abs(centerThenZoomAnimation.originalZoom - centerThenZoomAnimation.targetZoom) < 0.1 ? 400 : 0
-        }
-        // Then center on the waypoint
         ScriptAction {
             script: {
                 if (map && centerThenZoomAnimation.targetCenter) {
@@ -529,7 +510,7 @@ Page {
         // Finally zoom to target
         ScriptAction {
             script: {
-                if (map) {
+                if (map && map.zoomLevel < centerThenZoomAnimation.targetZoom) {
                     map.zoomLevel = centerThenZoomAnimation.targetZoom;
                 }
             }
@@ -685,7 +666,7 @@ Page {
         // Highlight & animate
         searchResultLocation = QtPositioning.coordinate(chosen.lat, chosen.lon);
 
-        // Use sequential zoom-out-center-zoom-in animation
+        // Center on the result before applying the detail zoom.
         centerThenZoomAnimation.stop();
         centerThenZoomAnimation.targetCenter = QtPositioning.coordinate(chosen.lat, chosen.lon);
         centerThenZoomAnimation.targetZoom = knobs.searchZoomLevel;
@@ -800,20 +781,26 @@ Page {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            Map {
+            MapAdapter {
                 id: map
                 anchors.fill: parent
+                vectorRequested: typeof whereamiGoVectorMaps !== "undefined" && whereamiGoVectorMaps
+                vectorItem: typeof whereamiMainVectorItem !== "undefined" ? whereamiMainVectorItem : null
+                vectorCamera: typeof whereamiMainVectorCamera !== "undefined" ? whereamiMainVectorCamera : null
+                legacyPlugin: OpenFreeMapPlugin {
+                    id: mapPlugin
+                }
                 center: knobs.initialPosition
-                zoomLevel: knobs.initialZoomLevel
+                zoomLevel: vectorRequested && typeof whereamiVectorPrototypeInitialZoom !== "undefined" ? Number(whereamiVectorPrototypeInitialZoom) : knobs.initialZoomLevel
                 Behavior on center {
-                    enabled: window.active
+                    enabled: window.active && !map.syncingBackend
                     CoordinateAnimation {
                         duration: 800
                         easing.type: Easing.InOutQuad
                     }
                 }
                 Behavior on zoomLevel {
-                    enabled: window.active
+                    enabled: window.active && !map.syncingBackend
                     NumberAnimation {
                         duration: 600
                         easing.type: Easing.InOutQuad
@@ -838,18 +825,6 @@ Page {
                         dir: path,
                         recursive: true
                     });
-                }
-
-                Component.onCompleted: {
-                    if (supportedMapTypes.length > 0) {
-                        activeMapType = supportedMapTypes[supportedMapTypes.length - 1];
-                    }
-                }
-
-                copyrightsVisible: false
-
-                plugin: OpenFreeMapPlugin {
-                    id: mapPlugin
                 }
 
                 // Gesture handlers
@@ -972,16 +947,8 @@ Page {
                     }
                 }
 
-                TapHandler {
-                    onDoubleTapped: {
-                        var clickedCoordinate = map.toCoordinate(point.position);
-                        map.center = clickedCoordinate;
-                        map.zoomLevel += 1;
-                    }
-                }
-
                 // Waypoint and cluster markers.
-                MapItemView {
+                Repeater {
                     id: markersView
                     model: window.clusteringEnabled ? (window.localFilterActive ? window.localClusterModel : window.clusterModel) : window.activeWaypoints
 
@@ -1006,11 +973,13 @@ Page {
                         }
                     }
 
-                    delegate: MapQuickItem {
+                    delegate: ProjectedMapItem {
                         id: marker
+                        required property var modelData
+                        map: map
                         coordinate: (modelData && modelData.lat !== undefined && modelData.lon !== undefined) ? QtPositioning.coordinate(modelData.lat, modelData.lon) : QtPositioning.coordinate(0, 0)
-                        anchorPoint.x: circle.width / 2
-                        anchorPoint.y: circle.height / 2
+                        anchorPoint: Qt.point(isCluster ? theme.clusterMarkerRadius : theme.waypointMarkerRadius,
+                                              isCluster ? theme.clusterMarkerRadius : theme.waypointMarkerRadius)
 
                         property bool isCluster: !!(modelData && (modelData.type === "cluster" || (modelData.type === undefined && modelData.count !== undefined && modelData.count > 1)))
                         property bool isSelected: !!(!isCluster && window.selectedWaypoint && window.selectedWaypoint.name === modelData.name && Math.abs(window.selectedWaypoint.lat - modelData.lat) < 1e-9 && Math.abs(window.selectedWaypoint.lon - modelData.lon) < 1e-9)
@@ -1115,7 +1084,7 @@ Page {
                                         }
                                         searchResultLocation = null;
 
-                                        // Smart zoom: only use zoom-out animation if moving far from current position
+                                        // Nearby markers can recenter directly; distant markers use the staged flight.
                                         if (map) {
                                             var targetCoord = QtPositioning.coordinate(modelData.lat, modelData.lon);
                                             var currentCenter = map.center;
@@ -1128,7 +1097,7 @@ Page {
                                                     map.zoomLevel = knobs.searchZoomLevel;
                                                 }
                                             } else {
-                                                // Far away or zoomed out: use the dramatic zoom-out-zoom-in animation
+                                                // Far away or zoomed out: center first, then restore the detail zoom.
                                                 centerThenZoomAnimation.stop();
                                                 centerThenZoomAnimation.targetCenter = targetCoord;
                                                 centerThenZoomAnimation.targetZoom = knobs.searchZoomLevel;
@@ -1157,12 +1126,12 @@ Page {
                 }
 
                 // Current location marker (inline)
-                MapQuickItem {
+                ProjectedMapItem {
                     id: currentLocationMarker
+                    map: map
                     visible: currentLocationValid
                     coordinate: QtPositioning.coordinate(currentLocationLat, currentLocationLon)
-                    anchorPoint.x: locOuter.width / 2
-                    anchorPoint.y: locOuter.height / 2
+                    anchorPoint: Qt.point(9, 9)
                     sourceItem: Rectangle {
                         id: locOuter
                         width: 18
@@ -1184,12 +1153,12 @@ Page {
                 }
 
                 // Search result marker (inline)
-                MapQuickItem {
+                ProjectedMapItem {
                     id: searchMarker
+                    map: map
                     visible: searchResultLocation !== null
                     coordinate: searchResultLocation || QtPositioning.coordinate(0, 0)
-                    anchorPoint.x: searchCircle.width / 2
-                    anchorPoint.y: searchCircle.height / 2
+                    anchorPoint: Qt.point(8, 8)
                     sourceItem: Rectangle {
                         id: searchCircle
                         width: 16
@@ -1258,7 +1227,7 @@ Page {
                     onSuggestionChosen: function (s) {
                         if (!s)
                             return;
-                        // Use sequential zoom-out-center-zoom-in animation
+                        // Center on the result before applying the detail zoom.
                         centerThenZoomAnimation.stop();
                         centerThenZoomAnimation.targetCenter = QtPositioning.coordinate(s.lat, s.lon);
                         centerThenZoomAnimation.targetZoom = knobs.searchZoomLevel;
@@ -1297,7 +1266,6 @@ Page {
                             window.selectedWaypointIndex = -1;
                             // (transient flag set in object literal above)
                         }
-                        focusZoomTimer.restart();
                         searchOverlayVisible = false;
                     }
                     // When shown ensure the inner input receives focus
@@ -1444,14 +1412,14 @@ Page {
                         window.selectedWaypoint = wp;
                         window.selectedWaypointIndex = MapViewLogic.findWaypointIndex(window.waypoints, wp);
 
-                        // Use sequential zoom-out-center-zoom-in animation
+                        // Center on the waypoint before applying the detail zoom.
                         centerThenZoomAnimation.stop();
                         centerThenZoomAnimation.targetCenter = QtPositioning.coordinate(wp.lat, wp.lon);
                         centerThenZoomAnimation.targetZoom = knobs.searchZoomLevel;
                         centerThenZoomAnimation.start();
                     }
                 }
-            } // Map
+            } // MapAdapter
 
             // Provider attribution and the missing-renderer notice. Sits beside the
             // map rather than inside it so it shares a coordinate space with the
@@ -1460,7 +1428,10 @@ Page {
                 id: mapOverlay
                 anchors.fill: parent
                 z: 6
-                mapLibreAvailable: mapPlugin.mapLibreAvailable
+                basemapAvailable: map.basemapAvailable
+                mapLoading: map.loading
+                mapError: map.errorString
+                mapFallbackActive: map.vectorFailed
                 theme: theme
             }
 

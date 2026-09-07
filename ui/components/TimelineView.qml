@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
-import QtLocation 6.5
 import QtPositioning 6.5
 import "../themes"
 
@@ -223,9 +222,13 @@ Item {
     Component {
         id: mapComponent
 
-        Map {
+        MapAdapter {
             id: timelineMap
 
+            vectorRequested: typeof whereamiGoVectorMaps !== "undefined" && whereamiGoVectorMaps
+            vectorItem: typeof whereamiTimelineVectorItem !== "undefined" ? whereamiTimelineVectorItem : null
+            vectorCamera: typeof whereamiTimelineVectorCamera !== "undefined" ? whereamiTimelineVectorCamera : null
+            legacyPlugin: mapPlugin
             center: QtPositioning.coordinate(0, 0)
             zoomLevel: 15.5
             property var deferredAlignmentCoordinate: QtPositioning.coordinate()
@@ -234,15 +237,6 @@ Item {
                 id: deferredAlignmentTimer
                 interval: 0
                 onTriggered: timelineMap.alignCoordinateToPoint(timelineMap.deferredAlignmentCoordinate, timelineView.mapFocusPoint())
-            }
-
-            copyrightsVisible: false
-
-            plugin: mapPlugin
-
-            Component.onCompleted: {
-                if (supportedMapTypes.length > 0)
-                    activeMapType = supportedMapTypes[supportedMapTypes.length - 1];
             }
 
             function flyTo(latitude, longitude, immediate) {
@@ -257,7 +251,7 @@ Item {
                 }
                 var distance = center.distanceTo(destination);
                 cameraFlight.destination = destination;
-                cameraFlight.cruiseZoom = distance > 500000 ? 5.5 : (distance > 50000 ? 8 : (distance > 5000 ? 11 : 13.5));
+                cameraFlight.cruiseZoom = distance > 500000 ? 5.5 : (distance > 50000 ? 8 : (distance > 5000 ? 11 : zoomLevel));
                 cameraFlight.start();
             }
 
@@ -286,7 +280,7 @@ Item {
                     target: timelineMap
                     property: "zoomLevel"
                     to: cameraFlight.cruiseZoom
-                    duration: 280
+                    duration: Math.abs(timelineMap.zoomLevel - cameraFlight.cruiseZoom) < 0.01 ? 0 : 280
                     easing.type: Easing.OutCubic
                 }
                 CoordinateAnimation {
@@ -300,7 +294,7 @@ Item {
                     target: timelineMap
                     property: "zoomLevel"
                     to: 15.5
-                    duration: 480
+                    duration: Math.abs(timelineMap.zoomLevel - 15.5) < 0.01 ? 0 : 480
                     easing.type: Easing.OutCubic
                 }
                 ScriptAction {
@@ -308,18 +302,20 @@ Item {
                 }
             }
 
-            MapPolyline {
-                line.width: 3
-                line.color: theme.accent
+            ProjectedMapPolyline {
+                anchors.fill: parent
+                map: timelineMap
+                lineWidth: 3
+                lineColor: theme.accent
                 opacity: 0.55
                 path: timelineView.contextPath()
             }
 
-            MapQuickItem {
+            ProjectedMapItem {
+                map: timelineMap
                 visible: timelineView.currentIndex > 0 && timelineView.currentIndex < timelineView.stopCount
                 coordinate: visible ? QtPositioning.coordinate(timelineView.stops[timelineView.currentIndex - 1].latitude, timelineView.stops[timelineView.currentIndex - 1].longitude) : QtPositioning.coordinate(0, 0)
-                anchorPoint.x: 7
-                anchorPoint.y: 7
+                anchorPoint: Qt.point(7, 7)
                 sourceItem: Rectangle {
                     width: 14
                     height: 14
@@ -330,11 +326,11 @@ Item {
                 }
             }
 
-            MapQuickItem {
+            ProjectedMapItem {
+                map: timelineMap
                 visible: timelineView.currentIndex >= 0 && timelineView.currentIndex < timelineView.stopCount - 1
                 coordinate: visible ? QtPositioning.coordinate(timelineView.stops[timelineView.currentIndex + 1].latitude, timelineView.stops[timelineView.currentIndex + 1].longitude) : QtPositioning.coordinate(0, 0)
-                anchorPoint.x: 7
-                anchorPoint.y: 7
+                anchorPoint: Qt.point(7, 7)
                 sourceItem: Rectangle {
                     width: 14
                     height: 14
@@ -345,10 +341,10 @@ Item {
                 }
             }
 
-            MapQuickItem {
+            ProjectedMapItem {
+                map: timelineMap
                 coordinate: timelineView.currentStop ? QtPositioning.coordinate(timelineView.currentStop.latitude, timelineView.currentStop.longitude) : QtPositioning.coordinate(0, 0)
-                anchorPoint.x: 25
-                anchorPoint.y: 25
+                anchorPoint: Qt.point(25, 25)
                 z: 10
 
                 sourceItem: Item {
@@ -725,7 +721,10 @@ Item {
         id: mapOverlay
         anchors.fill: parent
         z: 100
-        mapLibreAvailable: mapPlugin.mapLibreAvailable
+        basemapAvailable: mapLoader.item ? mapLoader.item.basemapAvailable : mapPlugin.mapLibreAvailable
+        mapLoading: mapLoader.item ? mapLoader.item.loading : false
+        mapError: mapLoader.item ? mapLoader.item.errorString : ""
+        mapFallbackActive: mapLoader.item ? mapLoader.item.vectorFailed : false
         theme: theme
     }
 }

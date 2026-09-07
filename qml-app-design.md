@@ -65,7 +65,7 @@ Bookmark writes are serialized by `bookmarkMu`. `writeBookmarks` writes `bookmar
 Persistent state is split by purpose:
 
 - Data directory: `bookmarks.gpx`, `imports/`, `tags.sqlite`, and `history.sqlite`
-- Cache directory: `geocode.sqlite`, the rebuildable observation index, administrative geodata state, and `maplibre/maplibre.db`
+- Cache directory: `geocode.sqlite`, the rebuildable observation index, administrative geodata state, the Go renderer's `vector/` tile cache, and the optional legacy `maplibre/` cache
 
 The command-line directory flags override the XDG-derived defaults.
 
@@ -75,7 +75,10 @@ The command-line directory flags override the XDG-derived defaults.
 
 `ui/services/API.qml` owns semantic XHR calls used by the visual components. It provides operation-specific signals plus generic `requestSucceeded` and `requestFailed` signals. Components such as `SearchBox`, `WaypointInfoCard`, and `AboutOverlay` receive the service as a property rather than constructing their own XHR objects.
 
-OpenFreeMap traffic does not cross the local HTTP boundary. `OpenFreeMapPlugin.qml` configures the MapLibre QtLocation provider with the remote Liberty vector style, and MapLibre fetches the style and vector tiles directly.
+OpenFreeMap traffic does not cross the local HTTP boundary. The default Go
+renderer fetches vector and Natural Earth raster tiles directly. The optional
+legacy path uses `OpenFreeMapPlugin.qml`, whose MapLibre QtLocation provider
+also fetches its style and tiles directly.
 
 ## QML State
 
@@ -96,7 +99,19 @@ Array updates are generally made by copying and reassigning the array so QML bin
 
 ## Map Rendering
 
-Both maps use `OpenFreeMapPlugin.qml`, which selects the MapLibre QtLocation provider and the OpenFreeMap Liberty vector style. If the native provider is absent, it selects QtLocation's overlay-only provider so waypoint interaction remains available and `MapProviderOverlay.qml` explains that the basemap is unavailable. The Flatpak builds MapLibre against its pinned KDE/Qt runtime because the provider uses Qt private APIs.
+`main.go` creates two independent Go vector items and cameras by default: one
+for the persistent main view and one for the loader-controlled timeline view.
+They share the same on-disk tile cache but retain independent cameras, workers,
+and Qt scene graphs. `MapAdapter.qml` presents the map API used by both views,
+attaches the selected Go item to its visual host, and projects ordinary QML
+markers and polylines through the Go camera bridge.
+
+`--legacy-map-renderer` makes each adapter load a QtLocation `Map` configured by
+`OpenFreeMapPlugin.qml`. The same path is activated automatically when Go
+renderer initialization fails or when every requested Go tile fails. If no
+MapLibre provider is installed, the plugin selects QtLocation's overlay-only
+provider so waypoint interaction remains available and
+`MapProviderOverlay.qml` explains that the basemap is unavailable.
 
 `MapProviderOverlay.qml` supplies explicit, clickable OpenFreeMap, OpenMapTiles,
 and OpenStreetMap attribution. Each view declares it beside its map rather than
@@ -109,13 +124,21 @@ The main map is directly navigable: panning uses `DragHandler`, wheel zoom uses
 declares no gesture handlers; its camera is driven entirely by timeline
 navigation.
 
-MapLibre caches tiles, styles, glyphs, and sprites itself. `main.go` injects the
-`whereamiMapCacheDir` context property so the cache stays under the effective
-cache directory and honours `--cache-dir`; `OpenFreeMapPlugin.qml` passes it as
-`maplibre.cache.directory` together with a 256 MB `maplibre.cache.size`. Both
-map views instantiate the plugin separately and share that one cache database.
-Without the injected directory MapLibre falls back to an in-memory cache and the
-plugin logs a warning.
+The Go renderer shares `${effectiveCacheDir}/vector` between both items. It
+uses checksum sidecars, atomic pair commits, read recency, stale temporary-file
+cleanup, and pair-wise oldest-first eviction under a 256 MiB limit. The pinned
+fixture tile is retained. The Liberty style and sprite atlas are embedded and
+checksum-pinned. Map labels use OpenFreeMap's range-based SDF glyph PBFs,
+checksum-backed disk caching, metric-based layout, a bounded per-scene atlas,
+and a public-QSG shader with numeric halo width and blur. The committed shader
+packs target Qt 6.5 and include Vulkan, OpenGL/ES, Direct3D, and Metal variants.
+Checksum-pinned KlokanTech Noto Sans remains registered for labels that still
+need Qt complex-script shaping while the SDF shaper is expanded.
+
+`main.go` also injects `whereamiMapCacheDir` for the optional legacy backend.
+`OpenFreeMapPlugin.qml` passes it as `maplibre.cache.directory` together with a
+256 MB `maplibre.cache.size`. Without that directory MapLibre uses an in-memory
+cache for the session.
 
 The active waypoint, cluster, current-location, and search-result marker delegates are defined inline in `MapView.qml`. The standalone marker QML files registered in `ui/components/qmldir` are not themselves listed in `ui/resources.qrc`; the `qmldir` registry is embedded.
 

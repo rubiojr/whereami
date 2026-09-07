@@ -13,6 +13,9 @@
     <file>components/MapToolBar.qml</file>
     <file>components/MapProviderOverlay.qml</file>
     <file>components/OpenFreeMapPlugin.qml</file>
+    <file>components/MapAdapter.qml</file>
+    <file>components/ProjectedMapItem.qml</file>
+    <file>components/ProjectedMapPolyline.qml</file>
     <file>components/DateRangePicker.qml</file>
     <file>components/SearchBox.qml</file>
     <file>components/SnackBar.qml</file>
@@ -48,5 +51,8 @@
     <file>components/qmldir</file>
     <file>themes/qmldir</file>
     <file>services/qmldir</file>
+    <file>shaders/sdftext.vert.qsb</file>
+    <file>shaders/sdftext.frag.qsb</file>
+    <file>shaders/LICENSE</file>
   </qresource>
 </RCC>

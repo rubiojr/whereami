@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/rubiojr/whereami/internal/admingeo"
 	"github.com/rubiojr/whereami/internal/geodata"
 	"github.com/rubiojr/whereami/pkg/logger"
+	"github.com/rubiojr/whereami/pkg/vecmap"
 )
 
 //go:embed bookmarks.gpx
@@ -35,6 +37,8 @@ var allWaypoints []Waypoint
 var allWaypointsMu sync.RWMutex
 
 func main() {
+	runtime.LockOSThread()
+
 	// Command-line flags
 	debugFlag := flag.Bool("debug", false, "enable debug logging")
 	themeFlag := flag.String("theme", "", "theme variant (orange|green|purple|adwaita-dark|nord-polar|nord-frost)")
@@ -42,6 +46,10 @@ func main() {
 	configDirFlag := flag.String("config-dir", "", "custom config directory (overrides XDG_CONFIG_HOME)")
 	cacheDirFlag := flag.String("cache-dir", "", "custom cache directory (overrides XDG_CACHE_HOME)")
 	geodataManifestFlag := flag.String("geodata-manifest", "", "local development geodata manifest override")
+	legacyMapRendererFlag := flag.Bool("legacy-map-renderer", false, "use the legacy QtLocation MapLibre renderer")
+	vectorPrototypeFlag := flag.Bool("vector-prototype", false, "force the Go vector renderer and enable prototype smoke options")
+	vectorPrototypeDurationFlag := flag.Duration("vector-prototype-duration", 0, "quit after this duration for renderer smoke tests")
+	vectorPrototypeZoomFlag := flag.Float64("vector-prototype-zoom", 9, "initial zoom for the vector prototype")
 	flag.Parse()
 	debug := *debugFlag
 	themeVariant := *themeFlag
@@ -122,7 +130,6 @@ func main() {
 		} else {
 			defer resolutionCache.Close()
 		}
-
 		var resolutionWarmer *admincache.Warmer
 		if resolutionCache != nil {
 			resolutionWarmer, err = admincache.NewWarmer(observationRepo, resolutionCache, func() (admingeo.Resolver, error) {
@@ -207,14 +214,106 @@ func main() {
 	engine := qml.NewQQmlApplicationEngine()
 	engine.RootContext().SetContextProperty2("whereamiApiToken", qt.NewQVariant14(apiToken))
 	engine.RootContext().SetContextProperty2("whereamiMapCacheDir", qt.NewQVariant14(mapCacheDir()))
+	type vectorMapInstance struct {
+		name string
+		item *vecmap.Item
+	}
+	var vectorMaps []vectorMapInstance
+	goVectorMaps := !*legacyMapRendererFlag || *vectorPrototypeFlag
+	if goVectorMaps {
+		vectorCacheDir := filepath.Join(effectiveCacheDir(), "vector")
+		initialVectorCamera := vecmap.NewCamera(
+			vecmap.Coordinate{Latitude: 40.4168, Longitude: -3.7038},
+			9,
+			0,
+			0,
+			0,
+		)
+		vectorOptions := vecmap.Options{CacheDir: vectorCacheDir, InitialCamera: &initialVectorCamera}
+		mainMap, mainErr := vecmap.NewWithOptions(vectorOptions)
+		var timelineMap *vecmap.Item
+		if mainErr == nil {
+			timelineMap, err = vecmap.NewWithOptions(vectorOptions)
+		} else {
+			err = mainErr
+		}
+		if err != nil {
+			if mainMap != nil {
+				mainMap.Close()
+			}
+			logger.Error("Go vector map initialization failed, using legacy renderer: %v", err)
+			goVectorMaps = false
+		} else {
+			if *vectorPrototypeFlag {
+				mainMap.SetZoom(*vectorPrototypeZoomFlag)
+			}
+			vectorMaps = []vectorMapInstance{{name: "main", item: mainMap}, {name: "timeline", item: timelineMap}}
+			qml.QJSEngine_SetObjectOwnership(mainMap.QObject(), qml.QJSEngine__CppOwnership)
+			qml.QJSEngine_SetObjectOwnership(mainMap.CameraQObject(), qml.QJSEngine__CppOwnership)
+			qml.QJSEngine_SetObjectOwnership(timelineMap.QObject(), qml.QJSEngine__CppOwnership)
+			qml.QJSEngine_SetObjectOwnership(timelineMap.CameraQObject(), qml.QJSEngine__CppOwnership)
+			engine.RootContext().SetContextProperty("whereamiMainVectorItem", mainMap.QObject())
+			engine.RootContext().SetContextProperty("whereamiMainVectorCamera", mainMap.CameraQObject())
+			engine.RootContext().SetContextProperty("whereamiTimelineVectorItem", timelineMap.QObject())
+			engine.RootContext().SetContextProperty("whereamiTimelineVectorCamera", timelineMap.CameraQObject())
+			if *vectorPrototypeFlag {
+				engine.RootContext().SetContextProperty2("whereamiVectorPrototypeInitialZoom", qt.NewQVariant9(*vectorPrototypeZoomFlag))
+			}
+		}
+	}
+	engine.RootContext().SetContextProperty2("whereamiGoVectorMaps", qt.NewQVariant8(goVectorMaps))
 
 	// Load QML from Qt resources (qrc:/)
 	engine.Load(qt.NewQUrl3("qrc:/components/Main.qml"))
 	if len(engine.RootObjects()) == 0 {
 		logger.Fatal("QML load failed: no root objects (check QML errors / Qt Location).")
 	}
+	var vectorPrototypeTimer *qt.QTimer
+	if *vectorPrototypeDurationFlag > 0 {
+		vectorPrototypeTimer = qt.NewQTimer()
+		vectorPrototypeTimer.SetSingleShot(true)
+		vectorPrototypeTimer.OnTimeout(qt.QCoreApplication_Quit)
+		vectorPrototypeTimer.Start(int(vectorPrototypeDurationFlag.Milliseconds()))
+	}
 	logger.Debug("Bookmark API fixed port: http://127.0.0.1:%d/api/bookmarks", apiPort)
 	qt.QApplication_Exec()
+	if vectorPrototypeTimer != nil {
+		vectorPrototypeTimer.Delete()
+	}
+	engine.Delete()
+	for _, vectorMap := range vectorMaps {
+		vectorMap.item.Close()
+		stats := vectorMap.item.Stats()
+		logger.Debug(
+			"Go vector %s map: paint updates=%d geometry builds=%d geometry updates=%d geometry removals=%d transform updates=%d tiles requested=%d loaded=%d fallback=%d loading=%d errors=%d Liberty layers=%d triangles=%d symbols=%d SDF labels=%d atlas glyphs=%d rasters=%d land features=%d triangles=%d water features=%d triangles=%d road features=%d segments=%d",
+			vectorMap.name,
+			stats.PaintNodeUpdates,
+			stats.GeometryBuilds,
+			stats.GeometryUpdates,
+			stats.GeometryRemovals,
+			stats.TransformUpdates,
+			stats.TilesRequested,
+			stats.TilesLoaded,
+			stats.FallbackTiles,
+			stats.TilesLoading,
+			stats.TileErrors,
+			stats.LibertyLayers,
+			stats.LibertyTriangles,
+			stats.SymbolCandidates,
+			stats.SDFLabels,
+			stats.SDFAtlasGlyphs,
+			stats.RasterTiles,
+			stats.LandFeatures,
+			stats.LandTriangles,
+			stats.WaterFeatures,
+			stats.WaterTriangles,
+			stats.RoadFeatures,
+			stats.RoadSegments,
+		)
+		if stats.TileError != "" {
+			logger.Error("Go vector %s map tile load failed: %s", vectorMap.name, stats.TileError)
+		}
+	}
 }
 
 // mapCacheDir resolves the directory holding MapLibre's persistent vector map

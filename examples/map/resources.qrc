@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="/">
+    <file>Main.qml</file>
+    <file alias="shaders/sdftext.vert.qsb">../../ui/shaders/sdftext.vert.qsb</file>
+    <file alias="shaders/sdftext.frag.qsb">../../ui/shaders/sdftext.frag.qsb</file>
+  </qresource>
+</RCC>

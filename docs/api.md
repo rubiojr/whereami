@@ -6,7 +6,10 @@ This document describes the HTTP integration implemented by `api.go`, `geodata_s
 
 The Go process serves an authenticated HTTP API on the fixed loopback address `127.0.0.1:43098`. A random bearer token is generated for each process, injected into QML, and attached by `API.qml` to every private API request.
 
-Semantic XHR operations from QML components go through `ui/services/API.qml`. The OpenFreeMap basemap is rendered by the MapLibre QtLocation provider, which fetches its style and vector tiles directly rather than using the Go HTTP API.
+Semantic XHR operations from QML components go through `ui/services/API.qml`.
+The Go map renderer fetches OpenFreeMap vector and Natural Earth raster tiles
+directly; these requests do not use the loopback HTTP API. The optional legacy
+MapLibre QtLocation backend also fetches its map resources directly.
 
 The API is loopback-only. Every `/api/` route requires the bearer token, and the server does not grant browser CORS access.
 
@@ -230,7 +233,7 @@ Relative paths are preserved below the private imports directory. A changed file
 ## Persistence
 
 - `bookmarks.gpx`, copied imports, `tags.sqlite`, and `history.sqlite` live in the effective data directory.
-- `geocode.sqlite` and the MapLibre map cache (`maplibre/maplibre.db`) live in the effective cache directory.
+- `geocode.sqlite`, the Go tile cache (`vector/`), and the optional legacy MapLibre cache (`maplibre/`) live in the effective cache directory.
 - Search history is separate from the geocoding cache.
 
 ## Offline Preview Mode

@@ -3,9 +3,10 @@
 ## Flatpak Build
 
 The supported distribution build lives in
-[whereami-flatpak](https://github.com/rubiojr/whereami-flatpak). It builds the
-application and MapLibre Native Qt against the same pinned KDE/Qt runtime,
-which is required because the QtLocation provider uses private Qt APIs.
+[whereami-flatpak](https://github.com/rubiojr/whereami-flatpak). The application
+includes its default Go/public-QSG map renderer. The packaging repository may
+also build MapLibre Native Qt against the pinned KDE/Qt runtime as the optional
+`--legacy-map-renderer` fallback.
 
 ```bash
 git clone https://github.com/rubiojr/whereami-flatpak.git
@@ -13,9 +14,10 @@ cd whereami-flatpak
 ./build dev ../whereami
 ```
 
-The Flatpak manifest pins MapLibre Native Qt commit
-`c924d8f4723c51eee9fd3dadad0ac3df53441c2c`. Do not substitute a prebuilt
-MapLibre artifact from another Qt distribution or runtime.
+If the optional fallback is packaged, its manifest pins MapLibre Native Qt
+commit `c924d8f4723c51eee9fd3dadad0ac3df53441c2c`. Do not substitute a prebuilt
+MapLibre artifact from another Qt distribution or runtime because that provider
+uses Qt private APIs.
 
 ## Local Build
 
@@ -26,10 +28,12 @@ MapLibre artifact from another Qt distribution or runtime.
 - GCC and G++ for CGO and the Qt bindings
 - `miqt-rcc` for embedding QML resources
 
-The application build does not link MapLibre. For a functional basemap, the
-runtime must provide the `maplibre` QtLocation geoservice built against the
-same Qt version. The application falls back to QtLocation's overlay-only
-provider when MapLibre is absent so source builds and QML tests still work.
+The application build does not link MapLibre and does not need its QtLocation
+geoservice for the default basemap. The Go renderer fetches the pinned
+OpenFreeMap tile snapshot and renders it through public Qt Quick scene-graph
+APIs. `--legacy-map-renderer` uses the `maplibre` QtLocation geoservice when one
+is installed; otherwise QtLocation's overlay-only provider keeps the
+application usable.
 
 On Fedora, install the native dependencies with:
 
@@ -61,6 +65,11 @@ make build
 
 The target runs `go generate` to rebuild the Qt resource bundle, then writes the executable to `bin/whereami`.
 
+The cross-backend SDF text shader packs are committed under `ui/shaders`, so a
+normal build does not require Qt Shader Tools. Regenerating those packs requires
+`qsb`; use the Qt 6.5-compatible commands documented in
+`ui/shaders/README.md`.
+
 The helper script exposes the same steps separately:
 
 ```bash
@@ -86,4 +95,5 @@ make qml-test
 - `rcc` not found: add the Qt 6 libexec directory to `PATH`.
 - Qt package errors: install the Qt base, declarative, positioning, location, and SVG development packages.
 - CGO compiler errors: install GCC and G++ and ensure `CGO_ENABLED=1`.
-- Basemap unavailable: use the Flatpak, or install a MapLibre Native QtLocation provider built against the exact local Qt private ABI.
+- Default basemap unavailable: check the logged Go renderer initialization or tile error, network access to `tiles.openfreemap.org`, and write access to the effective cache directory.
+- Legacy basemap unavailable: install a MapLibre Native QtLocation provider built against the exact local Qt private ABI, or omit `--legacy-map-renderer`.

@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtPositioning 6.5
 import QtTest 1.2
 import "../components"
 
@@ -202,6 +203,20 @@ TestCase {
         timeline.controlsVisible = true;
         wait(150);
         fuzzyCompare(timeline.mapItem.zoomLevel, adjustedZoom, 0.01);
+    }
+
+    function test_nearbyFlightKeepsDetailZoom() {
+        var window = createTemporaryObject(timelineWindowComponent, null);
+        verify(window !== null);
+        var timeline = window.timeline;
+        tryCompare(timeline, "mapReady", true, 2000);
+        timeline.mapItem.center = QtPositioning.coordinate(41.3874, 2.1686);
+        timeline.mapItem.zoomLevel = 15.5;
+
+        timeline.mapItem.flyTo(41.3880, 2.1690, false);
+        wait(140);
+
+        verify(timeline.mapItem.zoomLevel > 15.4);
     }
 
     function test_sliderArrowMovesExactlyOneStop() {

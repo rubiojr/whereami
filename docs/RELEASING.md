@@ -1,9 +1,11 @@
 # Releasing WhereAmI
 
 The application is distributed as a Flatpak. Packaging lives in a separate
-repository, [whereami-flatpak](https://github.com/rubiojr/whereami-flatpak),
-which builds both WhereAmI and the MapLibre Native Qt renderer against a pinned
-KDE runtime. This repository produces no distributable packages of its own.
+repository, [whereami-flatpak](https://github.com/rubiojr/whereami-flatpak).
+WhereAmI includes the default Go/public-QSG map renderer. The packaging
+repository can additionally bundle the legacy MapLibre Native Qt fallback
+against its pinned KDE runtime. This repository produces no distributable
+packages of its own.
 
 ## Application Release
 
@@ -26,9 +28,9 @@ Release mode requires a clean WhereAmI checkout with the requested tag at
 Git commit, and writes `io.github.rubiojr.whereami.flatpak`. It does not commit,
 push, create a GitHub release, or upload the bundle.
 
-The MapLibre commit is pinned separately in `maplibre-native-qt.yml`. Changing
-it is a deliberate, separately tested step, and the bundle's licensing notes
-depend on it staying accurate.
+When the legacy fallback is bundled, its MapLibre commit is pinned separately
+in `maplibre-native-qt.yml`. Changing it is a deliberate, separately tested
+step, and the bundle's licensing notes depend on it staying accurate.
 
 ## Verification
 
@@ -42,8 +44,7 @@ make qml-test
 make build
 ```
 
-Then verify the packaged application, which is the only build that includes the
-map renderer:
+Then verify the packaged application in its release runtime:
 
 ```bash
 cd ../whereami-flatpak
@@ -52,9 +53,9 @@ flatpak install --user --reinstall io.github.rubiojr.whereami.flatpak
 flatpak run --user io.github.rubiojr.whereami
 ```
 
-Confirm the basemap renders and the OpenFreeMap attribution is visible. A source
-build without the MapLibre geoservice falls back to an overlay-only map, so this
-check cannot be made from this repository alone.
+Confirm the default Go basemap renders, the timeline map initializes on demand,
+and the OpenFreeMap attribution is visible. If the package includes MapLibre,
+also start it with `--legacy-map-renderer` and verify that fallback separately.
 
 ## Administrative Geodata
 

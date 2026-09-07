@@ -3,29 +3,37 @@ package logger
 import (
 	"log"
 	"os"
+	"sync/atomic"
 )
 
 var (
-	debugEnabled bool
+	debugEnabled atomic.Bool
 	infoLogger   *log.Logger
+	warnLogger   *log.Logger
 	errorLogger  *log.Logger
 	debugLogger  *log.Logger
 )
 
 func init() {
 	infoLogger = log.New(os.Stderr, "", 0)
-	errorLogger = log.New(os.Stderr, "", 0)
+	warnLogger = log.New(os.Stdout, "", 0)
+	errorLogger = log.New(os.Stdout, "", 0)
 	debugLogger = log.New(os.Stderr, "[DEBUG] ", 0)
 }
 
 // SetDebug enables or disables debug logging
 func SetDebug(enabled bool) {
-	debugEnabled = enabled
+	debugEnabled.Store(enabled)
 }
 
 // Info logs an informational message
 func Info(format string, args ...interface{}) {
 	infoLogger.Printf(format, args...)
+}
+
+// Warn logs a non-fatal warning to stdout.
+func Warn(format string, args ...interface{}) {
+	warnLogger.Printf("[WARN] "+format, args...)
 }
 
 // Error logs an error message
@@ -35,7 +43,7 @@ func Error(format string, args ...interface{}) {
 
 // Debug logs a debug message if debug logging is enabled
 func Debug(format string, args ...interface{}) {
-	if debugEnabled {
+	if debugEnabled.Load() {
 		debugLogger.Printf(format, args...)
 	}
 }
@@ -43,6 +51,11 @@ func Debug(format string, args ...interface{}) {
 // Infof is an alias for Info for consistency
 func Infof(format string, args ...interface{}) {
 	Info(format, args...)
+}
+
+// Warnf is an alias for Warn for consistency.
+func Warnf(format string, args ...interface{}) {
+	Warn(format, args...)
 }
 
 // Errorf is an alias for Error for consistency
