@@ -104,6 +104,28 @@ func TestSetLibertyCounterTransformRejectsMissingNode(t *testing.T) {
 	assert.False(t, setLibertyCounterTransform(nil, Camera{}, vectorTileID{}, roadPoint{}, roadPoint{}, 0, false))
 }
 
+func TestLibertyLayerHasAcceptedSymbol(t *testing.T) {
+	tile := vectorTileID{X: 1, Y: 2, Z: 3}
+	candidates := []libertySymbolCandidate{{order: 4}, {order: 7}}
+	accepted := map[libertySymbolKey]libertyAcceptedSymbol{
+		{tile: tile, wrap: 1, index: 1}: {text: true},
+	}
+
+	assert.True(t, libertyLayerHasAcceptedSymbol(tile, 1, candidates, 7, accepted))
+	assert.False(t, libertyLayerHasAcceptedSymbol(tile, 1, candidates, 4, accepted))
+	assert.False(t, libertyLayerHasAcceptedSymbol(tile, 0, candidates, 7, accepted))
+}
+
+func TestLibertySymbolRangeAtOrderPreservesCandidateIndexes(t *testing.T) {
+	candidates := []libertySymbolCandidate{{order: 1}, {order: 3}, {order: 3}, {order: 8}}
+
+	start, end := libertySymbolRangeAtOrder(candidates, 3)
+	assert.Equal(t, 1, start)
+	assert.Equal(t, 3, end)
+	start, end = libertySymbolRangeAtOrder(candidates, 2)
+	assert.Equal(t, start, end)
+}
+
 func TestAcceptedLibertySymbolsUsesLayerPriority(t *testing.T) {
 	camera := NewCamera(Coordinate{}, 0, 0, 256, 256)
 	candidate := libertySymbolCandidate{

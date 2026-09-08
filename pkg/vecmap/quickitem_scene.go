@@ -61,12 +61,19 @@ func (i *Item) updatePaintNode(
 	glyphRevision := i.glyphs.currentRevision()
 	glyphsChanged := glyphRevision != i.lastGlyphRevision
 	reconciledScene := false
-	if scene != nil && (sceneChanged || createdRoot || viewportChanged || worldWrapsChanged || glyphsChanged || i.sdfAtlasRetry) {
+	if scene != nil && libertySceneNeedsFullReconcile(
+		sceneChanged,
+		createdRoot,
+		viewportChanged,
+		worldWrapsChanged,
+		glyphsChanged,
+		i.sdfAtlasRetry,
+	) {
 		tilesChanged := scene.tileRevision != i.lastTileRevision
 		styleZoomChanged := scene.styleZoom != i.lastStyleZoom
 		consumedGlyphRevision := i.reconcileTileNodes(oldNode, camera, scene)
 		reconciledScene = true
-		if !createdRoot && !tilesChanged && (styleZoomChanged || viewportChanged || worldWrapsChanged) {
+		if !createdRoot && !tilesChanged && (styleZoomChanged || worldWrapsChanged) {
 			i.geometryUpdates.Add(1)
 		}
 		i.lastTileRevision = scene.tileRevision
@@ -74,11 +81,14 @@ func (i *Item) updatePaintNode(
 		i.renderedScene = scene
 		i.lastWorldWraps = append(i.lastWorldWraps[:0], worldWraps...)
 		i.lastGlyphRevision = consumedGlyphRevision
+	} else if scene != nil && (glyphsChanged || i.sdfAtlasRetry) {
+		i.lastGlyphRevision = i.reconcileLibertyGlyphNodes(oldNode, camera, scene)
+		reconciledScene = true
 	}
 
 	cameraChanged := viewportChanged || snapshot.Revision != i.lastCameraRevision
 	if cameraChanged && !createdRoot {
-		if !reconciledScene && i.libertySymbolPlacementChanged(camera) {
+		if !reconciledScene && (viewportChanged || i.libertySymbolPlacementChanged(camera)) {
 			i.reconcileLibertySymbolNodes(camera, scene)
 		}
 		updatedTransforms := 0
@@ -119,6 +129,14 @@ func (i *Item) updatePaintNode(
 		i.lastCameraBearing = camera.Bearing
 	}
 	return oldNode
+}
+
+func libertySceneNeedsFullReconcile(
+	sceneChanged, createdRoot, viewportChanged bool,
+	worldWrapsChanged, glyphsChanged, sdfAtlasRetry bool,
+) bool {
+	_, _, _ = viewportChanged, glyphsChanged, sdfAtlasRetry
+	return sceneChanged || createdRoot || worldWrapsChanged
 }
 
 func (i *Item) requestStyledTiles(tiles *roadTileSnapshot, styleZoom float64) {
@@ -192,6 +210,7 @@ func (i *Item) reconcileTileNodes(root *quick.QSGNode, camera Camera, scene *lib
 	if hasLibertyPrimitives(tiles) {
 		return i.appendLibertyScene(root, camera, scene)
 	}
+	i.discardLibertySDFAtlas(root)
 	wraps := libertyWorldWraps(camera)
 	for _, tile := range tiles {
 		if tile.roads == nil {

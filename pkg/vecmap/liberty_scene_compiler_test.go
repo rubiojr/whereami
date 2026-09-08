@@ -1,6 +1,7 @@
 package vecmap
 
 import (
+	"sort"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,4 +36,24 @@ func TestCompileLibertySceneTilesReusesMatchingCompiledZoom(t *testing.T) {
 
 	require.Len(t, compiled, 1)
 	assert.Same(t, bucket, compiled[0].roads)
+}
+
+func TestLibertyPrimitivesAtOrderReturnsContiguousLayer(t *testing.T) {
+	primitives := []libertyRenderPrimitive{{order: 1}, {order: 3}, {order: 3}, {order: 8}}
+
+	assert.Equal(t, primitives[1:3], libertyPrimitivesAtOrder(primitives, 3))
+	assert.Empty(t, libertyPrimitivesAtOrder(primitives, 2))
+	assert.Empty(t, libertyPrimitivesAtOrder(primitives, 9))
+}
+
+func TestCompiledLibertyOutputIsOrderedByLayer(t *testing.T) {
+	bucket := &tileBucket{tile: vectorTileID{Z: 9}, sourceLayers: map[string][]vectorFeature{}}
+	require.NoError(t, compileLibertyTile(bucket, 9))
+
+	assert.True(t, sort.SliceIsSorted(bucket.liberty, func(first, second int) bool {
+		return bucket.liberty[first].order < bucket.liberty[second].order
+	}))
+	assert.True(t, sort.SliceIsSorted(bucket.symbols, func(first, second int) bool {
+		return bucket.symbols[first].order < bucket.symbols[second].order
+	}))
 }

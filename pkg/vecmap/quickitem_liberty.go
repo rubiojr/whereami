@@ -9,7 +9,6 @@ import (
 func (i *Item) appendLibertyScene(root *quick.QSGNode, camera Camera, scene *libertySceneSnapshot) uint64 {
 	styleZoom := scene.styleZoom
 	tiles := scene.tiles
-	i.sdfAtlasRetry = false
 	if i.sdfAtlas != nil && i.sdfAtlas.QSGNode() != nil {
 		root.RemoveChildNode(i.sdfAtlas.QSGNode())
 	}
@@ -18,13 +17,65 @@ func (i *Item) appendLibertyScene(root *quick.QSGNode, camera Camera, scene *lib
 			root.AppendChildNode(i.sdfAtlas.QSGNode())
 		}
 	}()
-	glyphRevision := i.glyphs.currentRevision()
 	layers, err := compiledLibertyLayers()
 	if err != nil {
 		i.sdfLabels.Store(0)
 		i.sdfAtlasGlyphs.Store(0)
-		return glyphRevision
+		return i.glyphs.currentRevision()
 	}
+	glyphRevision, sdfScene, activeSDFAtlas, acceptedSymbols := i.prepareLibertySymbols(camera, scene)
+	wraps := libertyWorldWraps(camera)
+	for _, layer := range layers {
+		if layer.kind == "symbol" {
+			layerRoot := quick.NewQSGNode()
+			if layerRoot == nil {
+				continue
+			}
+			root.AppendChildNode(layerRoot)
+			i.sceneNodes = append(i.sceneNodes, layerRoot)
+			symbolLayer := retainedLibertySymbolLayer{root: layerRoot, order: layer.order}
+			i.appendLibertySymbolLayerNodes(&symbolLayer, camera, tiles, wraps, acceptedSymbols, sdfScene, activeSDFAtlas)
+			i.symbolLayers = append(i.symbolLayers, symbolLayer)
+			continue
+		}
+		for _, tile := range tiles {
+			if tile.roads == nil {
+				continue
+			}
+			if layer.kind == "raster" {
+				for _, wrap := range wraps {
+					node := newLibertyRasterTileNode(i.quickItem, camera, tile.id, wrap, tile.roads, layer, styleZoom)
+					if node == nil {
+						continue
+					}
+					root.AppendChildNode(node.QSGNode)
+					i.sceneNodes = append(i.sceneNodes, node.QSGNode)
+					i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
+				}
+				continue
+			}
+			for _, wrap := range wraps {
+				node := newLibertyLayerTileNode(i.quickItem, camera, tile.id, wrap, tile.roads.liberty, layer.order)
+				if node == nil {
+					continue
+				}
+				root.AppendChildNode(node.QSGNode)
+				i.sceneNodes = append(i.sceneNodes, node.QSGNode)
+				i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
+			}
+		}
+	}
+	i.recordSDFStats(sdfScene, activeSDFAtlas)
+	return glyphRevision
+}
+
+func (i *Item) prepareLibertySymbols(
+	camera Camera,
+	scene *libertySceneSnapshot,
+) (uint64, *sdfScene, *quick.QSGSDFAtlas, map[libertySymbolKey]libertyAcceptedSymbol) {
+	tiles := scene.tiles
+	i.sdfAtlasRetry = false
+	glyphRevision := i.glyphs.currentRevision()
 	if i.sdfLayoutScene != scene || i.sdfLayoutGlyphRevision != glyphRevision {
 		i.sdfLayouts, i.sdfLayoutHasCandidates = prepareSDFLayouts(tiles, i.glyphs)
 		i.sdfLayoutGlyphs = sdfLayoutGlyphs(i.sdfLayouts)
@@ -96,47 +147,10 @@ func (i *Item) appendLibertyScene(root *quick.QSGNode, camera Camera, scene *lib
 	i.acceptedSymbols = acceptedSymbols
 	i.renderedSDFScene = sdfScene
 	i.recordLibertySymbolPlacement(camera)
-	wraps := libertyWorldWraps(camera)
-	for _, layer := range layers {
-		if layer.kind == "symbol" {
-			layerRoot := quick.NewQSGNode()
-			if layerRoot == nil {
-				continue
-			}
-			root.AppendChildNode(layerRoot)
-			i.sceneNodes = append(i.sceneNodes, layerRoot)
-			symbolLayer := retainedLibertySymbolLayer{root: layerRoot, order: layer.order}
-			i.appendLibertySymbolLayerNodes(&symbolLayer, camera, tiles, wraps, acceptedSymbols, sdfScene, activeSDFAtlas)
-			i.symbolLayers = append(i.symbolLayers, symbolLayer)
-			continue
-		}
-		for _, tile := range tiles {
-			if tile.roads == nil {
-				continue
-			}
-			if layer.kind == "raster" {
-				for _, wrap := range wraps {
-					node := newLibertyRasterTileNode(i.quickItem, camera, tile.id, wrap, tile.roads, layer, styleZoom)
-					if node == nil {
-						continue
-					}
-					root.AppendChildNode(node.QSGNode)
-					i.sceneNodes = append(i.sceneNodes, node.QSGNode)
-					i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
-				}
-				continue
-			}
-			for _, wrap := range wraps {
-				node := newLibertyLayerTileNode(i.quickItem, camera, tile.id, wrap, tile.roads.liberty, layer.order)
-				if node == nil {
-					continue
-				}
-				root.AppendChildNode(node.QSGNode)
-				i.sceneNodes = append(i.sceneNodes, node.QSGNode)
-				i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
-			}
-		}
-	}
+	return glyphRevision, sdfScene, activeSDFAtlas, acceptedSymbols
+}
+
+func (i *Item) recordSDFStats(sdfScene *sdfScene, activeSDFAtlas *quick.QSGSDFAtlas) {
 	if sdfScene != nil && activeSDFAtlas != nil {
 		i.sdfLabels.Store(int64(sdfScene.renderedLabels))
 		i.sdfAtlasGlyphs.Store(int64(len(sdfScene.atlas.positions)))
@@ -144,7 +158,19 @@ func (i *Item) appendLibertyScene(root *quick.QSGNode, camera Camera, scene *lib
 		i.sdfLabels.Store(0)
 		i.sdfAtlasGlyphs.Store(0)
 	}
-	return glyphRevision
+}
+
+func (i *Item) discardLibertySDFAtlas(root *quick.QSGNode) {
+	if i.sdfAtlas != nil && i.sdfAtlas.QSGNode() != nil {
+		root.RemoveChildNode(i.sdfAtlas.QSGNode())
+		i.sdfAtlas.QSGNode().Delete()
+	}
+	i.sdfAtlas = nil
+	i.sdfAtlasGeneration = 0
+	i.sdfAtlasRetry = false
+	i.sdfAtlasRetryAttempts = 0
+	i.sdfLabels.Store(0)
+	i.sdfAtlasGlyphs.Store(0)
 }
 
 func (i *Item) appendLibertySymbolLayerNodes(
@@ -185,6 +211,39 @@ func (i *Item) appendLibertySymbolLayerNodes(
 	}
 }
 
+func (i *Item) reconcileLibertyGlyphNodes(
+	root *quick.QSGNode,
+	camera Camera,
+	scene *libertySceneSnapshot,
+) uint64 {
+	glyphRevision := i.glyphs.currentRevision()
+	if root == nil || scene == nil || len(i.symbolLayers) == 0 {
+		return glyphRevision
+	}
+	if i.sdfAtlas != nil && i.sdfAtlas.QSGNode() != nil {
+		root.RemoveChildNode(i.sdfAtlas.QSGNode())
+	}
+	i.clearLibertySymbolTileNodes()
+	glyphRevision, sdfScene, sdfAtlas, accepted := i.prepareLibertySymbols(camera, scene)
+	wraps := libertyWorldWraps(camera)
+	for layerIndex := range i.symbolLayers {
+		i.appendLibertySymbolLayerNodes(
+			&i.symbolLayers[layerIndex],
+			camera,
+			scene.tiles,
+			wraps,
+			accepted,
+			sdfScene,
+			sdfAtlas,
+		)
+	}
+	if i.sdfAtlas != nil && i.sdfAtlas.QSGNode() != nil {
+		root.AppendChildNode(i.sdfAtlas.QSGNode())
+	}
+	i.recordSDFStats(sdfScene, sdfAtlas)
+	return glyphRevision
+}
+
 func (i *Item) reconcileLibertySymbolNodes(camera Camera, scene *libertySceneSnapshot) {
 	if scene == nil || len(i.symbolLayers) == 0 {
 		return
@@ -201,15 +260,7 @@ func (i *Item) reconcileLibertySymbolNodes(camera Camera, scene *libertySceneSna
 	if sameLibertyAcceptedSymbols(i.acceptedSymbols, accepted) {
 		return
 	}
-	for layerIndex := range i.symbolLayers {
-		layer := &i.symbolLayers[layerIndex]
-		for _, tile := range layer.tiles {
-			layer.root.RemoveChildNode(tile.node.QSGNode)
-			tile.node.Delete()
-		}
-		layer.tiles = layer.tiles[:0]
-	}
-	i.symbolTransforms = i.symbolTransforms[:0]
+	i.clearLibertySymbolTileNodes()
 	if sdfScene != nil {
 		sdfScene.rendered = make(map[libertySDFLayoutKey]struct{})
 		sdfScene.renderedLabels = 0
@@ -227,11 +278,19 @@ func (i *Item) reconcileLibertySymbolNodes(camera Camera, scene *libertySceneSna
 		)
 	}
 	i.acceptedSymbols = accepted
-	if sdfScene != nil && sdfAtlas != nil {
-		i.sdfLabels.Store(int64(sdfScene.renderedLabels))
-	} else {
-		i.sdfLabels.Store(0)
+	i.recordSDFStats(sdfScene, sdfAtlas)
+}
+
+func (i *Item) clearLibertySymbolTileNodes() {
+	for layerIndex := range i.symbolLayers {
+		layer := &i.symbolLayers[layerIndex]
+		for _, tile := range layer.tiles {
+			layer.root.RemoveChildNode(tile.node.QSGNode)
+			tile.node.Delete()
+		}
+		layer.tiles = layer.tiles[:0]
 	}
+	i.symbolTransforms = i.symbolTransforms[:0]
 }
 
 func (i *Item) libertySymbolPlacementChanged(camera Camera) bool {

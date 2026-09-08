@@ -7,8 +7,10 @@ type tileBucket struct {
 	land         fillBucket
 	water        fillBucket
 	sourceLayers map[string][]vectorFeature
-	liberty      []libertyRenderPrimitive
-	raster       naturalEarthRaster
+	// Compiler output is contiguous and ordered by style layer for render-time lookup.
+	liberty []libertyRenderPrimitive
+	raster  naturalEarthRaster
+	// Symbols follow the same style-layer ordering contract as liberty.
 	symbols      []libertySymbolCandidate
 	compiledZoom float64
 	compiled     bool

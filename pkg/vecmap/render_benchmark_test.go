@@ -43,6 +43,43 @@ func BenchmarkCompileLibertySceneTilesSourceZoom(b *testing.B) {
 	}
 }
 
+func BenchmarkLibertyPrimitivesAtOrder(b *testing.B) {
+	primitives := benchmarkLibertyPrimitives()
+	b.ReportAllocs()
+	for b.Loop() {
+		matching := libertyPrimitivesAtOrder(primitives, 96)
+		if len(matching) != 4 {
+			b.Fatal("unexpected primitive count")
+		}
+	}
+}
+
+func BenchmarkLibertyPrimitivesAtOrderLegacyAllocatingScan(b *testing.B) {
+	primitives := benchmarkLibertyPrimitives()
+	b.ReportAllocs()
+	for b.Loop() {
+		var matching []libertyRenderPrimitive
+		for _, primitive := range primitives {
+			if primitive.order == 96 {
+				matching = append(matching, primitive)
+			}
+		}
+		if len(matching) != 4 {
+			b.Fatal("unexpected primitive count")
+		}
+	}
+}
+
+func benchmarkLibertyPrimitives() []libertyRenderPrimitive {
+	primitives := make([]libertyRenderPrimitive, 0, 512)
+	for order := range 128 {
+		for range 4 {
+			primitives = append(primitives, libertyRenderPrimitive{order: order})
+		}
+	}
+	return primitives
+}
+
 func benchmarkVectorTile(tb testing.TB) []byte {
 	tb.Helper()
 	path := os.Getenv("WHEREAMI_VECTOR_TILE_FIXTURE")

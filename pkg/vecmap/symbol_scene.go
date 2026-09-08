@@ -352,16 +352,18 @@ func newLibertySymbolLayerTileNode(
 	sdfScene *sdfScene,
 	sdfAtlas *quick.QSGSDFAtlas,
 ) (*quick.QSGTransformNode, []retainedLibertySymbolTransform) {
+	if !libertyLayerHasAcceptedSymbol(tile, wrap, candidates, order, accepted) {
+		return nil, nil
+	}
 	outer := quick.NewQSGTransformNode()
 	if outer == nil {
 		return nil, nil
 	}
 	setWrappedTileTransform(outer, camera, tile, wrap)
 	transforms := make([]retainedLibertySymbolTransform, 0)
-	for index, candidate := range candidates {
-		if candidate.order != order {
-			continue
-		}
+	start, end := libertySymbolRangeAtOrder(candidates, order)
+	for index := start; index < end; index++ {
+		candidate := candidates[index]
 		placement, keep := accepted[libertySymbolKey{tile: tile, wrap: wrap, index: index}]
 		if !keep {
 			continue
@@ -489,6 +491,30 @@ func newLibertySymbolLayerTileNode(
 		return nil, nil
 	}
 	return outer, transforms
+}
+
+func libertyLayerHasAcceptedSymbol(
+	tile vectorTileID,
+	wrap int,
+	candidates []libertySymbolCandidate,
+	order int,
+	accepted map[libertySymbolKey]libertyAcceptedSymbol,
+) bool {
+	start, end := libertySymbolRangeAtOrder(candidates, order)
+	for index := start; index < end; index++ {
+		if _, keep := accepted[libertySymbolKey{tile: tile, wrap: wrap, index: index}]; keep {
+			return true
+		}
+	}
+	return false
+}
+
+func libertySymbolRangeAtOrder(candidates []libertySymbolCandidate, order int) (int, int) {
+	start := sort.Search(len(candidates), func(index int) bool { return candidates[index].order >= order })
+	end := start + sort.Search(len(candidates)-start, func(index int) bool {
+		return candidates[start+index].order > order
+	})
+	return start, end
 }
 
 func newLibertyCounterTransform(

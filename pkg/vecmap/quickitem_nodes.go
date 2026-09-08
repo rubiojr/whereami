@@ -1,6 +1,8 @@
 package vecmap
 
 import (
+	"sort"
+
 	qt "github.com/mappu/miqt/qt6"
 	quick "github.com/rubiojr/whereami/internal/miqtquick"
 )
@@ -59,12 +61,7 @@ func newLibertyLayerTileNode(
 	primitives []libertyRenderPrimitive,
 	order int,
 ) *quick.QSGTransformNode {
-	var matching []libertyRenderPrimitive
-	for _, primitive := range primitives {
-		if primitive.order == order {
-			matching = append(matching, primitive)
-		}
-	}
+	matching := libertyPrimitivesAtOrder(primitives, order)
 	if len(matching) == 0 {
 		return nil
 	}
@@ -114,6 +111,14 @@ func newLibertyLayerTileNode(
 	}
 	setWrappedTileTransform(transformNode, camera, tile, wrap)
 	return transformNode
+}
+
+func libertyPrimitivesAtOrder(primitives []libertyRenderPrimitive, order int) []libertyRenderPrimitive {
+	start := sort.Search(len(primitives), func(index int) bool { return primitives[index].order >= order })
+	end := start + sort.Search(len(primitives)-start, func(index int) bool {
+		return primitives[start+index].order > order
+	})
+	return primitives[start:end]
 }
 
 func newTileNodeWrapped(camera Camera, bucket *tileBucket, wrap int) *quick.QSGTransformNode {

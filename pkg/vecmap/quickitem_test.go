@@ -62,6 +62,13 @@ func TestAppendGeometryNodeRejectsIncompletePrimitives(t *testing.T) {
 	assert.Zero(t, parent.ChildCount())
 }
 
+func TestViewportChangeDoesNotRequireFullSceneReconcile(t *testing.T) {
+	assert.False(t, libertySceneNeedsFullReconcile(false, false, true, false, false, false))
+	assert.False(t, libertySceneNeedsFullReconcile(false, false, false, false, true, true))
+	assert.True(t, libertySceneNeedsFullReconcile(true, false, false, false, false, false))
+	assert.True(t, libertySceneNeedsFullReconcile(false, false, false, true, false, false))
+}
+
 func TestLibertyWorldWrapsCoverWideLowZoomViewport(t *testing.T) {
 	lowZoom := NewCamera(Coordinate{}, 0, 0, 1300, 800)
 	wraps := libertyWorldWraps(lowZoom)

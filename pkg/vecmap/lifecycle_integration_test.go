@@ -10,6 +10,7 @@ import (
 
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/qml"
+	quick "github.com/rubiojr/whereami/internal/miqtquick"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,6 +125,7 @@ func testRenderedItemLifecycle(t *testing.T) {
 		}, nil
 	}, NewCamera(Coordinate{}, 9, 0, 0, 0))
 	require.NoError(t, err)
+	item.glyphs = newGlyphManager(nil, nil)
 	defer func() {
 		if item != nil {
 			item.Close()
@@ -193,6 +195,10 @@ func testRenderedItemLifecycle(t *testing.T) {
 	builds := stats.GeometryBuilds
 	removals := stats.GeometryRemovals
 	transforms := stats.TransformUpdates
+	retainedSceneNodes := append([]*quick.QSGNode(nil), item.sceneNodes...)
+	item.glyphs.mu.Lock()
+	item.glyphs.revision++
+	item.glyphs.mu.Unlock()
 
 	item.camera.handleValueChanged("bearing", 1)
 	deadline = time.Now().Add(time.Second)
@@ -205,6 +211,10 @@ func testRenderedItemLifecycle(t *testing.T) {
 	require.Zero(t, stats.GeometryUpdates)
 	require.Equal(t, builds, stats.GeometryBuilds)
 	require.Equal(t, removals, stats.GeometryRemovals)
+	require.Len(t, item.sceneNodes, len(retainedSceneNodes))
+	for index := range retainedSceneNodes {
+		require.Same(t, retainedSceneNodes[index], item.sceneNodes[index], "glyph update replaced basemap scene node %d", index)
+	}
 
 	item.camera.handleValueChanged("panDX", 1024)
 	item.camera.handleValueChanged("panDY", 0)
