@@ -46,6 +46,8 @@ type Item struct {
 	lastWidth                 float64
 	lastHeight                float64
 	lastCameraRevision        uint64
+	lastCameraZoom            float64
+	lastCameraBearing         float64
 	lastTileRevision          uint64
 	lastStyleZoom             float64
 	lastStyleRequestRevision  uint64
@@ -138,8 +140,10 @@ func (i *Item) publishTiles(snapshot *roadTileSnapshot) {
 	if i.closed.Load() {
 		return
 	}
-	i.tiles.Store(snapshot)
-	queueQuickItemUpdate(i.quickItem)
+	previous := i.tiles.Swap(snapshot)
+	if previous == nil || previous.contentRevision != snapshot.contentRevision {
+		queueQuickItemUpdate(i.quickItem)
+	}
 }
 
 func (i *Item) publishStyledTiles(snapshot *libertySceneSnapshot) {

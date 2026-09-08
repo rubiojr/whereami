@@ -10,6 +10,8 @@ type tileBucket struct {
 	liberty      []libertyRenderPrimitive
 	raster       naturalEarthRaster
 	symbols      []libertySymbolCandidate
+	compiledZoom float64
+	compiled     bool
 }
 
 type fillBucket struct {

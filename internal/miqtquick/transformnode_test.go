@@ -40,3 +40,16 @@ func TestClipNodeRect(t *testing.T) {
 
 	node.SetRect(1, 2, 256, 255)
 }
+
+func BenchmarkTransformNodeSetAffineUnchanged(b *testing.B) {
+	node := NewQSGTransformNode()
+	require.NotNil(b, node)
+	defer node.Delete()
+
+	node.SetAffine(2, 3, 4, 5, 6, 7)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		node.SetAffine(2, 3, 4, 5, 6, 7)
+	}
+}

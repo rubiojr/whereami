@@ -51,7 +51,7 @@ func (i *Item) updatePaintNode(
 	styled := i.styledTiles.Load()
 	scene := i.renderedScene
 	sceneChanged := false
-	if styled != nil && styled.tileRevision == tiles.revision && styled.styleZoom == styleZoom && styled != scene {
+	if styled != nil && styled.tileRevision == tiles.contentRevision && styled.styleZoom == styleZoom && styled != scene {
 		scene = styled
 		sceneChanged = true
 	}
@@ -85,7 +85,6 @@ func (i *Item) updatePaintNode(
 		for tile, nodes := range i.tileNodes {
 			for _, retained := range nodes {
 				setWrappedTileTransform(retained.node, camera, tile, retained.wrap)
-				retained.node.MarkDirty(quick.QSGNode__DirtyMatrix)
 				updatedTransforms++
 			}
 		}
@@ -93,22 +92,22 @@ func (i *Item) updatePaintNode(
 			for tileIndex := range i.symbolLayers[layerIndex].tiles {
 				tile := &i.symbolLayers[layerIndex].tiles[tileIndex]
 				setWrappedTileTransform(tile.node, camera, tile.tile, tile.wrap)
-				tile.node.MarkDirty(quick.QSGNode__DirtyMatrix)
 				updatedTransforms++
 			}
 		}
-		for index := range i.symbolTransforms {
-			symbol := &i.symbolTransforms[index]
-			setLibertyCounterTransform(
-				symbol.node,
-				camera,
-				symbol.tile,
-				symbol.anchor,
-				symbol.offset,
-				symbol.localAngle,
-				symbol.viewportAlign,
-			)
-			symbol.node.MarkDirty(quick.QSGNode__DirtyMatrix)
+		if camera.Zoom != i.lastCameraZoom || camera.Bearing != i.lastCameraBearing {
+			for index := range i.symbolTransforms {
+				symbol := &i.symbolTransforms[index]
+				setLibertyCounterTransform(
+					symbol.node,
+					camera,
+					symbol.tile,
+					symbol.anchor,
+					symbol.offset,
+					symbol.localAngle,
+					symbol.viewportAlign,
+				)
+			}
 		}
 		i.transformUpdates.Add(uint64(updatedTransforms))
 	}
@@ -116,19 +115,21 @@ func (i *Item) updatePaintNode(
 		i.lastWidth = width
 		i.lastHeight = height
 		i.lastCameraRevision = snapshot.Revision
+		i.lastCameraZoom = camera.Zoom
+		i.lastCameraBearing = camera.Bearing
 	}
 	return oldNode
 }
 
 func (i *Item) requestStyledTiles(tiles *roadTileSnapshot, styleZoom float64) {
 	if i.styleCompiler == nil || (i.hasStyleRequest &&
-		i.lastStyleRequestRevision == tiles.revision && i.lastStyleRequestZoom == styleZoom) {
+		i.lastStyleRequestRevision == tiles.contentRevision && i.lastStyleRequestZoom == styleZoom) {
 		return
 	}
-	i.lastStyleRequestRevision = tiles.revision
+	i.lastStyleRequestRevision = tiles.contentRevision
 	i.lastStyleRequestZoom = styleZoom
 	i.hasStyleRequest = true
-	i.styleCompiler.request(tiles.revision, styleZoom, tiles.tiles)
+	i.styleCompiler.request(tiles.contentRevision, styleZoom, tiles.tiles)
 }
 
 func (i *Item) resetRetainedSceneGraph() {

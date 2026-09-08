@@ -114,6 +114,10 @@ func compileLibertySceneTiles(tiles []loadedRoadTile, zoom float64) []loadedRoad
 		if tile.roads == nil {
 			continue
 		}
+		if tile.roads.compiled && tile.roads.compiledZoom == zoom {
+			styled = append(styled, tile)
+			continue
+		}
 		compiled := *tile.roads
 		if err := compileLibertyTile(&compiled, zoom); err != nil {
 			reportVectorError(

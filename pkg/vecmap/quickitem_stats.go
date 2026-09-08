@@ -55,7 +55,7 @@ func (i *Item) Stats() Stats {
 		stats.FallbackTiles = tiles.fallbacks
 		stats.TileError = tiles.lastError
 		statTiles := tiles.tiles
-		if styled := i.styledTiles.Load(); styled != nil && styled.tileRevision == tiles.revision {
+		if styled := i.styledTiles.Load(); styled != nil && styled.tileRevision == tiles.contentRevision {
 			statTiles = styled.tiles
 		}
 		for _, tile := range statTiles {

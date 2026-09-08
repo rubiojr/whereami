@@ -661,6 +661,30 @@ func TestSetCoverPrioritizesFallbackParents(t *testing.T) {
 	}
 }
 
+func TestSchedulerPublishPreservesRevisionForStatusOnlyChanges(t *testing.T) {
+	tile := vectorTileID{X: 3, Y: 2, Z: 4}
+	bucket := testRoadBucket(tile)
+	state := tileSchedulerState{
+		order:    []vectorTileID{tile},
+		loaded:   map[vectorTileID]*tileBucket{tile: bucket},
+		failed:   make(map[vectorTileID]tileLoadFailure),
+		inFlight: make(map[vectorTileID]runningTileLoad),
+	}
+	var snapshots []*roadTileSnapshot
+	state.publish(func(snapshot *roadTileSnapshot) { snapshots = append(snapshots, snapshot) })
+	state.inFlight[vectorTileID{X: 4, Y: 2, Z: 4}] = runningTileLoad{}
+	state.publish(func(snapshot *roadTileSnapshot) { snapshots = append(snapshots, snapshot) })
+
+	require.Len(t, snapshots, 2)
+	assert.Equal(t, snapshots[0].contentRevision, snapshots[1].contentRevision)
+	assert.Greater(t, snapshots[1].revision, snapshots[0].revision)
+	assert.NotEqual(t, snapshots[0].loading, snapshots[1].loading)
+
+	state.loaded[tile] = testRoadBucket(tile)
+	state.publish(func(snapshot *roadTileSnapshot) { snapshots = append(snapshots, snapshot) })
+	assert.Greater(t, snapshots[2].contentRevision, snapshots[1].contentRevision)
+}
+
 func TestTileSchedulerReportsFailuresWithTileContext(t *testing.T) {
 	tile := vectorTileID{X: 3, Y: 2, Z: 4}
 	messages := make(chan string, maximumTileLoadAttempts)

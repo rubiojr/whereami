@@ -12,6 +12,7 @@ type QSGTransformNode struct {
 	h *C.QSGTransformNode
 	*QSGNode
 	m11, m12, m21, m22, dx, dy float32
+	affineKnown                bool
 }
 
 // QSGClipNode clips its child scene-graph nodes to local geometry.
@@ -40,7 +41,11 @@ func newQSGTransformNode(handle *C.QSGTransformNode) *QSGTransformNode {
 
 // NewQSGTransformNode constructs a public Qt scene-graph transform node.
 func NewQSGTransformNode() *QSGTransformNode {
-	return newQSGTransformNode(C.QSGTransformNode_new())
+	node := newQSGTransformNode(C.QSGTransformNode_new())
+	if node != nil {
+		node.affineKnown = true
+	}
+	return node
 }
 
 // NewQSGNode constructs a public Qt scene-graph node.
@@ -63,6 +68,9 @@ func (node *QSGTransformNode) SetAffine(m11, m12, m21, m22, dx, dy float32) {
 	if node == nil || node.h == nil {
 		return
 	}
+	if node.affineKnown && node.m11 == m11 && node.m12 == m12 && node.m21 == m21 && node.m22 == m22 && node.dx == dx && node.dy == dy {
+		return
+	}
 	C.QSGTransformNode_setAffine(
 		node.h,
 		C.float(m11),
@@ -75,6 +83,7 @@ func (node *QSGTransformNode) SetAffine(m11, m12, m21, m22, dx, dy float32) {
 	node.m11, node.m12 = m11, m12
 	node.m21, node.m22 = m21, m22
 	node.dx, node.dy = dx, dy
+	node.affineKnown = true
 }
 
 // MapPoint maps a point through the node matrix.

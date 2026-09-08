@@ -44,19 +44,21 @@ type tileScheduler struct {
 }
 
 type tileSchedulerState struct {
-	order         []vectorTileID
-	resourceOrder []vectorTileID
-	targets       map[vectorTileID]struct{}
-	desired       map[vectorTileID]struct{}
-	continuity    map[vectorTileID]struct{}
-	rendered      []vectorTileID
-	loaded        map[vectorTileID]*tileBucket
-	failed        map[vectorTileID]tileLoadFailure
-	attempts      map[vectorTileID]int
-	inFlight      map[vectorTileID]runningTileLoad
-	pending       []vectorTileID
-	nextSerial    uint64
-	revision      uint64
+	order           []vectorTileID
+	resourceOrder   []vectorTileID
+	targets         map[vectorTileID]struct{}
+	desired         map[vectorTileID]struct{}
+	continuity      map[vectorTileID]struct{}
+	rendered        []vectorTileID
+	loaded          map[vectorTileID]*tileBucket
+	failed          map[vectorTileID]tileLoadFailure
+	attempts        map[vectorTileID]int
+	inFlight        map[vectorTileID]runningTileLoad
+	pending         []vectorTileID
+	nextSerial      uint64
+	revision        uint64
+	contentRevision uint64
+	published       []loadedRoadTile
 }
 
 func newTileScheduler(loader roadTileLoader, publish func(*roadTileSnapshot)) *tileScheduler {

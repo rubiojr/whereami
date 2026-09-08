@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"sort"
 	"strconv"
 	"testing"
@@ -77,6 +78,19 @@ func TestTessellateLibertyLinesProducesWidthAndDashes(t *testing.T) {
 	offset := offsetLibertyLine([]roadPoint{{X: 0, Y: 0}, {X: 10, Y: 0}, {X: 10, Y: 10}}, 2)
 	assert.InDelta(t, 8, offset[1].X, 1e-12)
 	assert.InDelta(t, 2, offset[1].Y, 1e-12)
+}
+
+func TestAppendLibertyDiskProducesClosedOctagon(t *testing.T) {
+	var triangles []roadPoint
+	err := appendLibertyDisk(roadPoint{X: 4, Y: 5}, 2, func(first, second, third roadPoint) error {
+		triangles = append(triangles, first, second, third)
+		return nil
+	})
+
+	require.NoError(t, err)
+	require.Len(t, triangles, libertyDiskSections*3)
+	assert.Equal(t, triangles[1], triangles[len(triangles)-1])
+	assert.InDelta(t, 8*math.Sqrt2, triangleMeshArea(triangles), 1e-12)
 }
 
 func TestLibertySpriteCacheIsBounded(t *testing.T) {

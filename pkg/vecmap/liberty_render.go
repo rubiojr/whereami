@@ -43,6 +43,7 @@ func compileLibertyTile(bucket *tileBucket, zoom float64) error {
 	if err != nil {
 		return err
 	}
+	bucket.compiled = false
 	bucket.liberty = nil
 	bucket.symbols = nil
 	primitives := make([]libertyRenderPrimitive, 0, len(layers))
@@ -125,6 +126,8 @@ func compileLibertyTile(bucket *tileBucket, zoom float64) error {
 		}
 	}
 	bucket.liberty = primitives
+	bucket.compiledZoom = zoom
+	bucket.compiled = true
 	return nil
 }
 
@@ -414,7 +417,7 @@ func closedLibertyRing(ring []roadPoint) []roadPoint {
 }
 
 func tessellateLibertyLines(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int) ([]roadPoint, error) {
-	triangles := make([]roadPoint, 0)
+	triangles := make([]roadPoint, 0, libertyLineVertexCapacity(paths, paint, maximumTriangles))
 	if paint.width <= polygonEpsilon {
 		return triangles, nil
 	}
@@ -500,6 +503,27 @@ func tessellateLibertyLines(paths [][]roadPoint, paint libertyLinePaint, maximum
 		}
 	}
 	return triangles, nil
+}
+
+func libertyLineVertexCapacity(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int) int {
+	if len(paint.dashes) > 0 {
+		return 0
+	}
+	vertices := 0
+	for _, path := range paths {
+		points := len(path)
+		if points < 2 {
+			continue
+		}
+		vertices += (points - 1) * 6
+		if paint.lineJoin == "round" && points > 2 {
+			vertices += (points - 2) * libertyDiskSections * 3
+		}
+		if paint.lineCap == "round" && path[0] != path[points-1] {
+			vertices += 2 * libertyDiskSections * 3
+		}
+	}
+	return min(vertices, maximumTriangles*3)
 }
 
 func appendLibertyMiterJoin(
@@ -683,15 +707,28 @@ func appendLibertyDisk(
 	radius float64,
 	appendTriangle func(roadPoint, roadPoint, roadPoint) error,
 ) error {
-	const sections = 8
-	for section := range sections {
-		firstAngle := float64(section) * 2 * math.Pi / sections
-		secondAngle := float64(section+1) * 2 * math.Pi / sections
-		first := roadPoint{X: center.X + math.Cos(firstAngle)*radius, Y: center.Y + math.Sin(firstAngle)*radius}
-		second := roadPoint{X: center.X + math.Cos(secondAngle)*radius, Y: center.Y + math.Sin(secondAngle)*radius}
+	for section := range libertyDiskSections {
+		firstDirection := libertyDiskDirections[section]
+		secondDirection := libertyDiskDirections[section+1]
+		first := roadPoint{X: center.X + firstDirection.X*radius, Y: center.Y + firstDirection.Y*radius}
+		second := roadPoint{X: center.X + secondDirection.X*radius, Y: center.Y + secondDirection.Y*radius}
 		if err := appendTriangle(center, first, second); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+const libertyDiskSections = 8
+
+var libertyDiskDirections = [...]roadPoint{
+	{X: 1, Y: 0},
+	{X: math.Sqrt2 / 2, Y: math.Sqrt2 / 2},
+	{X: 0, Y: 1},
+	{X: -math.Sqrt2 / 2, Y: math.Sqrt2 / 2},
+	{X: -1, Y: 0},
+	{X: -math.Sqrt2 / 2, Y: -math.Sqrt2 / 2},
+	{X: 0, Y: -1},
+	{X: math.Sqrt2 / 2, Y: -math.Sqrt2 / 2},
+	{X: 1, Y: 0},
 }

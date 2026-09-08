@@ -6,13 +6,14 @@ type loadedRoadTile struct {
 }
 
 type roadTileSnapshot struct {
-	revision  uint64
-	requested int
-	loading   int
-	errors    int
-	fallbacks int
-	lastError string
-	tiles     []loadedRoadTile
+	revision        uint64
+	contentRevision uint64
+	requested       int
+	loading         int
+	errors          int
+	fallbacks       int
+	lastError       string
+	tiles           []loadedRoadTile
 }
 
 func (s *tileSchedulerState) relevantFailures() (int, string) {
@@ -55,14 +56,19 @@ func (s *tileSchedulerState) publish(publish func(*roadTileSnapshot)) {
 	tiles, fallbacks := s.renderSelection()
 	errors, lastError := s.relevantFailures()
 	s.revision++
+	if !sameLoadedRoadTiles(tiles, s.published) {
+		s.contentRevision++
+		s.published = append(s.published[:0], tiles...)
+	}
 	snapshot := &roadTileSnapshot{
-		revision:  s.revision,
-		requested: len(s.order),
-		loading:   len(s.pending) + len(s.inFlight) + s.retryingCount(),
-		errors:    errors,
-		fallbacks: fallbacks,
-		lastError: lastError,
-		tiles:     tiles,
+		revision:        s.revision,
+		contentRevision: s.contentRevision,
+		requested:       len(s.order),
+		loading:         len(s.pending) + len(s.inFlight) + s.retryingCount(),
+		errors:          errors,
+		fallbacks:       fallbacks,
+		lastError:       lastError,
+		tiles:           tiles,
 	}
 	s.rendered = s.rendered[:0]
 	selected := make(map[vectorTileID]struct{}, len(tiles))
@@ -79,4 +85,16 @@ func (s *tileSchedulerState) publish(publish func(*roadTileSnapshot)) {
 		}
 	}
 	publish(snapshot)
+}
+
+func sameLoadedRoadTiles(first, second []loadedRoadTile) bool {
+	if len(first) != len(second) {
+		return false
+	}
+	for index := range first {
+		if first[index].id != second[index].id || first[index].roads != second[index].roads {
+			return false
+		}
+	}
+	return true
 }
