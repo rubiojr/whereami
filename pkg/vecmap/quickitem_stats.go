@@ -2,30 +2,32 @@ package vecmap
 
 // Stats reports render-thread and tile-cover activity.
 type Stats struct {
-	PaintNodeUpdates uint64
-	GeometryBuilds   uint64
-	GeometryUpdates  uint64
-	GeometryRemovals uint64
-	TransformUpdates uint64
-	TileLoaded       bool
-	TilesRequested   int
-	TilesLoaded      int
-	TilesLoading     int
-	TileErrors       int
-	FallbackTiles    int
-	RoadFeatures     int
-	RoadSegments     int
-	LandFeatures     int
-	LandTriangles    int
-	WaterFeatures    int
-	WaterTriangles   int
-	LibertyLayers    int
-	LibertyTriangles int
-	SymbolCandidates int
-	SDFLabels        int
-	SDFAtlasGlyphs   int
-	RasterTiles      int
-	TileError        string
+	PaintNodeUpdates    uint64
+	GeometryBuilds      uint64
+	GeometryUpdates     uint64
+	GeometryRemovals    uint64
+	BasemapNodeBuilds   uint64
+	BasemapNodeRemovals uint64
+	TransformUpdates    uint64
+	TileLoaded          bool
+	TilesRequested      int
+	TilesLoaded         int
+	TilesLoading        int
+	TileErrors          int
+	FallbackTiles       int
+	RoadFeatures        int
+	RoadSegments        int
+	LandFeatures        int
+	LandTriangles       int
+	WaterFeatures       int
+	WaterTriangles      int
+	LibertyLayers       int
+	LibertyTriangles    int
+	SymbolCandidates    int
+	SDFLabels           int
+	SDFAtlasGlyphs      int
+	RasterTiles         int
+	TileError           string
 }
 
 // Stats returns atomic counters that distinguish retained-node reuse from
@@ -38,13 +40,15 @@ func (i *Item) Stats() Stats {
 		return *final
 	}
 	stats := Stats{
-		PaintNodeUpdates: i.paintNodeUpdates.Load(),
-		GeometryBuilds:   i.geometryBuilds.Load(),
-		GeometryUpdates:  i.geometryUpdates.Load(),
-		GeometryRemovals: i.geometryRemovals.Load(),
-		TransformUpdates: i.transformUpdates.Load(),
-		SDFLabels:        int(i.sdfLabels.Load()),
-		SDFAtlasGlyphs:   int(i.sdfAtlasGlyphs.Load()),
+		PaintNodeUpdates:    i.paintNodeUpdates.Load(),
+		GeometryBuilds:      i.geometryBuilds.Load(),
+		GeometryUpdates:     i.geometryUpdates.Load(),
+		GeometryRemovals:    i.geometryRemovals.Load(),
+		BasemapNodeBuilds:   i.basemapNodeBuilds.Load(),
+		BasemapNodeRemovals: i.basemapNodeRemovals.Load(),
+		TransformUpdates:    i.transformUpdates.Load(),
+		SDFLabels:           int(i.sdfLabels.Load()),
+		SDFAtlasGlyphs:      int(i.sdfAtlasGlyphs.Load()),
 	}
 	if tiles := i.tiles.Load(); tiles != nil {
 		stats.TileLoaded = len(tiles.tiles) > 0

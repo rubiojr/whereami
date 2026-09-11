@@ -27,20 +27,22 @@ type Item struct {
 	quickItem *quick.QQuickItem
 	camera    *qmlCamera
 
-	paintNodeUpdates atomic.Uint64
-	geometryBuilds   atomic.Uint64
-	geometryUpdates  atomic.Uint64
-	geometryRemovals atomic.Uint64
-	transformUpdates atomic.Uint64
-	sdfLabels        atomic.Int64
-	sdfAtlasGlyphs   atomic.Int64
-	tiles            atomic.Pointer[roadTileSnapshot]
-	styledTiles      atomic.Pointer[libertySceneSnapshot]
-	finalStats       atomic.Pointer[Stats]
-	scheduler        *tileScheduler
-	styleCompiler    *libertySceneCompiler
-	glyphs           *glyphManager
-	closed           atomic.Bool
+	paintNodeUpdates    atomic.Uint64
+	geometryBuilds      atomic.Uint64
+	geometryUpdates     atomic.Uint64
+	geometryRemovals    atomic.Uint64
+	basemapNodeBuilds   atomic.Uint64
+	basemapNodeRemovals atomic.Uint64
+	transformUpdates    atomic.Uint64
+	sdfLabels           atomic.Int64
+	sdfAtlasGlyphs      atomic.Int64
+	tiles               atomic.Pointer[roadTileSnapshot]
+	styledTiles         atomic.Pointer[libertySceneSnapshot]
+	finalStats          atomic.Pointer[Stats]
+	scheduler           *tileScheduler
+	styleCompiler       *libertySceneCompiler
+	glyphs              *glyphManager
+	closed              atomic.Bool
 
 	// The retained-node cache is accessed only from Qt's render thread.
 	lastWidth                 float64
@@ -58,7 +60,9 @@ type Item struct {
 	lastWorldWraps            []int
 	tileNodes                 map[vectorTileID][]retainedTileTransform
 	sceneNodes                []*quick.QSGNode
-	retainedTiles             map[vectorTileID]struct{}
+	retainedTiles             map[vectorTileID]*tileBucket
+	basemapLayers             []retainedLibertyBasemapLayer
+	retainedLiberty           bool
 	symbolTransforms          []retainedLibertySymbolTransform
 	symbolLayers              []retainedLibertySymbolLayer
 	acceptedSymbols           map[libertySymbolKey]libertyAcceptedSymbol
@@ -81,6 +85,8 @@ type Item struct {
 	sdfLayoutHasCandidates    bool
 	sdfAtlasRetry             bool
 	sdfAtlasRetryAttempts     uint8
+	basemapRetry              bool
+	basemapRetryAttempts      uint8
 }
 
 // New creates a parentless C++-owned item on Qt's GUI thread. A QGuiApplication

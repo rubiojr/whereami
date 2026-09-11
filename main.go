@@ -285,12 +285,14 @@ func main() {
 		vectorMap.item.Close()
 		stats := vectorMap.item.Stats()
 		logger.Debug(
-			"Go vector %s map: paint updates=%d geometry builds=%d geometry updates=%d geometry removals=%d transform updates=%d tiles requested=%d loaded=%d fallback=%d loading=%d errors=%d Liberty layers=%d triangles=%d symbols=%d SDF labels=%d atlas glyphs=%d rasters=%d land features=%d triangles=%d water features=%d triangles=%d road features=%d segments=%d",
+			"Go vector %s map: paint updates=%d geometry builds=%d geometry updates=%d geometry removals=%d basemap nodes built=%d removed=%d transform updates=%d tiles requested=%d loaded=%d fallback=%d loading=%d errors=%d Liberty layers=%d triangles=%d symbols=%d SDF labels=%d atlas glyphs=%d rasters=%d land features=%d triangles=%d water features=%d triangles=%d road features=%d segments=%d",
 			vectorMap.name,
 			stats.PaintNodeUpdates,
 			stats.GeometryBuilds,
 			stats.GeometryUpdates,
 			stats.GeometryRemovals,
+			stats.BasemapNodeBuilds,
+			stats.BasemapNodeRemovals,
 			stats.TransformUpdates,
 			stats.TilesRequested,
 			stats.TilesLoaded,

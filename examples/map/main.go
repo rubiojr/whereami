@@ -53,5 +53,14 @@ func main() {
 	engine.Delete()
 	item.Close()
 	stats := item.Stats()
-	log.Printf("tiles=%d/%d loading=%d errors=%d labels=%d", stats.TilesLoaded, stats.TilesRequested, stats.TilesLoading, stats.TileErrors, stats.SDFLabels)
+	log.Printf(
+		"tiles=%d/%d loading=%d errors=%d labels=%d basemap_nodes=%d/%d",
+		stats.TilesLoaded,
+		stats.TilesRequested,
+		stats.TilesLoading,
+		stats.TileErrors,
+		stats.SDFLabels,
+		stats.BasemapNodeBuilds,
+		stats.BasemapNodeRemovals,
+	)
 }

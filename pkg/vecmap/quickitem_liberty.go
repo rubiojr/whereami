@@ -25,48 +25,174 @@ func (i *Item) appendLibertyScene(root *quick.QSGNode, camera Camera, scene *lib
 	}
 	glyphRevision, sdfScene, activeSDFAtlas, acceptedSymbols := i.prepareLibertySymbols(camera, scene)
 	wraps := libertyWorldWraps(camera)
+	failedTiles := make(map[vectorTileID]struct{})
+	layerRootFailure := false
 	for _, layer := range layers {
-		if layer.kind == "symbol" {
-			layerRoot := quick.NewQSGNode()
-			if layerRoot == nil {
-				continue
+		layerRoot := quick.NewQSGNode()
+		if layerRoot == nil {
+			layerRootFailure = true
+			for _, tile := range tiles {
+				failedTiles[tile.id] = struct{}{}
 			}
-			root.AppendChildNode(layerRoot)
-			i.sceneNodes = append(i.sceneNodes, layerRoot)
+			continue
+		}
+		root.AppendChildNode(layerRoot)
+		i.sceneNodes = append(i.sceneNodes, layerRoot)
+		if layer.kind == "symbol" {
 			symbolLayer := retainedLibertySymbolLayer{root: layerRoot, order: layer.order}
 			i.appendLibertySymbolLayerNodes(&symbolLayer, camera, tiles, wraps, acceptedSymbols, sdfScene, activeSDFAtlas)
 			i.symbolLayers = append(i.symbolLayers, symbolLayer)
 			continue
 		}
+		retainedLayer := retainedLibertyBasemapLayer{
+			layer: layer,
+			root:  layerRoot,
+			nodes: make(map[libertyLayerTileKey]*quick.QSGTransformNode),
+		}
 		for _, tile := range tiles {
 			if tile.roads == nil {
 				continue
 			}
-			if layer.kind == "raster" {
-				for _, wrap := range wraps {
-					node := newLibertyRasterTileNode(i.quickItem, camera, tile.id, wrap, tile.roads, layer, styleZoom)
-					if node == nil {
-						continue
-					}
-					root.AppendChildNode(node.QSGNode)
-					i.sceneNodes = append(i.sceneNodes, node.QSGNode)
-					i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
-				}
-				continue
-			}
 			for _, wrap := range wraps {
-				node := newLibertyLayerTileNode(i.quickItem, camera, tile.id, wrap, tile.roads.liberty, layer.order)
+				node, complete := i.newLibertyBasemapTileNode(camera, tile, wrap, layer, styleZoom)
+				if !complete {
+					failedTiles[tile.id] = struct{}{}
+				}
 				if node == nil {
 					continue
 				}
-				root.AppendChildNode(node.QSGNode)
-				i.sceneNodes = append(i.sceneNodes, node.QSGNode)
+				key := libertyLayerTileKey{tile: tile.id, wrap: wrap}
+				layerRoot.AppendChildNode(node.QSGNode)
+				retainedLayer.nodes[key] = node
+				retainedLayer.order = append(retainedLayer.order, key)
+				i.basemapNodeBuilds.Add(1)
 				i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
 			}
+		}
+		i.basemapLayers = append(i.basemapLayers, retainedLayer)
+	}
+	i.retainedLiberty = !layerRootFailure
+	if i.recordBasemapFailures(failedTiles, layerRootFailure) {
+		for tile := range failedTiles {
+			delete(i.retainedTiles, tile)
 		}
 	}
 	i.recordSDFStats(sdfScene, activeSDFAtlas)
 	return glyphRevision
+}
+
+func (i *Item) newLibertyBasemapTileNode(
+	camera Camera,
+	tile loadedRoadTile,
+	wrap int,
+	layer compiledLibertyLayer,
+	styleZoom float64,
+) (*quick.QSGTransformNode, bool) {
+	if layer.kind == "raster" {
+		if len(tile.roads.raster.rgba) == 0 || !layer.visibleAt(styleZoom) || libertyLayerHidden(layer) {
+			return nil, true
+		}
+		node := newLibertyRasterTileNode(i.quickItem, camera, tile.id, wrap, tile.roads, layer, styleZoom)
+		return node, node != nil
+	}
+	return newLibertyLayerTileNode(i.quickItem, camera, tile.id, wrap, tile.roads.liberty, layer.order)
+}
+
+func (i *Item) reconcileLibertyTiles(
+	root *quick.QSGNode,
+	camera Camera,
+	scene *libertySceneSnapshot,
+) uint64 {
+	desiredTiles := make(map[vectorTileID]loadedRoadTile, len(scene.tiles))
+	changed := make(map[vectorTileID]struct{})
+	failedTiles := make(map[vectorTileID]struct{})
+	for _, tile := range scene.tiles {
+		if tile.roads == nil {
+			continue
+		}
+		desiredTiles[tile.id] = tile
+		if i.retainedTiles[tile.id] != tile.contentIdentity() {
+			changed[tile.id] = struct{}{}
+		}
+	}
+	for tile := range i.retainedTiles {
+		if _, exists := desiredTiles[tile]; !exists {
+			changed[tile] = struct{}{}
+		}
+	}
+	wraps := libertyWorldWraps(camera)
+	i.tileNodes = make(map[vectorTileID][]retainedTileTransform, len(desiredTiles))
+	for layerIndex := range i.basemapLayers {
+		layer := &i.basemapLayers[layerIndex]
+		for key, node := range layer.nodes {
+			if _, replace := changed[key.tile]; !replace {
+				continue
+			}
+			layer.root.RemoveChildNode(node.QSGNode)
+			node.Delete()
+			delete(layer.nodes, key)
+			i.basemapNodeRemovals.Add(1)
+		}
+		for _, key := range layer.order {
+			if node := layer.nodes[key]; node != nil {
+				layer.root.RemoveChildNode(node.QSGNode)
+			}
+		}
+		for _, tile := range scene.tiles {
+			if _, rebuild := changed[tile.id]; !rebuild || tile.roads == nil {
+				continue
+			}
+			for _, wrap := range wraps {
+				node, complete := i.newLibertyBasemapTileNode(camera, tile, wrap, layer.layer, scene.styleZoom)
+				if !complete {
+					failedTiles[tile.id] = struct{}{}
+				}
+				if node != nil {
+					layer.nodes[libertyLayerTileKey{tile: tile.id, wrap: wrap}] = node
+					i.basemapNodeBuilds.Add(1)
+				}
+			}
+		}
+		layer.order = layer.order[:0]
+		for _, tile := range scene.tiles {
+			for _, wrap := range wraps {
+				key := libertyLayerTileKey{tile: tile.id, wrap: wrap}
+				node := layer.nodes[key]
+				if node == nil {
+					continue
+				}
+				layer.root.AppendChildNode(node.QSGNode)
+				layer.order = append(layer.order, key)
+				i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
+			}
+		}
+	}
+	retryFailures := i.recordBasemapFailures(failedTiles, false)
+	i.retainedTiles = make(map[vectorTileID]*tileBucket, len(desiredTiles))
+	for tile, loaded := range desiredTiles {
+		if _, failed := failedTiles[tile]; failed && retryFailures {
+			continue
+		}
+		i.retainedTiles[tile] = loaded.contentIdentity()
+	}
+	return i.reconcileLibertyGlyphNodes(root, camera, scene)
+}
+
+func (i *Item) recordBasemapFailures(failed map[vectorTileID]struct{}, layerRootFailure bool) bool {
+	if len(failed) == 0 && !layerRootFailure {
+		i.basemapRetry = false
+		i.basemapRetryAttempts = 0
+		return false
+	}
+	if i.basemapRetryAttempts == 0 {
+		i.basemapRetry = true
+		i.basemapRetryAttempts = 1
+		queueQuickItemUpdate(i.quickItem)
+		return true
+	}
+	i.basemapRetry = false
+	i.basemapRetryAttempts = 0
+	return false
 }
 
 func (i *Item) prepareLibertySymbols(

@@ -12,6 +12,18 @@ type retainedTileTransform struct {
 	wrap int
 }
 
+type libertyLayerTileKey struct {
+	tile vectorTileID
+	wrap int
+}
+
+type retainedLibertyBasemapLayer struct {
+	layer compiledLibertyLayer
+	root  *quick.QSGNode
+	nodes map[libertyLayerTileKey]*quick.QSGTransformNode
+	order []libertyLayerTileKey
+}
+
 func (i *Item) updatePaintNode(
 	_ func(*quick.QSGNode, *quick.QQuickItem__UpdatePaintNodeData) *quick.QSGNode,
 	oldNode *quick.QSGNode,
@@ -61,14 +73,14 @@ func (i *Item) updatePaintNode(
 	glyphRevision := i.glyphs.currentRevision()
 	glyphsChanged := glyphRevision != i.lastGlyphRevision
 	reconciledScene := false
-	if scene != nil && libertySceneNeedsFullReconcile(
+	if scene != nil && (libertySceneNeedsReconcile(
 		sceneChanged,
 		createdRoot,
 		viewportChanged,
 		worldWrapsChanged,
 		glyphsChanged,
 		i.sdfAtlasRetry,
-	) {
+	) || i.basemapRetry) {
 		tilesChanged := scene.tileRevision != i.lastTileRevision
 		styleZoomChanged := scene.styleZoom != i.lastStyleZoom
 		consumedGlyphRevision := i.reconcileTileNodes(oldNode, camera, scene)
@@ -131,7 +143,7 @@ func (i *Item) updatePaintNode(
 	return oldNode
 }
 
-func libertySceneNeedsFullReconcile(
+func libertySceneNeedsReconcile(
 	sceneChanged, createdRoot, viewportChanged bool,
 	worldWrapsChanged, glyphsChanged, sdfAtlasRetry bool,
 ) bool {
@@ -153,13 +165,15 @@ func (i *Item) requestStyledTiles(tiles *roadTileSnapshot, styleZoom float64) {
 func (i *Item) resetRetainedSceneGraph() {
 	i.clearRetainedSceneGraph()
 	i.tileNodes = make(map[vectorTileID][]retainedTileTransform)
-	i.retainedTiles = make(map[vectorTileID]struct{})
+	i.retainedTiles = make(map[vectorTileID]*tileBucket)
 }
 
 func (i *Item) clearRetainedSceneGraph() {
 	i.sceneNodes = nil
 	i.symbolTransforms = nil
 	i.symbolLayers = nil
+	i.basemapLayers = nil
+	i.retainedLiberty = false
 	i.acceptedSymbols = nil
 	i.renderedSDFScene = nil
 	i.hasSymbolPlacement = false
@@ -170,6 +184,8 @@ func (i *Item) clearRetainedSceneGraph() {
 	i.sdfAtlasGeneration = 0
 	i.sdfAtlasRetry = false
 	i.sdfAtlasRetryAttempts = 0
+	i.basemapRetry = false
+	i.basemapRetryAttempts = 0
 }
 
 func (i *Item) reconcileTileNodes(root *quick.QSGNode, camera Camera, scene *libertySceneSnapshot) uint64 {
@@ -178,7 +194,7 @@ func (i *Item) reconcileTileNodes(root *quick.QSGNode, camera Camera, scene *lib
 	desired := make(map[vectorTileID]*tileBucket, len(tiles))
 	for _, tile := range tiles {
 		if tile.roads != nil {
-			desired[tile.id] = tile.roads
+			desired[tile.id] = tile.contentIdentity()
 		}
 	}
 	for tile := range i.retainedTiles {
@@ -187,9 +203,18 @@ func (i *Item) reconcileTileNodes(root *quick.QSGNode, camera Camera, scene *lib
 		}
 	}
 	for tile := range desired {
-		if _, exists := i.retainedTiles[tile]; !exists {
+		retained, exists := i.retainedTiles[tile]
+		if !exists {
 			i.geometryBuilds.Add(1)
+		} else if retained != desired[tile] {
+			i.geometryUpdates.Add(1)
 		}
+	}
+	if i.canReconcileLibertyTiles(scene, camera) {
+		return i.reconcileLibertyTiles(root, camera, scene)
+	}
+	for _, nodes := range i.tileNodes {
+		i.basemapNodeRemovals.Add(uint64(len(nodes)))
 	}
 	for _, node := range i.sceneNodes {
 		root.RemoveChildNode(node)
@@ -199,12 +224,14 @@ func (i *Item) reconcileTileNodes(root *quick.QSGNode, camera Camera, scene *lib
 	i.tileNodes = make(map[vectorTileID][]retainedTileTransform, len(desired))
 	i.symbolTransforms = i.symbolTransforms[:0]
 	i.symbolLayers = i.symbolLayers[:0]
+	i.basemapLayers = i.basemapLayers[:0]
+	i.retainedLiberty = false
 	i.acceptedSymbols = nil
 	i.renderedSDFScene = nil
 	i.hasSymbolPlacement = false
-	i.retainedTiles = make(map[vectorTileID]struct{}, len(desired))
+	i.retainedTiles = make(map[vectorTileID]*tileBucket, len(desired))
 	for tile := range desired {
-		i.retainedTiles[tile] = struct{}{}
+		i.retainedTiles[tile] = desired[tile]
 	}
 
 	if hasLibertyPrimitives(tiles) {
@@ -224,9 +251,15 @@ func (i *Item) reconcileTileNodes(root *quick.QSGNode, camera Camera, scene *lib
 			root.AppendChildNode(node.QSGNode)
 			i.sceneNodes = append(i.sceneNodes, node.QSGNode)
 			i.tileNodes[tile.id] = append(i.tileNodes[tile.id], retainedTileTransform{node: node, wrap: wrap})
+			i.basemapNodeBuilds.Add(1)
 		}
 	}
 	return consumedGlyphRevision
+}
+
+func (i *Item) canReconcileLibertyTiles(scene *libertySceneSnapshot, camera Camera) bool {
+	return i.retainedLiberty && scene != nil && hasLibertyPrimitives(scene.tiles) &&
+		scene.styleZoom == i.lastStyleZoom && slices.Equal(libertyWorldWraps(camera), i.lastWorldWraps)
 }
 
 func hasLibertyPrimitives(tiles []loadedRoadTile) bool {

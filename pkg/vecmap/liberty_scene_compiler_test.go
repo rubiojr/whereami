@@ -38,6 +38,17 @@ func TestCompileLibertySceneTilesReusesMatchingCompiledZoom(t *testing.T) {
 	assert.Same(t, bucket, compiled[0].roads)
 }
 
+func TestCompileLibertySceneTilesPreservesSourceIdentityAtFractionalZoom(t *testing.T) {
+	bucket := &tileBucket{tile: vectorTileID{Z: 4}, sourceLayers: map[string][]vectorFeature{}}
+	require.NoError(t, compileLibertyTile(bucket, 4))
+
+	compiled := compileLibertySceneTiles([]loadedRoadTile{{id: bucket.tile, roads: bucket}}, 4.5)
+
+	require.Len(t, compiled, 1)
+	assert.NotSame(t, bucket, compiled[0].roads)
+	assert.Same(t, bucket, compiled[0].contentIdentity())
+}
+
 func TestLibertyPrimitivesAtOrderReturnsContiguousLayer(t *testing.T) {
 	primitives := []libertyRenderPrimitive{{order: 1}, {order: 3}, {order: 3}, {order: 8}}
 

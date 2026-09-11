@@ -1,8 +1,16 @@
 package vecmap
 
 type loadedRoadTile struct {
-	id    vectorTileID
-	roads *tileBucket
+	id     vectorTileID
+	roads  *tileBucket
+	source *tileBucket
+}
+
+func (t loadedRoadTile) contentIdentity() *tileBucket {
+	if t.source != nil {
+		return t.source
+	}
+	return t.roads
 }
 
 type roadTileSnapshot struct {

@@ -114,7 +114,9 @@ func compileLibertySceneTiles(tiles []loadedRoadTile, zoom float64) []loadedRoad
 		if tile.roads == nil {
 			continue
 		}
+		source := tile.contentIdentity()
 		if tile.roads.compiled && tile.roads.compiledZoom == zoom {
+			tile.source = source
 			styled = append(styled, tile)
 			continue
 		}
@@ -131,7 +133,7 @@ func compileLibertySceneTiles(tiles []loadedRoadTile, zoom float64) []loadedRoad
 			compiled.liberty = tile.roads.liberty
 			compiled.symbols = tile.roads.symbols
 		}
-		styled = append(styled, loadedRoadTile{id: tile.id, roads: &compiled})
+		styled = append(styled, loadedRoadTile{id: tile.id, roads: &compiled, source: source})
 	}
 	return styled
 }

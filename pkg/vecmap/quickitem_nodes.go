@@ -60,22 +60,23 @@ func newLibertyLayerTileNode(
 	wrap int,
 	primitives []libertyRenderPrimitive,
 	order int,
-) *quick.QSGTransformNode {
+) (*quick.QSGTransformNode, bool) {
 	matching := libertyPrimitivesAtOrder(primitives, order)
 	if len(matching) == 0 {
-		return nil
+		return nil, true
 	}
 	transformNode := quick.NewQSGTransformNode()
 	if transformNode == nil {
-		return nil
+		return nil, false
 	}
 	clipNode := quick.NewQSGClipNode()
 	if clipNode == nil {
 		transformNode.Delete()
-		return nil
+		return nil, false
 	}
 	clipNode.SetRect(0, 0, tileSize, tileSize)
 	transformNode.AppendChildNode(clipNode.QSGNode)
+	complete := true
 	for _, primitive := range matching {
 		if primitive.patternName != "" {
 			sprite, exists := libertySprite(primitive.patternName, mapColor{red: 255, green: 255, blue: 255, alpha: 255}, 1)
@@ -99,18 +100,26 @@ func newLibertyLayerTileNode(
 			)
 			if patternNode != nil {
 				clipNode.AppendChildNode(patternNode)
+			} else {
+				complete = false
 			}
 			continue
 		}
-		appendGeometryNode(
+		if !appendGeometryNode(
 			clipNode.QSGNode,
 			primitive.triangles,
 			quick.QSGGeometry__DrawTriangles,
 			primitive.color,
-		)
+		) {
+			complete = false
+		}
+	}
+	if !complete {
+		transformNode.Delete()
+		return nil, false
 	}
 	setWrappedTileTransform(transformNode, camera, tile, wrap)
-	return transformNode
+	return transformNode, true
 }
 
 func libertyPrimitivesAtOrder(primitives []libertyRenderPrimitive, order int) []libertyRenderPrimitive {
@@ -155,31 +164,41 @@ var (
 	mapRoadColor       = mapColor{red: 121, green: 220, blue: 255, alpha: 255}
 )
 
-func appendGeometryNode(parent *quick.QSGNode, points []roadPoint, mode quick.QSGGeometry__DrawingMode, colorValue mapColor) {
+func appendGeometryNode(parent *quick.QSGNode, points []roadPoint, mode quick.QSGGeometry__DrawingMode, colorValue mapColor) bool {
 	if len(points) == 0 {
-		return
+		return true
 	}
 	if mode == quick.QSGGeometry__DrawTriangles && len(points)%3 != 0 ||
 		mode == quick.QSGGeometry__DrawLines && len(points)%2 != 0 {
-		return
+		return false
 	}
 	geometry := quick.NewQSGPointGeometry(pointVertices(points))
 	if geometry == nil {
-		return
+		return false
 	}
 	geometry.SetDrawingMode(uint(mode))
 
 	material := quick.NewQSGFlatColorMaterial()
+	if material == nil {
+		geometry.Delete()
+		return false
+	}
 	color := qt.NewQColor11(colorValue.red, colorValue.green, colorValue.blue, colorValue.alpha)
 	material.SetColor(color)
 	color.Delete()
 
 	node := quick.NewQSGGeometryNode()
+	if node == nil {
+		geometry.Delete()
+		material.Delete()
+		return false
+	}
 	node.SetGeometry(geometry)
 	node.SetFlag(quick.QSGNode__OwnsGeometry)
 	node.SetMaterial(material.QSGMaterial)
 	node.SetFlag(quick.QSGNode__OwnsMaterial)
 	parent.AppendChildNode(node.QSGNode)
+	return true
 }
 
 func setWrappedTileTransform(node *quick.QSGTransformNode, camera Camera, tile vectorTileID, wrap int) {

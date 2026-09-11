@@ -63,10 +63,10 @@ func TestAppendGeometryNodeRejectsIncompletePrimitives(t *testing.T) {
 }
 
 func TestViewportChangeDoesNotRequireFullSceneReconcile(t *testing.T) {
-	assert.False(t, libertySceneNeedsFullReconcile(false, false, true, false, false, false))
-	assert.False(t, libertySceneNeedsFullReconcile(false, false, false, false, true, true))
-	assert.True(t, libertySceneNeedsFullReconcile(true, false, false, false, false, false))
-	assert.True(t, libertySceneNeedsFullReconcile(false, false, false, true, false, false))
+	assert.False(t, libertySceneNeedsReconcile(false, false, true, false, false, false))
+	assert.False(t, libertySceneNeedsReconcile(false, false, false, false, true, true))
+	assert.True(t, libertySceneNeedsReconcile(true, false, false, false, false, false))
+	assert.True(t, libertySceneNeedsReconcile(false, false, false, true, false, false))
 }
 
 func TestLibertyWorldWrapsCoverWideLowZoomViewport(t *testing.T) {
@@ -130,7 +130,7 @@ func TestResetRetainedSceneGraphDropsInvalidatedPointers(t *testing.T) {
 		sceneNodes:       []*quick.QSGNode{{}},
 		symbolTransforms: []retainedLibertySymbolTransform{{node: &quick.QSGTransformNode{}}},
 		tileNodes:        map[vectorTileID][]retainedTileTransform{{}: {{}}},
-		retainedTiles:    map[vectorTileID]struct{}{{}: {}},
+		retainedTiles:    map[vectorTileID]*tileBucket{{}: {}},
 	}
 
 	item.resetRetainedSceneGraph()
@@ -144,6 +144,66 @@ func TestResetRetainedSceneGraphDropsInvalidatedPointers(t *testing.T) {
 func TestRasterSelectsLibertyRenderer(t *testing.T) {
 	tiles := []loadedRoadTile{{roads: &tileBucket{raster: naturalEarthRaster{rgba: []byte{1}}}}}
 	assert.True(t, hasLibertyPrimitives(tiles))
+}
+
+func TestReconcileLibertyTilesRetainsUnchangedNativeNodes(t *testing.T) {
+	root := quick.NewQSGNode()
+	require.NotNil(t, root)
+	defer root.Delete()
+	camera := NewCamera(Coordinate{}, 4, 0, 256, 256)
+	firstID := vectorTileID{X: 7, Y: 7, Z: 4}
+	secondID := vectorTileID{X: 8, Y: 7, Z: 4}
+	triangle := []roadPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 0, Y: 1}}
+	first := &tileBucket{tile: firstID, liberty: []libertyRenderPrimitive{{order: 0, triangles: triangle, color: mapColor{alpha: 255}}}}
+	second := &tileBucket{tile: secondID, liberty: []libertyRenderPrimitive{{order: 0, triangles: triangle, color: mapColor{alpha: 255}}}}
+	item := &Item{
+		retainedTiles: make(map[vectorTileID]*tileBucket),
+		tileNodes:     make(map[vectorTileID][]retainedTileTransform),
+	}
+	firstScene := &libertySceneSnapshot{tileRevision: 1, styleZoom: 4, tiles: []loadedRoadTile{{id: firstID, roads: first}}}
+	item.appendLibertyScene(root, camera, firstScene)
+	item.retainedTiles[firstID] = first
+	item.lastStyleZoom = 4
+	item.lastWorldWraps = libertyWorldWraps(camera)
+	firstNode := item.libertyBasemapNode(0, libertyLayerTileKey{tile: firstID, wrap: 0})
+	require.NotNil(t, firstNode)
+	initialBuilds := item.basemapNodeBuilds.Load()
+
+	secondScene := &libertySceneSnapshot{
+		tileRevision: 2,
+		styleZoom:    4,
+		tiles: []loadedRoadTile{
+			{id: firstID, roads: first},
+			{id: secondID, roads: second},
+		},
+	}
+	item.reconcileTileNodes(root, camera, secondScene)
+	require.Same(t, firstNode, item.libertyBasemapNode(0, libertyLayerTileKey{tile: firstID, wrap: 0}))
+	assert.Equal(t, initialBuilds+1, item.basemapNodeBuilds.Load())
+	assert.Zero(t, item.basemapNodeRemovals.Load())
+	secondNode := item.libertyBasemapNode(0, libertyLayerTileKey{tile: secondID, wrap: 0})
+	require.NotNil(t, secondNode)
+
+	replacement := &tileBucket{tile: secondID, liberty: second.liberty}
+	replacementScene := &libertySceneSnapshot{
+		tileRevision: 3,
+		styleZoom:    4,
+		tiles:        []loadedRoadTile{{id: secondID, roads: replacement}},
+	}
+	item.reconcileTileNodes(root, camera, replacementScene)
+	assert.NotSame(t, secondNode, item.libertyBasemapNode(0, libertyLayerTileKey{tile: secondID, wrap: 0}))
+	assert.Nil(t, item.libertyBasemapNode(0, libertyLayerTileKey{tile: firstID, wrap: 0}))
+	assert.Equal(t, initialBuilds+2, item.basemapNodeBuilds.Load())
+	assert.Equal(t, uint64(2), item.basemapNodeRemovals.Load())
+}
+
+func (i *Item) libertyBasemapNode(order int, key libertyLayerTileKey) *quick.QSGTransformNode {
+	for index := range i.basemapLayers {
+		if i.basemapLayers[index].layer.order == order {
+			return i.basemapLayers[index].nodes[key]
+		}
+	}
+	return nil
 }
 
 func TestLibertyPatternPhaseContinuesAcrossTilesAndWraps(t *testing.T) {
