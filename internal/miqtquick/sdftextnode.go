@@ -1,6 +1,8 @@
 package quick
 
 /*
+#cgo noescape QSGSDFAtlasNode_newTextNode
+#cgo nocallback QSGSDFAtlasNode_newTextNode
 #include "sdftextnode.h"
 */
 import "C"
@@ -18,8 +20,7 @@ type QSGSDFAtlas struct {
 
 // NewQSGSDFAtlas uploads a single-channel SDF atlas for reuse by text nodes.
 func NewQSGSDFAtlas(item *QQuickItem, pixels []byte, width, height int) *QSGSDFAtlas {
-	const maximumInt = int(^uint(0) >> 1)
-	if item == nil || width <= 0 || height <= 0 || width > maximumInt/height || len(pixels) != width*height {
+	if item == nil || !validImageSize(len(pixels), width, height, 1) {
 		return nil
 	}
 	atlas := C.QQuickItem_newSDFAtlasNode(
@@ -51,24 +52,28 @@ func (a *QSGSDFAtlas) NewTextNode(
 	color, haloColor [4]int,
 	fontScale, haloWidth, haloBlur float32,
 ) *QSGNode {
-	if a == nil || a.h == nil || len(vertices) == 0 || len(vertices)%24 != 0 || fontScale <= 0 {
+	if a == nil || a.h == nil || len(vertices) == 0 || len(vertices)%24 != 0 ||
+		len(vertices)/4 > maxGeometryVertices || fontScale <= 0 {
 		return nil
 	}
-	colorValues := [4]C.int{C.int(color[0]), C.int(color[1]), C.int(color[2]), C.int(color[3])}
-	haloValues := [4]C.int{C.int(haloColor[0]), C.int(haloColor[1]), C.int(haloColor[2]), C.int(haloColor[3])}
+	passes, count := sdfTextPasses(color, haloColor, fontScale, haloWidth, haloBlur)
+	var buffers [2]*C.float
 	node := C.QSGSDFAtlasNode_newTextNode(
 		a.h,
-		(*C.float)(unsafe.Pointer(&vertices[0])),
+		&buffers[0],
 		C.int(len(vertices)/4),
-		(*C.int)(unsafe.Pointer(&colorValues[0])),
-		(*C.int)(unsafe.Pointer(&haloValues[0])),
-		C.float(fontScale),
-		C.float(haloWidth),
-		C.float(haloBlur),
+		(*C.float)(unsafe.Pointer(&passes[0][0])),
+		C.int(count),
 	)
+	if node != nil {
+		// Qt owns the buffers, but cannot render them until this call returns.
+		// Go's bulk copy uses the runtime's architecture-specific implementation.
+		for _, buffer := range buffers[:count] {
+			copy(unsafe.Slice((*float32)(unsafe.Pointer(buffer)), len(vertices)), vertices)
+		}
+	}
 	runtime.KeepAlive(a)
 	runtime.KeepAlive(vertices)
-	runtime.KeepAlive(colorValues)
-	runtime.KeepAlive(haloValues)
+	runtime.KeepAlive(passes)
 	return newQSGNode(node)
 }

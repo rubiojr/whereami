@@ -11,12 +11,12 @@
 #include <QSGNode>
 #include <QSGTexture>
 #include <QtGlobal>
-#include <QVector4D>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstring>
 #include <functional>
-#include <iterator>
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
 #error "The SDF text renderer requires Qt 6.5 or newer"
@@ -26,20 +26,12 @@ namespace {
 constexpr int matrixOffset = 0;
 constexpr int opacityOffset = 64;
 constexpr int colorOffset = 80;
-constexpr int haloColorOffset = 96;
-constexpr int fontScaleOffset = 112;
-constexpr int haloWidthOffset = 116;
-constexpr int haloBlurOffset = 120;
 constexpr int devicePixelRatioOffset = 124;
 constexpr int uniformBufferSize = 128;
 
-QVector4D normalizedColor(const int* color) {
-    return QVector4D(
-        std::clamp(color[0], 0, 255) / 255.0f,
-        std::clamp(color[1], 0, 255) / 255.0f,
-        std::clamp(color[2], 0, 255) / 255.0f,
-        std::clamp(color[3], 0, 255) / 255.0f);
-}
+static_assert(sizeof(QSGGeometry::TexturedPoint2D) == 4 * sizeof(float));
+static_assert(offsetof(QSGGeometry::TexturedPoint2D, tx) == 2 * sizeof(float));
+static_assert(offsetof(QSGGeometry::TexturedPoint2D, ty) == 3 * sizeof(float));
 
 class SDFTextMaterial;
 
@@ -61,19 +53,9 @@ public:
 
 class SDFTextMaterial final : public QSGMaterial {
 public:
-    SDFTextMaterial(
-        QSGTexture* texture,
-        const QVector4D& color,
-        const QVector4D& haloColor,
-        float fontScale,
-        float haloWidth,
-        float haloBlur)
-        : texture(texture)
-        , color(color)
-        , haloColor(haloColor)
-        , fontScale(fontScale)
-        , haloWidth(haloWidth)
-        , haloBlur(haloBlur) {
+    SDFTextMaterial(QSGTexture* texture, const float* data)
+        : texture(texture) {
+        std::copy_n(data, values.size(), values.begin());
         setFlag(Blending);
     }
 
@@ -90,31 +72,17 @@ public:
         const auto* other = static_cast<const SDFTextMaterial*>(material);
         if (texture != other->texture)
             return std::less<QSGTexture*>{}(texture, other->texture) ? -1 : 1;
-        const float values[] = {
-            color.x(), color.y(), color.z(), color.w(),
-            haloColor.x(), haloColor.y(), haloColor.z(), haloColor.w(),
-            fontScale, haloWidth, haloBlur,
-        };
-        const float otherValues[] = {
-            other->color.x(), other->color.y(), other->color.z(), other->color.w(),
-            other->haloColor.x(), other->haloColor.y(), other->haloColor.z(), other->haloColor.w(),
-            other->fontScale, other->haloWidth, other->haloBlur,
-        };
-        for (size_t index = 0; index < std::size(values); ++index) {
-            if (values[index] < otherValues[index])
+        for (size_t index = 0; index < values.size(); ++index) {
+            if (values[index] < other->values[index])
                 return -1;
-            if (values[index] > otherValues[index])
+            if (values[index] > other->values[index])
                 return 1;
         }
         return 0;
     }
 
     QSGTexture* texture;
-    QVector4D color;
-    QVector4D haloColor;
-    float fontScale;
-    float haloWidth;
-    float haloBlur;
+    std::array<float, 11> values;
 };
 
 bool SDFTextShader::updateUniformData(RenderState& state, QSGMaterial* newMaterial, QSGMaterial* oldMaterial) {
@@ -132,17 +100,7 @@ bool SDFTextShader::updateUniformData(RenderState& state, QSGMaterial* newMateri
         std::memcpy(buffer->data() + opacityOffset, &opacity, sizeof(opacity));
     }
     const auto* material = static_cast<const SDFTextMaterial*>(newMaterial);
-    const float color[] = {
-        material->color.x(), material->color.y(), material->color.z(), material->color.w(),
-    };
-    const float haloColor[] = {
-        material->haloColor.x(), material->haloColor.y(), material->haloColor.z(), material->haloColor.w(),
-    };
-    std::memcpy(buffer->data() + colorOffset, color, sizeof(color));
-    std::memcpy(buffer->data() + haloColorOffset, haloColor, sizeof(haloColor));
-    std::memcpy(buffer->data() + fontScaleOffset, &material->fontScale, sizeof(material->fontScale));
-    std::memcpy(buffer->data() + haloWidthOffset, &material->haloWidth, sizeof(material->haloWidth));
-    std::memcpy(buffer->data() + haloBlurOffset, &material->haloBlur, sizeof(material->haloBlur));
+    std::memcpy(buffer->data() + colorOffset, material->values.data(), 11 * sizeof(float));
     const float devicePixelRatio = std::max(1.0f, state.devicePixelRatio());
     std::memcpy(buffer->data() + devicePixelRatioOffset, &devicePixelRatio, sizeof(devicePixelRatio));
     return true;
@@ -163,31 +121,14 @@ void SDFTextShader::updateSampledImage(
 
 QSGGeometryNode* newSDFTextGeometry(
     QSGTexture* texture,
-    const float* verticesData,
+    float** verticesData,
     int pointCount,
-    const QVector4D& color,
-    const QVector4D& haloColor,
-    float fontScale,
-    float haloWidth,
-    float haloBlur) {
+    const float* materialData) {
     auto* geometry = new QSGGeometry(QSGGeometry::defaultAttributes_TexturedPoint2D(), pointCount);
     geometry->setDrawingMode(QSGGeometry::DrawTriangles);
     geometry->setVertexDataPattern(QSGGeometry::StaticPattern);
-    QSGGeometry::TexturedPoint2D* vertices = geometry->vertexDataAsTexturedPoint2D();
-    for (int index = 0; index < pointCount; ++index) {
-        vertices[index].set(
-            verticesData[index * 4],
-            verticesData[index * 4 + 1],
-            verticesData[index * 4 + 2],
-            verticesData[index * 4 + 3]);
-    }
-    auto* material = new SDFTextMaterial(
-        texture,
-        color,
-        haloColor,
-        fontScale,
-        std::max(0.0f, haloWidth),
-        std::max(0.0f, haloBlur));
+    *verticesData = static_cast<float*>(geometry->vertexData());
+    auto* material = new SDFTextMaterial(texture, materialData);
     auto* node = new QSGGeometryNode();
     node->setGeometry(geometry);
     node->setFlag(QSGNode::OwnsGeometry);
@@ -232,54 +173,19 @@ QSGNode* QSGSDFAtlasNode_node(QSGSDFAtlasNode* atlas) {
 
 QSGNode* QSGSDFAtlasNode_newTextNode(
     QSGSDFAtlasNode* atlas,
-    const float* verticesData,
+    float** verticesData,
     int pointCount,
-    const int* color,
-    const int* haloColor,
-    float fontScale,
-    float haloWidth,
-    float haloBlur) {
+    const float* materials,
+    int passCount) {
     if (atlas == nullptr || atlas->texture == nullptr || verticesData == nullptr || pointCount <= 0 ||
-        pointCount % 3 != 0 || color == nullptr || haloColor == nullptr || fontScale <= 0)
+        pointCount % 3 != 0 || materials == nullptr || passCount < 1 || passCount > 2)
         return nullptr;
 
-    const QVector4D normalizedFill = normalizedColor(color);
-    QVector4D normalizedHalo = normalizedColor(haloColor);
-    if (haloWidth <= 0)
-        normalizedHalo.setW(0);
-    const QVector4D transparent(0, 0, 0, 0);
-    if (normalizedHalo.w() <= 0) {
-        return newSDFTextGeometry(
-            atlas->texture,
-            verticesData,
-            pointCount,
-            normalizedFill,
-            transparent,
-            fontScale,
-            0,
-            0);
-    }
-
-    // Draw all halo fragments first, then all fills. This prevents neighboring
-    // glyph quads from painting halo over a previous glyph's fill.
+    if (passCount == 1)
+        return newSDFTextGeometry(atlas->texture, verticesData, pointCount, materials);
     auto* root = new QSGNode();
-    root->appendChildNode(newSDFTextGeometry(
-        atlas->texture,
-        verticesData,
-        pointCount,
-        transparent,
-        normalizedHalo,
-        fontScale,
-        haloWidth,
-        haloBlur));
-    root->appendChildNode(newSDFTextGeometry(
-        atlas->texture,
-        verticesData,
-        pointCount,
-        normalizedFill,
-        transparent,
-        fontScale,
-        0,
-        0));
+    for (int pass = 0; pass < passCount; ++pass)
+        root->appendChildNode(newSDFTextGeometry(
+            atlas->texture, verticesData + pass, pointCount, materials + pass * 11));
     return root;
 }

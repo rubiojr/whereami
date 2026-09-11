@@ -8,6 +8,12 @@
 #include <QSGNode>
 #include <QSGTexture>
 #include <QSGTextureMaterial>
+#include <cstddef>
+
+// Go writes interleaved x/y/u/v directly into this public Qt vertex layout.
+static_assert(sizeof(QSGGeometry::TexturedPoint2D) == 4 * sizeof(float));
+static_assert(offsetof(QSGGeometry::TexturedPoint2D, tx) == 2 * sizeof(float));
+static_assert(offsetof(QSGGeometry::TexturedPoint2D, ty) == 3 * sizeof(float));
 
 class OwnedTextureMaterial final : public QSGTextureMaterial {
 public:
@@ -18,7 +24,7 @@ public:
 
 QSGNode* QQuickItem_newPatternNode(
     QQuickItem* item,
-    const float* verticesData,
+    float** verticesData,
     int pointCount,
     const unsigned char* rgba,
     int imageWidth,
@@ -36,14 +42,8 @@ QSGNode* QQuickItem_newPatternNode(
     }
     auto* geometry = new QSGGeometry(QSGGeometry::defaultAttributes_TexturedPoint2D(), pointCount);
     geometry->setDrawingMode(QSGGeometry::DrawTriangles);
-    QSGGeometry::TexturedPoint2D* vertices = geometry->vertexDataAsTexturedPoint2D();
-    for (int index = 0; index < pointCount; ++index) {
-        vertices[index].set(
-            verticesData[index * 4],
-            verticesData[index * 4 + 1],
-            verticesData[index * 4 + 2],
-            verticesData[index * 4 + 3]);
-    }
+    geometry->setVertexDataPattern(QSGGeometry::StaticPattern);
+    *verticesData = static_cast<float*>(geometry->vertexData());
 
     auto* material = new OwnedTextureMaterial();
     material->setTexture(texture);

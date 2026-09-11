@@ -18,31 +18,29 @@ func NewQSGPatternNode(
 	imageWidth, imageHeight int,
 	patternWidth, patternHeight, phaseX, phaseY, opacity float32,
 ) *QSGNode {
-	if item == nil || len(points) == 0 || len(points)%6 != 0 ||
-		imageWidth <= 0 || imageHeight <= 0 || len(rgba) != imageWidth*imageHeight*4 ||
+	if item == nil || len(points) == 0 || len(points)%6 != 0 || len(points)/2 > maxGeometryVertices ||
+		!validImageSize(len(rgba), imageWidth, imageHeight, 4) ||
 		patternWidth <= 0 || patternHeight <= 0 {
 		return nil
 	}
-	vertices := make([]float32, len(points)*2)
-	for source := 0; source < len(points); source += 2 {
-		target := source * 2
-		x, y := points[source], points[source+1]
-		vertices[target] = x
-		vertices[target+1] = y
-		vertices[target+2] = (x + phaseX) / patternWidth
-		vertices[target+3] = (y + phaseY) / patternHeight
-	}
+	var vertices *C.float
 	node := C.QQuickItem_newPatternNode(
 		(*C.QQuickItem)(item.UnsafePointer()),
-		(*C.float)(unsafe.Pointer(&vertices[0])),
+		&vertices,
 		C.int(len(points)/2),
 		(*C.uchar)(unsafe.Pointer(&rgba[0])),
 		C.int(imageWidth),
 		C.int(imageHeight),
 		C.float(opacity),
 	)
+	if node != nil {
+		// The node owns this buffer. Populate it before publishing the node to Qt;
+		// no Go pointer is retained by C++ and no intermediate vertex slice is needed.
+		writePatternVertices(unsafe.Slice((*float32)(unsafe.Pointer(vertices)), len(points)*2),
+			points, patternWidth, patternHeight, phaseX, phaseY)
+	}
 	runtime.KeepAlive(item)
-	runtime.KeepAlive(vertices)
+	runtime.KeepAlive(points)
 	runtime.KeepAlive(rgba)
 	return newQSGNode(node)
 }

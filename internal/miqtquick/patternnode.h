@@ -7,9 +7,11 @@
 extern "C" {
 #endif
 
+// On success, vertices receives the node-owned x/y/u/v buffer. The caller must
+// populate pointCount vertices before publishing the node to the scene graph.
 QSGNode* QQuickItem_newPatternNode(
     QQuickItem* item,
-    const float* vertices,
+    float** vertices,
     int pointCount,
     const unsigned char* rgba,
     int imageWidth,

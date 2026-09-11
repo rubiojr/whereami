@@ -41,3 +41,44 @@ alive until the Qt event loop stops, then call `item.Close()` on the GUI thread.
 
 The generated QSG bridge and Earcut implementation remain private module
 dependencies under `internal/`; no internal types are exposed by the public API.
+
+## Go/native boundary
+
+Go handles tile decoding, triangulation, style evaluation, glyph layout, atlas
+packing, symbol placement, and retained-scene reconciliation. The private
+`internal/miqtquick/renderdata.go` also prepares SDF material uniforms and orders
+halo/fill passes. Go writes pattern and SDF vertices directly into Qt-owned
+buffers before publishing their nodes to the scene graph.
+
+The remaining handwritten C++ constructs Qt objects, manages native texture
+lifetimes, connects the camera signal, and implements Qt's shader callbacks.
+Node construction stays batched across cgo. Shader callbacks stay native to
+avoid calling Go for every material comparison and uniform update.
+
+### Bridge benchmarks
+
+Run the native allocation/write/destruction benchmarks on Qt's render thread:
+
+```sh
+go test -tags integration ./internal/miqtquick -run '^$' \
+  -bench 'BufferBridge$' -benchmem -count=5
+```
+
+Measured with Go 1.27.1, Qt 6.11.2, linux/amd64, Ryzen AI 7 PRO 350. Medians of
+five runs against `06073ef`, using the same benchmark harness:
+
+| Node creation and destruction | Before | Go buffer writes | Go bytes/op before → after |
+| --- | ---: | ---: | ---: |
+| Pattern, 6,144 vertices | 16.62 µs | 9.73 µs | 98,312 → 16 |
+| SDF fill, 32 glyphs | 194.6 ns | 183.8 ns | 40 → 8 |
+| SDF halo + fill, 32 glyphs | 335.3 ns | 287.2 ns | 40 → 8 |
+
+These measure the bridge with software-backend textures, not GPU rendering or
+whole-map frame time. Native allocations aren't included in Go bytes/op.
+Pattern preparation loses a temporary vertex buffer and a full copy. SDF
+material preparation stays on the stack through a noescape/nocallback bridge;
+vertex copies use Go's architecture-specific runtime implementation.
+
+No explicit SIMD or Go version bump is needed for these changes. Profile full
+frames before adding architecture-specific arithmetic: these benchmarks don't
+establish how much of the MapLibre Native performance gap comes from this work.

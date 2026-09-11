@@ -18,15 +18,15 @@ QSGSDFAtlasNode* QQuickItem_newSDFAtlasNode(
 
 QSGNode* QSGSDFAtlasNode_node(QSGSDFAtlasNode* atlas);
 
+// Allocates native-only nodes (no Go callbacks). Copies passCount blocks of 11
+// material floats and returns their writable vertex buffers. The caller fills
+// those buffers before attaching the returned node to the scene graph.
 QSGNode* QSGSDFAtlasNode_newTextNode(
     QSGSDFAtlasNode* atlas,
-    const float* vertices,
+    float** vertices,
     int pointCount,
-    const int* color,
-    const int* haloColor,
-    float fontScale,
-    float haloWidth,
-    float haloBlur);
+    const float* materials,
+    int passCount);
 
 #ifdef __cplusplus
 }
