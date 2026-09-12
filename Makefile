@@ -22,6 +22,8 @@ APP_ID            := io.github.rubiojr.whereami
 BIN_DIR           := bin
 GO                := go
 QML_LINT          := qmllint-qt6
+QSB               ?= $(shell pkg-config --variable=bindir Qt6Core)/qsb
+QT_RHI_INCLUDE    ?= $(shell pkg-config --variable=includedir Qt6Gui)/QtGui/$(shell pkg-config --modversion Qt6Gui)/QtGui
 
 GEODATA_BASE_URL      ?= https://files.rbel.co/whereami/geodata
 GEODATA_VERSION       ?= 2026-04-15.0
@@ -52,6 +54,7 @@ HOST_OS   := $(shell uname -s)
 HOST_ARCH := $(shell uname -m)
 
 .PHONY: all build run clean lint fmt vet tidy qml-test \
+        rhi-bindings rhi-shaders rhi-build rhi-test \
         install uninstall print-vars help lint-qml \
         geodata-build geodata-dist geodata-install-local geodata-run-local
 
@@ -80,6 +83,24 @@ build:
 run: build
 	@echo "==> Running $(APP_NAME)"
 	./$(BIN_DIR)/$(APP_NAME)
+
+# Opt-in retained-renderer prototype. The regular application is not switched
+# over until the visual and MapLibre performance gates in kata ngrb are met.
+rhi-bindings:
+	$(GO) run ./cmd/qt-rhi-gen -rhi-include "$(QT_RHI_INCLUDE)"
+
+rhi-shaders:
+	$(QSB) --qt6 -o internal/vecmaprhi/shaders/map.vert.qsb internal/vecmaprhi/shaders/map.vert
+	$(QSB) --qt6 -o internal/vecmaprhi/shaders/map.frag.qsb internal/vecmaprhi/shaders/map.frag
+
+rhi-build: rhi-shaders
+	@mkdir -p "$(BIN_DIR)"
+	QT_RHI_INCLUDE="$(QT_RHI_INCLUDE)" GOAMD64=v4 sh scripts/qt-rhi-env.sh $(GO) build -tags vecmap_rhi -ldflags '$(LDFLAGS)' -o "$(BIN_DIR)/vecmap-rhi" ./cmd/vecmap-rhi
+
+rhi-test:
+	CGO_ENABLED=0 $(GO) test ./pkg/vecmap/scene
+	QT_RHI_INCLUDE="$(QT_RHI_INCLUDE)" $(GO) test ./cmd/qt-rhi-gen
+	QT_RHI_INCLUDE="$(QT_RHI_INCLUDE)" sh scripts/qt-rhi-env.sh $(GO) test -tags 'vecmap_rhi integration' ./internal/qtrhi ./internal/vecmaprhi
 
 clean:
 	@echo "==> Cleaning local build artifacts"
@@ -210,6 +231,9 @@ help:
 	@echo "Available targets:"
 	@echo "  build             Build local Go binary"
 	@echo "  run               Build and run locally"
+	@echo "  rhi-build         Build the opt-in Go/QRhi scene viewer"
+	@echo "  rhi-bindings      Regenerate focused Qt bindings with MIQT"
+	@echo "  rhi-test          Check portable scenes and Qt GPU integration (needs a display)"
 	@echo "  clean             Remove local build artifacts"
 	@echo "  fmt               Run go fmt"
 	@echo "  vet               Run go vet"

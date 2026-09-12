@@ -82,3 +82,12 @@ vertex copies use Go's architecture-specific runtime implementation.
 No explicit SIMD or Go version bump is needed for these changes. Profile full
 frames before adding architecture-specific arithmetic: these benchmarks don't
 establish how much of the MapLibre Native performance gap comes from this work.
+
+## Go-owned RHI prototype
+
+An opt-in backend now consumes toolkit-neutral data from `pkg/vecmap/scene` and
+renders through generated `QSGRenderNode`/`QRhi` bindings. Its standalone viewer
+has no dependency on the legacy handwritten Qt map bridge. Build it with
+`make rhi-build`; see [the prototype guide](../../docs/vecmap-rhi.md) for fixture
+capture, hardware measurements, Flatpak dependency requirements, and the remaining
+migration gates tracked by kata `ngrb`.

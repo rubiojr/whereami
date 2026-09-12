@@ -1,0 +1,180 @@
+package main
+
+import (
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func rhiLog(format string, args ...any) {
+	if !strings.HasPrefix(format, "clangfilter: unknown") {
+		log.Printf(format, args...)
+	}
+}
+
+func ProcessLibraries(clangBin, outDir, _ string) {
+	flushKnownTypes()
+	InsertTypedefs(true)
+	for _, name := range []string{"QObject", "QWindow", "QColor", "QImage", "QMatrix4x4", "QSize", "QRect", "QRectF", "QPoint", "QPointF", "QRegion"} {
+		KnownClassnames[name] = lookupResultClass{PackageName: "qt6", Class: CppClass{ClassName: name}}
+	}
+	KnownClassnames["QQmlParserStatus"] = lookupResultClass{PackageName: "qt6/qml", Class: CppClass{ClassName: "QQmlParserStatus"}}
+	includes := strings.Fields(pkgConfigCflags("Qt6Quick"))
+	root := ""
+	for _, v := range includes {
+		if strings.HasPrefix(v, "-I") && filepath.Base(v) == "QtQuick" {
+			root = strings.TrimPrefix(v, "-I")
+		}
+	}
+	if root == "" {
+		panic("Qt6Quick include directory missing")
+	}
+	rhi := os.Getenv("QT_RHI_INCLUDE")
+	generate("qtrhi", []string{filepath.Join(rhi, "rhi", "qshader.h"), filepath.Join(rhi, "rhi", "qrhi.h"), filepath.Join(root, "qsgnode.h"), filepath.Join(root, "qsgrendernode.h"), filepath.Join(root, "qquickwindow.h"), filepath.Join(root, "qquickitem.h"), filepath.Join(root, "qquickgraphicsconfiguration.h")}, func(string) bool { return true }, clangBin, "--no-default-config --std=c++17 -I"+rhi+" "+pkgConfigCflags("Qt6Quick"), outDir, ClangMatchSameHeaderDefinitionOnly)
+}
+
+var rhiMethods = map[string]string{
+	"QShader":                    "isValid fromSerialized",
+	"QRhi":                       "newBuffer newTexture newSampler newGraphicsPipeline newShaderResourceBindings nextResourceUpdateBatch ubufAligned ubufAlignment backendName isYUpInFramebuffer driverInfo",
+	"QRhiDriverInfo":             "",
+	"QRhiResource":               "deleteLater destroy setName",
+	"QRhiBuffer":                 "create size",
+	"QRhiTexture":                "create pixelSize",
+	"QRhiSampler":                "create",
+	"QRhiGraphicsPipeline":       "create setFlags setSampleCount setShaderStages setVertexInputLayout setShaderResourceBindings setRenderPassDescriptor setTargetBlends setDepthTest setDepthWrite setStencilTest setStencilFront setStencilBack setStencilReadMask setStencilWriteMask",
+	"QRhiShaderResourceBindings": "create setBindings",
+	"QRhiShaderResourceBinding":  "uniformBufferWithDynamicOffset sampledTexture",
+	"QRhiResourceUpdateBatch":    "uploadStaticBuffer updateDynamicBuffer uploadTexture release",
+	"QRhiCommandBuffer":          "resourceUpdate setGraphicsPipeline setShaderResources setVertexInput setViewport setScissor setStencilRef draw drawIndexed lastCompletedGpuTime",
+	"QRhiRenderTarget":           "pixelSize sampleCount renderPassDescriptor",
+	"QRhiRenderPassDescriptor":   "serializedFormat isCompatible",
+	"QRhiVertexInputLayout":      "setBindings setAttributes",
+	"QRhiVertexInputBinding":     "",
+	"QRhiVertexInputAttribute":   "",
+	"QRhiShaderStage":            "",
+	"QRhiViewport":               "",
+	"QRhiScissor":                "",
+	"QRhiTextureSubresourceUploadDescription": "setSourceSize setDestinationTopLeft",
+	"QRhiTextureUploadEntry":                  "",
+	"QRhiTextureUploadDescription":            "setEntries",
+	"QRhiGraphicsPipeline::TargetBlend":       "",
+	"QRhiGraphicsPipeline::StencilOpState":    "",
+	"QSGRenderNode":                           "prepare render releaseResources flags changedStates commandBuffer renderTarget projectionMatrix matrix inheritedOpacity",
+	"QSGRenderNode::RenderState":              "scissorRect scissorEnabled stencilValue stencilEnabled",
+	"QSGNode":                                 "",
+	"QQuickWindow":                            "rhi grabWindow effectiveDevicePixelRatio setGraphicsConfiguration",
+	"QQuickGraphicsConfiguration":             "setTimestamps",
+	"QQuickItem":                              "window width height setFlag setWidth setHeight update updatePaintNode",
+	"QQuickItem::UpdatePaintNodeData":         "",
+}
+
+func rhiFilter(parsed *CppParsedHeader) {
+	known := map[string]bool{}
+	for _, e := range parsed.Enums {
+		known[e.EnumName] = true
+	}
+	for _, t := range parsed.Typedefs {
+		known[t.Alias] = true
+	}
+	for _, c := range parsed.Classes {
+		known[c.ClassName] = true
+	}
+	qualify := func(c string, p *CppParameter) {
+		for scope := c; scope != ""; {
+			if known[scope+"::"+p.ParameterType] {
+				p.ParameterType = scope + "::" + p.ParameterType
+				break
+			}
+			index := strings.LastIndex(scope, "::")
+			if index < 0 {
+				break
+			}
+			scope = scope[:index]
+		}
+		if strings.HasPrefix(p.ParameterType, "std::initializer_list<") {
+			inner := strings.TrimSuffix(strings.TrimPrefix(p.ParameterType, "std::initializer_list<"), ">")
+			if known[c+"::"+inner] {
+				inner = c + "::" + inner
+			}
+			p.ParameterType = "QList<" + inner + ">"
+		}
+	}
+	classes := parsed.Classes[:0]
+	for _, c := range parsed.Classes {
+		allowed, ok := rhiMethods[c.ClassName]
+		if !ok {
+			continue
+		}
+		c.Props = nil
+		ctors := c.Ctors[:0]
+		for _, ctor := range c.Ctors {
+			supported := true
+			for j := range ctor.Parameters {
+				if strings.HasPrefix(ctor.Parameters[j].ParameterType, "std::initializer_list<") {
+					supported = false
+				}
+				qualify(c.ClassName, &ctor.Parameters[j])
+			}
+			if supported {
+				ctors = append(ctors, ctor)
+			}
+		}
+		c.Ctors = ctors
+		methods := c.Methods[:0]
+		for _, m := range c.Methods {
+			fields := c.ClassName == "QRhiGraphicsPipeline::TargetBlend" || c.ClassName == "QRhiGraphicsPipeline::StencilOpState" || c.ClassName == "QRhiDriverInfo"
+			if !strings.Contains(" "+allowed+" ", " "+m.MethodName+" ") && !(m.IsVariable && fields) {
+				continue
+			}
+			if m.IsProtected && !m.IsVirtual {
+				continue
+			}
+			qualify(c.ClassName, &m.ReturnType)
+			for i := range m.Parameters {
+				qualify(c.ClassName, &m.Parameters[i])
+			}
+			methods = append(methods, m)
+		}
+		c.Methods = methods
+		if c.ClassName == "QQuickWindow" {
+			c.Ctors = nil
+			c.CanDelete = false
+			c.DirectInherits = nil
+		}
+		if strings.HasPrefix(c.ClassName, "QRhi") && c.Abstract {
+			c.Ctors = nil
+		}
+		classes = append(classes, c)
+	}
+	parsed.Classes = classes
+	for i := range parsed.Typedefs {
+		p := &parsed.Typedefs[i]
+		if strings.HasPrefix(p.UnderlyingType.ParameterType, "std::pair<") {
+			p.UnderlyingType.ParameterType = strings.Replace(p.UnderlyingType.ParameterType, "std::pair<", "QPair<", 1)
+		}
+		// Clang reports Q_DECLARE_FLAGS aliases without their QFlags wrapper on
+		// some Qt releases. Supply the fully qualified enum for the public aliases.
+		aliases := map[string]string{
+			"QSGRenderNode::StateFlags":             "QSGRenderNode::StateFlag",
+			"QQuickItem::Flags":                     "QQuickItem::Flag",
+			"QSGRenderNode::RenderingFlags":         "QSGRenderNode::RenderingFlag",
+			"QRhiBuffer::UsageFlags":                "QRhiBuffer::UsageFlag",
+			"QRhiTexture::Flags":                    "QRhiTexture::Flag",
+			"QRhiShaderResourceBinding::StageFlags": "QRhiShaderResourceBinding::StageFlag",
+			"QRhiGraphicsPipeline::Flags":           "QRhiGraphicsPipeline::Flag",
+			"QRhiGraphicsPipeline::ColorMask":       "QRhiGraphicsPipeline::ColorMaskComponent",
+		}
+		if e, ok := aliases[p.Alias]; ok {
+			p.UnderlyingType.ParameterType = "QFlags<" + e + ">"
+		}
+	}
+}
+
+func rhiReleaseHandles(methods []CppMethod) string {
+	var b strings.Builder
+	for _, m := range methods {
+		b.WriteString("if (handle__" + m.SafeMethodName() + ") qtrhi_callback_released(handle__" + m.SafeMethodName() + "); ")
+	}
+	return b.String()
+}
