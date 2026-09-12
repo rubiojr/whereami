@@ -75,7 +75,7 @@ build:
 	@mkdir -p $(BIN_DIR)
 
 	PATH=$(PATH):/usr/lib64/qt6/libexec $(GO) generate
-	$(GO) build -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME) .
+	GOAMD64=v4 $(GO) build -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/$(APP_NAME) .
 
 run: build
 	@echo "==> Running $(APP_NAME)"
