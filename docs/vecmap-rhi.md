@@ -399,11 +399,54 @@ and 10.5, check that styled-only decoding leaves geometry uncompiled and fallbac
 buckets empty, and retain malformed-input validation. The fixture still freezes
 style and placement decisions at zoom 10.
 
-The command's font-discovery pass still calls fixture compilation once without
-glyphs before recompiling with the available glyph ranges. That command-level
-duplication is outside `BenchmarkCompileRenderFixture` and remains a separate
-preparation/API improvement. Remaining CPU-engine extraction and live scheduler
-work are tracked by **ngrb**.
+At commit `9500392`, the command's font-discovery pass still called fixture
+compilation once without glyphs before recompiling with the available glyph
+ranges. That command-level duplication is outside `BenchmarkCompileRenderFixture`;
+the following checkpoint removes it.
+
+### Single-pass font loading
+
+Kata **k00j** adds `CompileRenderFixtureWithGlyphLoader`. It invokes a caller-owned
+`FixtureGlyphLoader` once after successful bounded tile/style preparation, with
+sorted, unique font-stack names, before glyph layout, collision and scene packing.
+The callback returns the 0–255 PBF ranges keyed by exact font stack. A nil loader
+means no glyph data; omitted ranges retain the existing missing-font reporting.
+Loader errors abort compilation before publication and preserve error wrapping.
+
+`cmd/vecmap-fixture` uses this callback for `-glyph-dir`, reading only requested,
+URL-escaped filenames. Filesystem access stays in the command. The callback is
+synchronous; callers schedule preparation off GUI/render threads. Existing
+callers with preloaded ranges can keep using
+`CompileRenderFixtureWithOptions`.
+
+`BenchmarkFixtureGlyphDiscovery` compares the old two-pass command preparation
+against the callback, using preloaded glyph bytes in both cases. It includes
+font discovery, tile/style preparation, layout and scene packing, but excludes
+file I/O, JSON encoding, post-deduplication and GPU work. The preceding table
+already measured a single compilation; this table measures the discovery
+overhead separately. Same hardware/toolchain, `GOAMD64=v4`, three sequential
+two-second samples:
+
+| Geometry | Old two-pass time/op | Loader time/op | Old allocated MB/op | Loader allocated MB/op |
+| --- | ---: | ---: | ---: | ---: |
+| Expanded | 102.6–111.0 ms | 57.6–60.8 ms | 283.58 | 142.70 |
+| Direct indexed | 75.3–81.7 ms | 34.2–35.5 ms | 179.07 | 90.75 |
+
+For direct indexing, allocation volume falls about 49.3% and allocation count
+falls from about 197,645 to 102,316. Expanded, direct-indexed and post-indexed CLI
+captures remain byte-for-byte identical to their previous `GOAMD64=v1` captures.
+Tests cover sorted/deduplicated requests, one callback invocation, complete and
+partial ranges, nil/missing ranges, invalid tiles, loader failures, malformed PBF
+data, escaped filenames, absent files/directories and read errors.
+
+```sh
+WHEREAMI_VECTOR_TILE_FIXTURE=/path/to/openfreemap-20260823-z9-250-193.pbf \
+WHEREAMI_VECTOR_GLYPH_FIXTURE_DIR=/path/to/glyphs \
+GOAMD64=v4 go test ./pkg/vecmap -run '^$' \
+  -bench '^BenchmarkFixtureGlyphDiscovery$' -benchmem -benchtime=2s -count 3
+```
+
+Remaining CPU-engine extraction and live scheduler work are tracked by **ngrb**.
 
 ## Flatpak integration
 

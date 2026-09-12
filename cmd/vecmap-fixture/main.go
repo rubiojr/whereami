@@ -38,26 +38,13 @@ func run(path, glyphDir, output string, indexed, directIndexed bool) error {
 	if err != nil {
 		return err
 	}
-	fixture, err := vecmap.CompileRenderFixtureWithOptions(data, nil, options)
+	var load vecmap.FixtureGlyphLoader
+	if glyphDir != "" {
+		load = func(fonts []string) (map[string][]byte, error) { return loadFixtureGlyphs(glyphDir, fonts) }
+	}
+	fixture, err := vecmap.CompileRenderFixtureWithGlyphLoader(data, load, options)
 	if err != nil {
 		return err
-	}
-	if glyphDir != "" {
-		glyphs := make(map[string][]byte)
-		for _, font := range fixture.MissingFonts {
-			data, err := os.ReadFile(filepath.Join(glyphDir, url.PathEscape(font)+".pbf"))
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-			glyphs[font] = data
-		}
-		fixture, err = vecmap.CompileRenderFixtureWithOptions(data, glyphs, options)
-		if err != nil {
-			return err
-		}
 	}
 	document := scene.Document{Scene: *fixture.Scene, Transforms: fixture.Frame(fixture.Camera).Transforms, Width: 512, Height: 512, Labels: fixture.Labels, MissingFonts: fixture.MissingFonts, Source: "OpenFreeMap 20260823 z9/250/193; Liberty at fixed zoom 10"}
 	document.Camera = &fixture.Camera
@@ -77,6 +64,21 @@ func run(path, glyphDir, output string, indexed, directIndexed bool) error {
 		defer out.Close()
 	}
 	return json.NewEncoder(out).Encode(document)
+}
+
+func loadFixtureGlyphs(dir string, fonts []string) (map[string][]byte, error) {
+	glyphs := make(map[string][]byte, len(fonts))
+	for _, font := range fonts {
+		data, err := os.ReadFile(filepath.Join(dir, url.PathEscape(font)+".pbf"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		glyphs[font] = data
+	}
+	return glyphs, nil
 }
 
 func indexDocument(document *scene.Document) error {

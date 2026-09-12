@@ -39,15 +39,33 @@ type RenderFixtureOptions struct {
 // CompileRenderFixtureWithOptions selects how the same fixed-style scene is
 // prepared. All geometry is finalized before publishing resource IDs/revisions.
 func CompileRenderFixtureWithOptions(tileData []byte, glyphRanges map[string][]byte, options RenderFixtureOptions) (*RenderFixture, error) {
-	if err := verifyTileChecksum(tileData, pinnedTileSHA256); err != nil {
-		return nil, err
-	}
-	bucket, err := decodeStyledBucketGeometry(tileData, pinnedTile, options.DirectIndexed)
+	return compileRenderFixture(tileData, glyphRanges, options, nil)
+}
+
+// FixtureGlyphLoader supplies range 0-255 PBF data keyed by exact font stack.
+// Font requests are sorted and unique. Missing entries are reported in the
+// resulting fixture; an error aborts compilation before scene publication.
+type FixtureGlyphLoader func(fontStacks []string) (map[string][]byte, error)
+
+// CompileRenderFixtureWithGlyphLoader calls load once after successful tile/style
+// compilation, before glyph layout, collision and scene packing. The callback is
+// synchronous on the caller's goroutine: use a preparation worker, not a render
+// callback. A nil loader is equivalent to providing no glyph ranges. File/network
+// access and caching belong to the caller; this function performs neither.
+func CompileRenderFixtureWithGlyphLoader(tileData []byte, load FixtureGlyphLoader, options RenderFixtureOptions) (*RenderFixture, error) {
+	return compileRenderFixture(tileData, nil, options, load)
+}
+
+func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, options RenderFixtureOptions, load FixtureGlyphLoader) (*RenderFixture, error) {
+	bucket, err := prepareFixtureBucket(tileData, options.DirectIndexed)
 	if err != nil {
 		return nil, err
 	}
-	if err := compileLibertyTileGeometry(bucket, 10, options.DirectIndexed); err != nil {
-		return nil, err
+	if load != nil {
+		glyphRanges, err = load(fixtureFontStacks(bucket.symbols))
+		if err != nil {
+			return nil, fmt.Errorf("load fixture glyphs: %w", err)
+		}
 	}
 	center := tileLocalCoordinate(pinnedTile, roadPoint{X: 128, Y: 128})
 	fixture := &RenderFixture{Scene: &scene.Scene{}, Camera: NewCamera(center, 10, 0, 512, 512), bucket: bucket}
@@ -93,6 +111,35 @@ func CompileRenderFixtureWithOptions(tileData []byte, glyphRanges map[string][]b
 		return nil, err
 	}
 	return fixture, nil
+}
+
+func prepareFixtureBucket(tileData []byte, indexed bool) (*tileBucket, error) {
+	if err := verifyTileChecksum(tileData, pinnedTileSHA256); err != nil {
+		return nil, err
+	}
+	bucket, err := decodeStyledBucketGeometry(tileData, pinnedTile, indexed)
+	if err != nil {
+		return nil, err
+	}
+	if err := compileLibertyTileGeometry(bucket, 10, indexed); err != nil {
+		return nil, err
+	}
+	return bucket, nil
+}
+
+func fixtureFontStacks(candidates []libertySymbolCandidate) []string {
+	stacks := make(map[string]struct{})
+	for _, candidate := range candidates {
+		if candidate.text != "" {
+			stacks[candidate.fontStack] = struct{}{}
+		}
+	}
+	fonts := make([]string, 0, len(stacks))
+	for stack := range stacks {
+		fonts = append(fonts, stack)
+	}
+	slices.Sort(fonts)
+	return fonts
 }
 
 func decodeFixtureGlyphs(ranges map[string][]byte) (map[string]map[uint32]sdfGlyph, error) {
