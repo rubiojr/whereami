@@ -21,9 +21,10 @@ var ErrResourceLimit = errors.New("MVT polygon resource limit exceeded")
 // Point is a tile-local position, retaining float64 precision during preparation.
 type Point struct{ X, Y float64 }
 
-// Mesh preserves Earcut's triangle order without expanding shared vertices.
+// Mesh preserves construction order without expanding shared vertices.
 // The slices are owned by the result; input rings are never modified or retained.
-// Treat published results as immutable. Indices always address Vertices.
+// Treat published results as immutable. Non-nil Indices address Vertices;
+// a nil index slice represents an expanded triangle list.
 type Mesh struct {
 	Vertices []Point
 	Indices  []uint32

@@ -16,9 +16,10 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   no Qt types, native pointers, or cgo dependencies. Adjacent compatible draws
   coalesce without sorting transparent content out of order.
   Meshes support optional uint32 indices; draw ranges address indices when present.
-- `pkg/vecmap/geometry`: bounded polygon cleanup and Earcut preparation with a
-  direct uint32 indexed result. The existing compiler uses its expanded
-  compatibility path; end-to-end index propagation is still pending.
+- `pkg/vecmap/geometry`: bounded polygon cleanup and Earcut preparation, indexed
+  topology assembly, line-segment extrusion, cap/join disks and glyph/icon quads.
+  The fixture can carry direct uint32 indices through feature storage, fill
+  batching, line construction and symbol packing.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -248,7 +249,8 @@ resource reconstruction and teardown.
 
 ### Direct polygon preparation checkpoint
 
-Kata **tgde** tracks direct indexed compilation. `pkg/vecmap/geometry` now retains
+The first checkpoint, commit `9ad9284` under kata **tgde**, introduced direct
+polygon preparation. `pkg/vecmap/geometry` retains
 Earcut topology as owned float64 points and uint32 indices, without expanding and
 hashing triangles. Ring cleanup and conservative operation accounting were
 extracted from the existing implementation. `roadPoint` is an alias, avoiding
@@ -272,9 +274,9 @@ count. A 16-point ring measured 1.37–1.47 µs expanded, 1.21–1.22 µs direct
 wider timing ranges (large ring: 733–893 / 584–621 / 1,218–1,265 µs respectively);
 the table is the rerun with no concurrent agent checks.
 
-These are isolated polygon measurements, not full-tile speedups. Feature storage
-and fill batching still expand triangles, and line/glyph construction still
-needs direct indexed output. Fixture defaults remain unchanged.
+These are isolated polygon measurements, not full-tile speedups. At this
+checkpoint feature storage and fill batching still expanded triangles, and
+line/glyph construction still needed direct indexed output.
 
 Headless geometry coverage is 97.4%. Tests cover holes, concavity, cleanup,
 degeneracy, signed zero, input ownership, large polygons, index validation, and
@@ -283,6 +285,90 @@ same `GOAMD64=v1` setting produced byte-for-byte identical JSON, including draw
 order, all vertices and textures. Comparing a `v4` capture to that older `v1`
 capture instead exposed 12 tiny glyph-offset differences; pin the Go architecture
 setting as well as the binary, data and camera options when testing equality.
+
+### End-to-end direct indexed fixture preparation
+
+`vecmap-fixture -direct-indexed` now preserves Earcut indices through decoding and
+material batching and constructs line and symbol topology directly:
+
+- Four vertices per line segment, preserving its original diagonal/winding.
+- Nine vertices per eight-section disk, sharing its center and closing point.
+- Four vertices per glyph/icon quad, preserving UVs and screen-pixel offsets.
+- Original triangle order and material draw ranges throughout; no hashing pass.
+
+The reusable builder, extrusion, disks, quads and text-vertex transform are in
+`pkg/vecmap/geometry`. Existing style evaluation, path cleanup/dashing, miter
+joins, shaping and collision logic are reused. No new dependency or native
+binding is involved. The Qt-bound compiler remains an adapter around the portions
+of the engine extracted so far; full engine extraction is still pending.
+
+```sh
+go run ./cmd/vecmap-fixture \
+  -tile /path/to/openfreemap-20260823-z9-250-193.pbf \
+  -glyph-dir /path/to/glyphs -direct-indexed \
+  -out /tmp/madrid-direct-scene.json
+```
+
+`-direct-indexed` and `-indexed` are mutually exclusive. The latter remains the
+post-processing baseline. Defaults remain expanded for controlled comparisons;
+the production scheduler has not been migrated.
+
+Full Madrid fixture preparation, Ryzen AI 7 PRO 350, Go 1.27.1, `GOAMD64=v4`,
+GOMAXPROCS 16; three final sequential two-second benchmark samples:
+
+| Preparation | Time/op | Allocated MB/op (decimal) | Allocs/op | Geometry bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Expanded | 66.2–68.6 ms | 176.48–176.49 | 128,972–128,978 | 18,777,816 |
+| Direct indexed | 51.6–55.1 ms | 120.38 | 132,309–132,312 | 11,567,028 |
+| Expanded + `IndexMesh` | 143.3–148.1 ms | 224.58 | 130,053–130,054 | 9,658,548 |
+
+The direct scene has **351,558 vertices and 782,409 indices**, with the same 45
+draws, 62 labels and complete fonts. Geometry bytes shrink 38.4% versus expanded;
+allocation volume falls about 31.8%, though allocation count increases. Total
+initial uploads including textures fall from 19,045,116 to **11,834,328 bytes**.
+Direct construction does not share vertices across separate features, style
+layers or glyph halo/fill passes, so it is less compact than global deduplication.
+
+The benchmark includes checksum verification, decoding (including the existing
+unused legacy fallback buckets), source-zoom and zoom-10 compilation, glyph
+decoding/layout, atlas preparation, collision, scene packing and validation. It
+excludes file I/O, JSON encoding and GPU upload. All modes use the same warm
+style/sprite caches. This is a fixed-scene preparation benchmark, not a tile
+arrival/presentation benchmark or a MapLibre comparison.
+
+Timing was variable: initial one-second samples before reserving index capacity
+per append measured 68.8–70.8 ms expanded, 96.6–157.1 ms direct, and 220.1–254.8 ms
+post-indexed. A direct-only CPU profile on that same earlier code measured
+54.9 ms, so the broad timing swing cannot be attributed to the reservation
+optimization. The profile showed copying, slice growth and GC among the main
+costs. Reserving index capacity with `slices.Grow` reduced direct allocated bytes
+from about 122.74 MB to 120.38 MB. The table records the final repeated run; the
+earlier slow samples are retained here rather than discarded.
+
+Verification:
+
+- Full-scene tests reconstruct every vertex bit-for-bit (all six float32
+  attributes), and compare ordered draws, textures, camera and labels against
+  expanded and post-indexed baselines. They verify that direct polygon/glyph
+  storage has indices rather than expanded triangles.
+- The default expanded capture remains byte-for-byte identical to the previous
+  geographic JSON with matching `GOAMD64=v1`.
+- The same viewer binary with `-animate=false -foreground` produced byte-identical
+  expanded/direct PNGs on both Vulkan and OpenGL, at desktop DPR 2.
+- A six-second foreground Vulkan camera trace uploaded the direct mesh/textures
+  once and released everything on teardown. It recorded 356 frames, callback
+  p50/p99 of 16.68/22.55 ms, and previous-frame GPU p95 of 0.924 ms. This is a
+  retention check, not evidence of a steady-frame speedup or presentation timing.
+- Headless geometry coverage is 98.0%; tests include builder bounds/atomic
+  rejection, index rebasing, disk closure, quad topology, line caps/joins/dashes,
+  signed-zero reconstruction, and full-scene comparison with local fixture assets.
+- Normal full-scene tests and CPU benchmarks used `GOAMD64=v4`; the final
+  integration/race pass used `GOAMD64=v1`. An attempted `v4` race run timed out
+  while rebuilding the uncached MIQT bindings, before tests ran. Vulkan RHI
+  integration tests, staticcheck and the normal application build also passed.
+
+The full-scene test and benchmark commands are in
+[`pkg/vecmap/geometry/README.md`](../pkg/vecmap/geometry/README.md).
 
 ## Flatpak integration
 

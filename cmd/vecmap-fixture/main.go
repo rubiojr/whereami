@@ -21,19 +21,24 @@ func main() {
 	glyphDir := flag.String("glyph-dir", "", "directory of URL-escaped font-stack.pbf files (range 0-255)")
 	output := flag.String("out", "", "output JSON scene (stdout when empty)")
 	indexed := flag.Bool("indexed", false, "deduplicate vertices into indexed buffers before capturing")
+	directIndexed := flag.Bool("direct-indexed", false, "construct indexed geometry directly without vertex deduplication")
 	flag.Parse()
-	if err := run(*tile, *glyphDir, *output, *indexed); err != nil {
+	if err := run(*tile, *glyphDir, *output, *indexed, *directIndexed); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(path, glyphDir, output string, indexed bool) error {
+func run(path, glyphDir, output string, indexed, directIndexed bool) error {
+	if indexed && directIndexed {
+		return fmt.Errorf("-indexed and -direct-indexed are mutually exclusive")
+	}
+	options := vecmap.RenderFixtureOptions{DirectIndexed: directIndexed}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	fixture, err := vecmap.CompileRenderFixture(data, nil)
+	fixture, err := vecmap.CompileRenderFixtureWithOptions(data, nil, options)
 	if err != nil {
 		return err
 	}
@@ -49,7 +54,7 @@ func run(path, glyphDir, output string, indexed bool) error {
 			}
 			glyphs[font] = data
 		}
-		fixture, err = vecmap.CompileRenderFixture(data, glyphs)
+		fixture, err = vecmap.CompileRenderFixtureWithOptions(data, glyphs, options)
 		if err != nil {
 			return err
 		}

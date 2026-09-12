@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 )
 
 const (
@@ -29,6 +31,8 @@ type vectorPolygon struct {
 	exterior  []roadPoint
 	holes     [][]roadPoint
 	triangles []roadPoint
+	// When present, triangles holds unique vertices and indices retains topology.
+	indices []uint32
 }
 
 type resourceLimitSummary struct {
@@ -46,6 +50,13 @@ func (s *resourceLimitSummary) add(featureIndex int, err error) {
 func (l *mvtLayer) decodeFeatures(
 	totalFeatures, totalPoints, totalTriangles *int,
 	budget *triangulationBudget,
+) ([]vectorFeature, resourceLimitSummary) {
+	return l.decodeFeaturesGeometry(totalFeatures, totalPoints, totalTriangles, budget, false)
+}
+
+func (l *mvtLayer) decodeFeaturesGeometry(
+	totalFeatures, totalPoints, totalTriangles *int,
+	budget *triangulationBudget, indexed bool,
 ) ([]vectorFeature, resourceLimitSummary) {
 	features := make([]vectorFeature, 0, len(l.features))
 	var limits resourceLimitSummary
@@ -82,17 +93,21 @@ func (l *mvtLayer) decodeFeatures(
 			}
 			if err == nil {
 				for index := range decoded.polygons {
-					triangles, triangulationErr := triangulatePolygonBounded(decoded.polygons[index], budget)
+					mesh, triangulationErr := triangulateFeaturePolygon(decoded.polygons[index], budget, indexed)
 					if triangulationErr != nil {
 						err = triangulationErr
 						break
 					}
-					triangleCount := len(triangles) / 3
+					triangleCount := len(mesh.Vertices) / 3
+					if mesh.Indices != nil {
+						triangleCount = len(mesh.Indices) / 3
+					}
 					if triangleCount > maxTileStyleTriangles-*totalTriangles-featureTriangles {
 						err = fmt.Errorf("%w: tile exceeds %d styled-triangle limit", errFeatureResourceLimit, maxTileStyleTriangles)
 						break
 					}
-					decoded.polygons[index].triangles = triangles
+					decoded.polygons[index].triangles = mesh.Vertices
+					decoded.polygons[index].indices = mesh.Indices
 					featureTriangles += triangleCount
 				}
 			}
@@ -119,6 +134,17 @@ func (l *mvtLayer) decodeFeatures(
 		features = append(features, decoded)
 	}
 	return features, limits
+}
+
+func triangulateFeaturePolygon(polygon vectorPolygon, budget *triangulationBudget, indexed bool) (geometry.Mesh, error) {
+	if !indexed {
+		vertices, err := triangulatePolygonBounded(polygon, budget)
+		return geometry.Mesh{Vertices: vertices}, err
+	}
+	core := budget.geometryBudget()
+	mesh, err := geometry.TriangulatePolygon(polygon.exterior, polygon.holes, core)
+	budget.updateGeometryBudget(core)
+	return mesh, err
 }
 
 func (f vectorFeature) pointCount() int {

@@ -6,6 +6,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 )
 
 const (
@@ -14,9 +16,11 @@ const (
 )
 
 type libertyRenderPrimitive struct {
-	order        int
-	layerID      string
-	triangles    []roadPoint
+	order     int
+	layerID   string
+	triangles []roadPoint
+	// When present, indices addresses the unique vertices in triangles.
+	indices      []uint32
 	color        mapColor
 	patternName  string
 	patternScale float64
@@ -39,6 +43,10 @@ type libertyLineBatch struct {
 }
 
 func compileLibertyTile(bucket *tileBucket, zoom float64) error {
+	return compileLibertyTileGeometry(bucket, zoom, false)
+}
+
+func compileLibertyTileGeometry(bucket *tileBucket, zoom float64, indexed bool) error {
 	layers, err := compiledLibertyLayers()
 	if err != nil {
 		return err
@@ -48,14 +56,18 @@ func compileLibertyTile(bucket *tileBucket, zoom float64) error {
 	bucket.symbols = nil
 	primitives := make([]libertyRenderPrimitive, 0, len(layers))
 	totalTriangles := 0
-	appendPrimitive := func(layer compiledLibertyLayer, triangles []roadPoint, color mapColor) error {
-		if len(triangles) == 0 || color.alpha == 0 {
+	appendPrimitive := func(layer compiledLibertyLayer, mesh geometry.Mesh, color mapColor) error {
+		count := len(mesh.Vertices)
+		if mesh.Indices != nil {
+			count = len(mesh.Indices)
+		}
+		if count == 0 || color.alpha == 0 {
 			return nil
 		}
-		if len(triangles)%3 != 0 {
+		if count%3 != 0 {
 			return errors.New("liberty compiler produced an incomplete triangle")
 		}
-		triangleCount := len(triangles) / 3
+		triangleCount := count / 3
 		if triangleCount > maxTileRenderedTriangles-totalTriangles {
 			return fmt.Errorf("%w: liberty geometry exceeds %d-triangle limit", errFeatureResourceLimit, maxTileRenderedTriangles)
 		}
@@ -63,24 +75,29 @@ func compileLibertyTile(bucket *tileBucket, zoom float64) error {
 		primitives = append(primitives, libertyRenderPrimitive{
 			order:     layer.order,
 			layerID:   layer.id,
-			triangles: triangles,
+			triangles: mesh.Vertices,
+			indices:   mesh.Indices,
 			color:     color,
 		})
 		return nil
 	}
 	appendPattern := func(
 		layer compiledLibertyLayer,
-		triangles []roadPoint,
+		mesh geometry.Mesh,
 		patternName string,
 		patternScale, opacity float64,
 	) error {
-		if len(triangles) == 0 || patternName == "" || opacity <= 0 {
+		count := len(mesh.Vertices)
+		if mesh.Indices != nil {
+			count = len(mesh.Indices)
+		}
+		if count == 0 || patternName == "" || opacity <= 0 {
 			return nil
 		}
-		if len(triangles)%3 != 0 {
+		if count%3 != 0 {
 			return errors.New("liberty compiler produced an incomplete patterned triangle")
 		}
-		triangleCount := len(triangles) / 3
+		triangleCount := count / 3
 		if triangleCount > maxTileRenderedTriangles-totalTriangles {
 			return fmt.Errorf("%w: liberty geometry exceeds %d-triangle limit", errFeatureResourceLimit, maxTileRenderedTriangles)
 		}
@@ -88,7 +105,8 @@ func compileLibertyTile(bucket *tileBucket, zoom float64) error {
 		primitives = append(primitives, libertyRenderPrimitive{
 			order:        layer.order,
 			layerID:      layer.id,
-			triangles:    triangles,
+			triangles:    mesh.Vertices,
+			indices:      mesh.Indices,
 			patternName:  patternName,
 			patternScale: patternScale,
 			opacity:      opacity,
@@ -108,15 +126,15 @@ func compileLibertyTile(bucket *tileBucket, zoom float64) error {
 				continue
 			}
 			opacity := libertyEvaluatedNumber(layer, "background-opacity", evaluation, 1)
-			if err := appendPrimitive(layer, backgroundTriangles(), libertyColorWithOpacity(color, opacity)); err != nil {
+			if err := appendPrimitive(layer, backgroundGeometry(indexed), libertyColorWithOpacity(color, opacity)); err != nil {
 				return err
 			}
 		case "fill", "fill-extrusion":
-			if err := compileLibertyFillLayer(bucket, layer, zoom, appendPrimitive, appendPattern); err != nil {
+			if err := compileLibertyFillLayer(bucket, layer, zoom, indexed, appendPrimitive, appendPattern); err != nil {
 				return err
 			}
 		case "line":
-			if err := compileLibertyLineLayer(bucket, layer, zoom, appendPrimitive); err != nil {
+			if err := compileLibertyLineLayer(bucket, layer, zoom, indexed, appendPrimitive); err != nil {
 				return err
 			}
 		case "symbol":
@@ -135,19 +153,20 @@ func compileLibertyFillLayer(
 	bucket *tileBucket,
 	layer compiledLibertyLayer,
 	zoom float64,
-	appendPrimitive func(compiledLibertyLayer, []roadPoint, mapColor) error,
-	appendPattern func(compiledLibertyLayer, []roadPoint, string, float64, float64) error,
+	indexed bool,
+	appendPrimitive func(compiledLibertyLayer, geometry.Mesh, mapColor) error,
+	appendPattern func(compiledLibertyLayer, geometry.Mesh, string, float64, float64) error,
 ) error {
 	geometryScale := math.Exp2(zoom - float64(bucket.tile.Z))
 	features := bucket.sourceLayers[layer.sourceLayer]
 	type fillBatch struct {
-		color     mapColor
-		triangles []roadPoint
+		color mapColor
+		mesh  geometry.Builder[roadPoint]
 	}
 	type patternBatch struct {
-		name      string
-		opacity   float64
-		triangles []roadPoint
+		name    string
+		opacity float64
+		mesh    geometry.Builder[roadPoint]
 	}
 	batches := make([]fillBatch, 0, 2)
 	batchIndexes := make(map[mapColor]int)
@@ -179,10 +198,12 @@ func compileLibertyFillLayer(
 			if !exists {
 				patternIndex = len(patternBatches)
 				patternIndexes[patternKey] = patternIndex
-				patternBatches = append(patternBatches, patternBatch{name: patternName, opacity: opacity})
+				patternBatches = append(patternBatches, patternBatch{name: patternName, opacity: opacity, mesh: geometry.NewBuilder[roadPoint](indexed, maxTileRenderedTriangles*3)})
 			}
 			for _, polygon := range feature.polygons {
-				patternBatches[patternIndex].triangles = append(patternBatches[patternIndex].triangles, polygon.triangles...)
+				if err := patternBatches[patternIndex].mesh.Append(polygon.triangles, polygon.indices); err != nil {
+					return fmt.Errorf("%w: %v", errFeatureResourceLimit, err)
+				}
 			}
 		} else {
 			color, ok := libertyEvaluatedColor(layer, colorProperty, evaluation, mapColor{alpha: 255})
@@ -194,10 +215,12 @@ func compileLibertyFillLayer(
 			if !exists {
 				batchIndex = len(batches)
 				batchIndexes[color] = batchIndex
-				batches = append(batches, fillBatch{color: color})
+				batches = append(batches, fillBatch{color: color, mesh: geometry.NewBuilder[roadPoint](indexed, maxTileRenderedTriangles*3)})
 			}
 			for _, polygon := range feature.polygons {
-				batches[batchIndex].triangles = append(batches[batchIndex].triangles, polygon.triangles...)
+				if err := batches[batchIndex].mesh.Append(polygon.triangles, polygon.indices); err != nil {
+					return fmt.Errorf("%w: %v", errFeatureResourceLimit, err)
+				}
 			}
 		}
 
@@ -222,21 +245,21 @@ func compileLibertyFillLayer(
 		}
 	}
 	for _, batch := range batches {
-		if err := appendPrimitive(layer, batch.triangles, batch.color); err != nil {
+		if err := appendPrimitive(layer, geometry.Mesh{Vertices: batch.mesh.Vertices, Indices: batch.mesh.Indices}, batch.color); err != nil {
 			return err
 		}
 	}
 	for _, batch := range patternBatches {
-		if err := appendPattern(layer, batch.triangles, batch.name, 1/geometryScale, batch.opacity); err != nil {
+		if err := appendPattern(layer, geometry.Mesh{Vertices: batch.mesh.Vertices, Indices: batch.mesh.Indices}, batch.name, 1/geometryScale, batch.opacity); err != nil {
 			return err
 		}
 	}
 	for _, batch := range outlineBatches {
-		triangles, err := tessellateLibertyLines(batch.paths, batch.paint, maxTileRenderedTriangles)
+		mesh, err := tessellateLibertyGeometry(batch.paths, batch.paint, maxTileRenderedTriangles, indexed)
 		if err != nil {
 			return err
 		}
-		if err := appendPrimitive(layer, triangles, batch.paint.color); err != nil {
+		if err := appendPrimitive(layer, mesh, batch.paint.color); err != nil {
 			return err
 		}
 	}
@@ -247,7 +270,8 @@ func compileLibertyLineLayer(
 	bucket *tileBucket,
 	layer compiledLibertyLayer,
 	zoom float64,
-	appendPrimitive func(compiledLibertyLayer, []roadPoint, mapColor) error,
+	indexed bool,
+	appendPrimitive func(compiledLibertyLayer, geometry.Mesh, mapColor) error,
 ) error {
 	features := bucket.sourceLayers[layer.sourceLayer]
 	geometryScale := math.Exp2(zoom - float64(bucket.tile.Z))
@@ -309,11 +333,11 @@ func compileLibertyLineLayer(
 		}
 	}
 	for _, batch := range batches {
-		triangles, err := tessellateLibertyLines(batch.paths, batch.paint, maxTileRenderedTriangles)
+		mesh, err := tessellateLibertyGeometry(batch.paths, batch.paint, maxTileRenderedTriangles, indexed)
 		if err != nil {
 			return err
 		}
-		if err := appendPrimitive(layer, triangles, batch.paint.color); err != nil {
+		if err := appendPrimitive(layer, mesh, batch.paint.color); err != nil {
 			return err
 		}
 	}
@@ -417,15 +441,12 @@ func closedLibertyRing(ring []roadPoint) []roadPoint {
 }
 
 func tessellateLibertyLines(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int) ([]roadPoint, error) {
-	triangles := make([]roadPoint, 0, libertyLineVertexCapacity(paths, paint, maximumTriangles))
+	mesh, err := tessellateLibertyGeometry(paths, paint, maximumTriangles, false)
+	return mesh.Vertices, err
+}
+
+func appendLibertyLines(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int, mesh *geometry.Builder[roadPoint]) error {
 	if paint.width <= polygonEpsilon {
-		return triangles, nil
-	}
-	appendTriangle := func(first, second, third roadPoint) error {
-		if len(triangles)/3 >= maximumTriangles {
-			return fmt.Errorf("%w: tessellated line exceeds %d-triangle limit", errFeatureResourceLimit, maximumTriangles)
-		}
-		triangles = append(triangles, first, second, third)
 		return nil
 	}
 	for _, rawPath := range paths {
@@ -436,73 +457,44 @@ func tessellateLibertyLines(paths [][]roadPoint, paint libertyLinePaint, maximum
 		path = offsetLibertyLine(path, paint.offset)
 		segments, err := libertyDashedSegments(path, paint.dashes, paint.width, maximumTriangles)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(segments) == 0 {
 			continue
 		}
 		for _, segment := range segments {
-			start, end := segment.Start, segment.End
-			deltaX := end.X - start.X
-			deltaY := end.Y - start.Y
-			length := math.Hypot(deltaX, deltaY)
-			if length <= polygonEpsilon {
-				continue
-			}
-			if paint.lineCap == "square" {
-				extensionX := deltaX / length * paint.width / 2
-				extensionY := deltaY / length * paint.width / 2
-				start.X -= extensionX
-				start.Y -= extensionY
-				end.X += extensionX
-				end.Y += extensionY
-			}
-			normalX := -deltaY / length * paint.width / 2
-			normalY := deltaX / length * paint.width / 2
-			first := roadPoint{X: start.X + normalX, Y: start.Y + normalY}
-			second := roadPoint{X: start.X - normalX, Y: start.Y - normalY}
-			third := roadPoint{X: end.X + normalX, Y: end.Y + normalY}
-			fourth := roadPoint{X: end.X - normalX, Y: end.Y - normalY}
-			if err := appendTriangle(first, second, third); err != nil {
-				return nil, err
-			}
-			if err := appendTriangle(third, second, fourth); err != nil {
-				return nil, err
-			}
-			if paint.lineCap == "round" && len(paint.dashes) > 0 {
-				if err := appendLibertyDisk(start, paint.width/2, appendTriangle); err != nil {
-					return nil, err
-				}
-				if err := appendLibertyDisk(end, paint.width/2, appendTriangle); err != nil {
-					return nil, err
-				}
+			if err := geometry.AppendLineSegment(mesh, segment.Start, segment.End, paint.width, paint.lineCap, len(paint.dashes) > 0); err != nil {
+				return err
 			}
 		}
 		if len(paint.dashes) == 0 {
-			if paint.lineJoin == "round" {
-				for _, point := range path[1 : len(path)-1] {
-					if err := appendLibertyDisk(point, paint.width/2, appendTriangle); err != nil {
-						return nil, err
-					}
-				}
-			} else {
-				for index := 1; index+1 < len(path); index++ {
-					if err := appendLibertyMiterJoin(path[index-1], path[index], path[index+1], paint.width/2, appendTriangle); err != nil {
-						return nil, err
-					}
-				}
-			}
-			if paint.lineCap == "round" && path[0] != path[len(path)-1] {
-				if err := appendLibertyDisk(path[0], paint.width/2, appendTriangle); err != nil {
-					return nil, err
-				}
-				if err := appendLibertyDisk(path[len(path)-1], paint.width/2, appendTriangle); err != nil {
-					return nil, err
-				}
+			if err := appendLibertyLineJoins(path, paint, mesh); err != nil {
+				return err
 			}
 		}
 	}
-	return triangles, nil
+	return nil
+}
+
+func appendLibertyLineJoins(path []roadPoint, paint libertyLinePaint, mesh *geometry.Builder[roadPoint]) error {
+	for index := 1; index+1 < len(path); index++ {
+		var err error
+		if paint.lineJoin == "round" {
+			err = geometry.AppendDisk(mesh, path[index], paint.width/2)
+		} else {
+			err = appendLibertyMiterJoin(path[index-1], path[index], path[index+1], paint.width/2, mesh.Triangle)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if paint.lineCap == "round" && path[0] != path[len(path)-1] {
+		if err := geometry.AppendDisk(mesh, path[0], paint.width/2); err != nil {
+			return err
+		}
+		return geometry.AppendDisk(mesh, path[len(path)-1], paint.width/2)
+	}
+	return nil
 }
 
 func libertyLineVertexCapacity(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int) int {
@@ -707,28 +699,13 @@ func appendLibertyDisk(
 	radius float64,
 	appendTriangle func(roadPoint, roadPoint, roadPoint) error,
 ) error {
+	ring := geometry.DiskRing(center, radius)
 	for section := range libertyDiskSections {
-		firstDirection := libertyDiskDirections[section]
-		secondDirection := libertyDiskDirections[section+1]
-		first := roadPoint{X: center.X + firstDirection.X*radius, Y: center.Y + firstDirection.Y*radius}
-		second := roadPoint{X: center.X + secondDirection.X*radius, Y: center.Y + secondDirection.Y*radius}
-		if err := appendTriangle(center, first, second); err != nil {
+		if err := appendTriangle(center, ring[section], ring[section+1]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-const libertyDiskSections = 8
-
-var libertyDiskDirections = [...]roadPoint{
-	{X: 1, Y: 0},
-	{X: math.Sqrt2 / 2, Y: math.Sqrt2 / 2},
-	{X: 0, Y: 1},
-	{X: -math.Sqrt2 / 2, Y: math.Sqrt2 / 2},
-	{X: -1, Y: 0},
-	{X: -math.Sqrt2 / 2, Y: -math.Sqrt2 / 2},
-	{X: 0, Y: -1},
-	{X: math.Sqrt2 / 2, Y: -math.Sqrt2 / 2},
-	{X: 1, Y: 0},
-}
+const libertyDiskSections = geometry.DiskSections

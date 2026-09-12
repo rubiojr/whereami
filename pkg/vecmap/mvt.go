@@ -56,6 +56,10 @@ type protobufReader struct {
 }
 
 func decodeRoadBucket(data []byte, tile vectorTileID) (*tileBucket, error) {
+	return decodeRoadBucketGeometry(data, tile, false)
+}
+
+func decodeRoadBucketGeometry(data []byte, tile vectorTileID, indexed bool) (*tileBucket, error) {
 	if len(data) < 2 {
 		return nil, errors.New("MVT data is too short")
 	}
@@ -91,18 +95,19 @@ func decodeRoadBucket(data []byte, tile vectorTileID) (*tileBucket, error) {
 		if fillTriangleCount(bucket.land)+fillTriangleCount(bucket.water) > maxFillTriangles {
 			return nil, fmt.Errorf("MVT tile fill geometry exceeds %d-triangle limit", maxFillTriangles)
 		}
-		features, featureLimits := layer.decodeFeatures(
+		features, featureLimits := layer.decodeFeaturesGeometry(
 			&totalFeatures,
 			&totalPoints,
 			&totalTriangles,
 			&styleTriangulationBudget,
+			indexed,
 		)
 		reportMVTResourceLimits(tile, layer.name, "styled", featureLimits)
 		if len(features) > 0 {
 			bucket.sourceLayers[layer.name] = append(bucket.sourceLayers[layer.name], features...)
 		}
 	}
-	if err := compileLibertyTile(bucket, float64(tile.Z)); err != nil {
+	if err := compileLibertyTileGeometry(bucket, float64(tile.Z), indexed); err != nil {
 		return nil, err
 	}
 	return bucket, nil

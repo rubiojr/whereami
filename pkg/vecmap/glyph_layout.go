@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 )
 
 const (
@@ -36,10 +38,12 @@ type sdfPositionedGlyph struct {
 }
 
 type sdfTextLayout struct {
-	glyphs   []sdfPositionedGlyph
-	bounds   libertyCollisionBox
-	vertices []float32
-	scale    float64
+	glyphs          []sdfPositionedGlyph
+	bounds          libertyCollisionBox
+	vertices        []float32
+	indexedVertices []geometry.TextVertex
+	indices         []uint32
+	scale           float64
 }
 
 type sdfAtlasRect struct {
@@ -104,28 +108,44 @@ func buildSDFScene(
 	layouts map[libertySDFLayoutKey]*sdfTextLayout,
 	atlas *sdfGlyphAtlas,
 ) *sdfScene {
+	result, _ := buildSDFSceneGeometry(layouts, atlas, false)
+	return result
+}
+
+func buildSDFSceneGeometry(layouts map[libertySDFLayoutKey]*sdfTextLayout, atlas *sdfGlyphAtlas, indexed bool) (*sdfScene, error) {
 	if len(layouts) == 0 || atlas == nil {
-		return nil
+		return nil, nil
 	}
 	renderable := make(map[libertySDFLayoutKey]*sdfTextLayout, len(layouts))
 	for key, layout := range layouts {
 		if !sdfLayoutFitsAtlas(layout, atlas) {
 			continue
 		}
-		layout.vertices = sdfLayoutVertices(layout, atlas)
-		if len(layout.vertices) == 0 {
+		layout.vertices, layout.indexedVertices, layout.indices = nil, nil, nil
+		if indexed {
+			mesh := geometry.NewBuilder[geometry.TextVertex](true, len(layout.glyphs)*6)
+			if err := sdfLayoutQuads(layout, atlas, func(quad [4]geometry.TextVertex) error {
+				return mesh.Quad(quad[0], quad[1], quad[2], quad[3])
+			}); err != nil {
+				return nil, err
+			}
+			layout.indexedVertices, layout.indices = mesh.Vertices, mesh.Indices
+		} else {
+			layout.vertices = sdfLayoutVertices(layout, atlas)
+		}
+		if len(layout.vertices) == 0 && len(layout.indices) == 0 {
 			continue
 		}
 		renderable[key] = layout
 	}
 	if len(renderable) == 0 {
-		return nil
+		return nil, nil
 	}
 	return &sdfScene{
 		atlas:    atlas,
 		layouts:  renderable,
 		rendered: make(map[libertySDFLayoutKey]struct{}),
-	}
+	}, nil
 }
 
 func sdfLayoutGlyphs(layouts map[libertySDFLayoutKey]*sdfTextLayout) map[sdfGlyphKey]sdfGlyph {
@@ -579,6 +599,17 @@ func sdfLayoutVertices(layout *sdfTextLayout, atlas *sdfGlyphAtlas) []float32 {
 		return nil
 	}
 	vertices := make([]float32, 0, len(layout.glyphs)*6*sdfAtlasVertexElements)
+	_ = sdfLayoutQuads(layout, atlas, func(quad [4]geometry.TextVertex) error {
+		for _, index := range [...]int{0, 1, 2, 0, 2, 3} {
+			vertex := quad[index]
+			vertices = append(vertices, vertex.X, vertex.Y, vertex.U, vertex.V)
+		}
+		return nil
+	})
+	return vertices
+}
+
+func sdfLayoutQuads(layout *sdfTextLayout, atlas *sdfGlyphAtlas, emit func([4]geometry.TextVertex) error) error {
 	for _, positioned := range layout.glyphs {
 		rectangle, exists := atlas.positions[positioned.key]
 		if !exists || len(positioned.glyph.bitmap) == 0 {
@@ -593,18 +624,9 @@ func sdfLayoutVertices(layout *sdfTextLayout, atlas *sdfGlyphAtlas) []float32 {
 		v1 := float64(rectangle.y) / float64(atlas.height)
 		u2 := float64(rectangle.x+rectangle.width) / float64(atlas.width)
 		v2 := float64(rectangle.y+rectangle.height) / float64(atlas.height)
-		vertices = appendSDFQuad(vertices, x1, y1, x2, y2, u1, v1, u2, v2)
+		if err := emit(geometry.TextQuad(x1, y1, x2, y2, u1, v1, u2, v2)); err != nil {
+			return err
+		}
 	}
-	return vertices
-}
-
-func appendSDFQuad(vertices []float32, x1, y1, x2, y2, u1, v1, u2, v2 float64) []float32 {
-	return append(vertices,
-		float32(x1), float32(y1), float32(u1), float32(v1),
-		float32(x2), float32(y1), float32(u2), float32(v1),
-		float32(x2), float32(y2), float32(u2), float32(v2),
-		float32(x1), float32(y1), float32(u1), float32(v1),
-		float32(x2), float32(y2), float32(u2), float32(v2),
-		float32(x1), float32(y2), float32(u1), float32(v2),
-	)
+	return nil
 }
