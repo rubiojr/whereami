@@ -37,10 +37,11 @@ vertices plus three indices inside the indexed scene.
 
 The default compiler/fixture remains expanded; `-indexed` still invokes the
 optional `scene.IndexMesh` pass. These comparison modes are mutually exclusive
-with `-direct-indexed`. The existing decoder still prepares legacy fallback
-buckets in all modes, and the fixture still compiles at source zoom and then at
-zoom 10. Removing that unused work and migrating the live scheduler are separate
-steps under the renderer umbrella.
+with `-direct-indexed`. The fixture uses styled-only decoding and compiles once
+at zoom 10. It skips unused legacy road/fill buckets and source-zoom compilation.
+The existing production decoder still prepares its fallback buckets and compiles
+at source zoom. Styled feature limits remain enforced independently of the
+fallback-only limits. Migrating the live scheduler is a separate step.
 
 ```sh
 CGO_ENABLED=0 go test -cover ./pkg/vecmap/geometry

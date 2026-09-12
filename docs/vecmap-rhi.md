@@ -313,7 +313,8 @@ go run ./cmd/vecmap-fixture \
 post-processing baseline. Defaults remain expanded for controlled comparisons;
 the production scheduler has not been migrated.
 
-Full Madrid fixture preparation, Ryzen AI 7 PRO 350, Go 1.27.1, `GOAMD64=v4`,
+Full Madrid fixture preparation at commit `bb12a2e`, before removing unused decode
+work, Ryzen AI 7 PRO 350, Go 1.27.1, `GOAMD64=v4`,
 GOMAXPROCS 16; three final sequential two-second benchmark samples:
 
 | Preparation | Time/op | Allocated MB/op (decimal) | Allocs/op | Geometry bytes |
@@ -369,6 +370,40 @@ Verification:
 
 The full-scene test and benchmark commands are in
 [`pkg/vecmap/geometry/README.md`](../pkg/vecmap/geometry/README.md).
+
+### Styled-only fixture decoding
+
+Kata **fte6** separates feature decoding from legacy fallback preparation and
+automatic source-zoom compilation. The fixture now decodes styled features and
+compiles once at zoom 10, in all three representations. The existing production
+decoder still prepares road/fill fallback buckets and compiles at source zoom.
+Both paths share the same MVT parsing and bounded styled feature decoder; the
+fallback-only budgets apply only when generating fallback geometry.
+
+Using the same full-fixture benchmark and three sequential two-second samples:
+
+| Mode | Before: time/op | Styled-only: time/op | Before: allocated MB/op | Styled-only: allocated MB/op |
+| --- | ---: | ---: | ---: | ---: |
+| Expanded | 66.2–68.6 ms | 49.8–51.5 ms | 176.48–176.49 | 142.70 |
+| Direct indexed | 51.6–55.1 ms | 31.7–33.3 ms | 120.38 | 90.75 |
+| Expanded + `IndexMesh` | 143.3–148.1 ms | 124.5–129.3 ms | 224.58 | 190.80 |
+
+Direct preparation's allocation volume drops another 24.6%, and allocation count
+falls from about 132,310 to 102,312 per operation. This removes unused preparation
+work; it does not change the scene's geometry buffers or steady-frame GPU work.
+
+Regenerated expanded, direct-indexed and post-indexed JSON captures are each
+byte-for-byte identical to their earlier captures with matching `GOAMD64=v1`.
+Tests compare both decoders' source features, primitives and symbols at zooms 10
+and 10.5, check that styled-only decoding leaves geometry uncompiled and fallback
+buckets empty, and retain malformed-input validation. The fixture still freezes
+style and placement decisions at zoom 10.
+
+The command's font-discovery pass still calls fixture compilation once without
+glyphs before recompiling with the available glyph ranges. That command-level
+duplication is outside `BenchmarkCompileRenderFixture` and remains a separate
+preparation/API improvement. Remaining CPU-engine extraction and live scheduler
+work are tracked by **ngrb**.
 
 ## Flatpak integration
 

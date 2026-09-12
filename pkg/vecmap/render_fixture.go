@@ -42,7 +42,7 @@ func CompileRenderFixtureWithOptions(tileData []byte, glyphRanges map[string][]b
 	if err := verifyTileChecksum(tileData, pinnedTileSHA256); err != nil {
 		return nil, err
 	}
-	bucket, err := decodeRoadBucketGeometry(tileData, pinnedTile, options.DirectIndexed)
+	bucket, err := decodeStyledBucketGeometry(tileData, pinnedTile, options.DirectIndexed)
 	if err != nil {
 		return nil, err
 	}

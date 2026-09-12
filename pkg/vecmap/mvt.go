@@ -60,6 +60,29 @@ func decodeRoadBucket(data []byte, tile vectorTileID) (*tileBucket, error) {
 }
 
 func decodeRoadBucketGeometry(data []byte, tile vectorTileID, indexed bool) (*tileBucket, error) {
+	bucket, err := decodeTileFeatures(data, tile, tileDecodeOptions{indexed: indexed, legacyGeometry: true})
+	if err != nil {
+		return nil, err
+	}
+	if err := compileLibertyTileGeometry(bucket, float64(tile.Z), indexed); err != nil {
+		return nil, err
+	}
+	return bucket, nil
+}
+
+// decodeStyledBucketGeometry decodes bounded feature data without preparing the
+// legacy fallback buckets or choosing a style zoom. The caller compiles once at
+// its desired zoom. Source features and their topology remain reusable.
+func decodeStyledBucketGeometry(data []byte, tile vectorTileID, indexed bool) (*tileBucket, error) {
+	return decodeTileFeatures(data, tile, tileDecodeOptions{indexed: indexed})
+}
+
+type tileDecodeOptions struct {
+	indexed        bool
+	legacyGeometry bool
+}
+
+func decodeTileFeatures(data []byte, tile vectorTileID, options tileDecodeOptions) (*tileBucket, error) {
 	if len(data) < 2 {
 		return nil, errors.New("MVT data is too short")
 	}
@@ -78,39 +101,43 @@ func decodeRoadBucketGeometry(data []byte, tile vectorTileID, indexed bool) (*ti
 	totalPoints := 0
 	totalTriangles := 0
 	for _, layer := range layers {
-		var fillLimits resourceLimitSummary
-		switch layer.name {
-		case "transportation":
-			if err := layer.appendRoads(bucket); err != nil {
-				if !errors.Is(err, errRoadResourceLimit) {
-					return nil, fmt.Errorf("decode transportation layer: %w", err)
-				}
+		if options.legacyGeometry {
+			if err := layer.appendLegacyGeometry(bucket, &fillTriangulationBudget); err != nil {
+				return nil, err
 			}
-		case "land", "landcover", "landuse", "park":
-			fillLimits = layer.appendPolygons(&bucket.land, &fillTriangulationBudget)
-		case "water":
-			fillLimits = layer.appendPolygons(&bucket.water, &fillTriangulationBudget)
-		}
-		reportMVTResourceLimits(tile, layer.name, "fill", fillLimits)
-		if fillTriangleCount(bucket.land)+fillTriangleCount(bucket.water) > maxFillTriangles {
-			return nil, fmt.Errorf("MVT tile fill geometry exceeds %d-triangle limit", maxFillTriangles)
 		}
 		features, featureLimits := layer.decodeFeaturesGeometry(
 			&totalFeatures,
 			&totalPoints,
 			&totalTriangles,
 			&styleTriangulationBudget,
-			indexed,
+			options.indexed,
 		)
 		reportMVTResourceLimits(tile, layer.name, "styled", featureLimits)
 		if len(features) > 0 {
 			bucket.sourceLayers[layer.name] = append(bucket.sourceLayers[layer.name], features...)
 		}
 	}
-	if err := compileLibertyTileGeometry(bucket, float64(tile.Z), indexed); err != nil {
-		return nil, err
-	}
 	return bucket, nil
+}
+
+func (l *mvtLayer) appendLegacyGeometry(bucket *tileBucket, budget *triangulationBudget) error {
+	var limits resourceLimitSummary
+	switch l.name {
+	case "transportation":
+		if err := l.appendRoads(bucket); err != nil && !errors.Is(err, errRoadResourceLimit) {
+			return fmt.Errorf("decode transportation layer: %w", err)
+		}
+	case "land", "landcover", "landuse", "park":
+		limits = l.appendPolygons(&bucket.land, budget)
+	case "water":
+		limits = l.appendPolygons(&bucket.water, budget)
+	}
+	reportMVTResourceLimits(bucket.tile, l.name, "fill", limits)
+	if fillTriangleCount(bucket.land)+fillTriangleCount(bucket.water) > maxFillTriangles {
+		return fmt.Errorf("MVT tile fill geometry exceeds %d-triangle limit", maxFillTriangles)
+	}
+	return nil
 }
 
 func reportMVTResourceLimits(tile vectorTileID, layer, stage string, limits resourceLimitSummary) {
