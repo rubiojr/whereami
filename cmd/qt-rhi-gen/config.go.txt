@@ -140,7 +140,6 @@ func rhiFilter(parsed *CppParsedHeader) {
 		if c.ClassName == "QQuickWindow" {
 			c.Ctors = nil
 			c.CanDelete = false
-			c.DirectInherits = nil
 		}
 		if strings.HasPrefix(c.ClassName, "QRhi") && c.Abstract {
 			c.Ctors = nil

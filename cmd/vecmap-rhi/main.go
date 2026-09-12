@@ -18,7 +18,6 @@ import (
 	"time"
 
 	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/qml"
 	rhi "github.com/rubiojr/whereami/internal/qtrhi"
 	"github.com/rubiojr/whereami/internal/vecmaprhi"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
@@ -30,19 +29,28 @@ func main() {
 	duration := flag.Duration("duration", 5*time.Second, "run duration; zero runs until window closes")
 	animate := flag.Bool("animate", true, "replay a deterministic pan/zoom/bearing trace")
 	screenshot := flag.String("screenshot", "", "save a PNG before exiting")
+	foreground := flag.Bool("foreground", false, "keep the benchmark window on top and request activation")
+	diagnostics := flag.Bool("diagnostics", false, "report timer delivery and window state around pacing gaps")
 	flag.Parse()
-	if err := run(*path, *duration, *animate, *screenshot); err != nil {
+	if err := run(*path, benchmarkOptions{*duration, *animate, *screenshot, *foreground, *diagnostics}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(path string, duration time.Duration, animate bool, screenshot string) error {
+type benchmarkOptions struct {
+	duration                time.Duration
+	animate                 bool
+	screenshot              string
+	foreground, diagnostics bool
+}
+
+func run(path string, options benchmarkOptions) error {
 	document, err := readDocument(path)
 	if err != nil {
 		return err
 	}
-	return display(document, duration, animate, screenshot)
+	return display(document, options)
 }
 
 func readDocument(path string) (scene.Document, error) {
@@ -62,7 +70,8 @@ func readDocument(path string) (scene.Document, error) {
 	return document, nil
 }
 
-func display(document scene.Document, duration time.Duration, animate bool, screenshot string) error {
+func display(document scene.Document, options benchmarkOptions) error {
+	duration, animate, screenshot := options.duration, options.animate, options.screenshot
 	app := qt.NewQApplication([]string{"vecmap-rhi"})
 	defer app.Delete()
 	item := rhi.NewQQuickItem()
@@ -73,6 +82,7 @@ func display(document scene.Document, duration time.Duration, animate bool, scre
 	var renderer *vecmaprhi.Renderer
 	var mu sync.Mutex
 	var samples frameSamples
+	var pacing pacingSamples
 	item.OnUpdatePaintNode(func(_ func(*rhi.QSGNode, *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode, old *rhi.QSGNode, _ *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode {
 		if old == nil {
 			renderer = vecmaprhi.New(item, func(stats vecmaprhi.Stats) {
@@ -84,32 +94,23 @@ func display(document scene.Document, duration time.Duration, animate bool, scre
 		renderer.Sync(*frame.Load())
 		return renderer.Node.QSGNode
 	})
-	engine := qml.NewQQmlApplicationEngine()
-	engine.RootContext().SetContextProperty("mapItem", item.QObject)
-	engine.LoadData([]byte(fmt.Sprintf(`import QtQuick
-import QtQuick.Window
-Window {visible:false; width:%d; height:%d; color:"#f8f4f0"; title:"vecmap RHI â€” retained scene prototype"
- Item {id:host; anchors.fill:parent; clip:true
-  Binding {target:mapItem;property:"parent";value:host}
-  Binding {target:mapItem;property:"width";value:host.width}
-  Binding {target:mapItem;property:"height";value:host.height}
- }
-}`, document.Width, document.Height)))
-	if len(engine.RootObjects()) == 0 {
-		engine.Delete()
-		return fmt.Errorf("load QML window")
+	engine, err := createBenchmarkWindow(document, item, options)
+	if err != nil {
+		return err
 	}
-	graphics := rhi.NewQQuickGraphicsConfiguration()
-	graphics.SetTimestamps(true)
-	item.Window().SetGraphicsConfiguration(graphics)
-	graphics.Delete()
-	visible := qt.NewQVariant8(true)
-	engine.RootObjects()[0].SetProperty("visible", visible)
-	visible.Delete()
+	window := item.Window()
 	start := time.Now()
 	timer := qt.NewQTimer()
 	var screenshotError error
 	timer.OnTimeout(func() {
+		if options.diagnostics {
+			state := windowState{Visible: window.IsVisible(), Active: window.IsActive(), Exposed: window.IsExposed()}
+			swaps := engine.RootObjects()[0].Property("swapCount")
+			state.Swaps = swaps.ToInt()
+			mu.Lock()
+			pacing.add(time.Now(), samples.lastFrame, samples.latest.Frames, state)
+			mu.Unlock()
+		}
 		elapsed := time.Since(start)
 		if duration > 0 && elapsed >= duration {
 			if screenshot != "" {
@@ -133,6 +134,10 @@ Window {visible:false; width:%d; height:%d; color:"#f8f4f0"; title:"vecmap RHI â
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0)
+	if options.diagnostics {
+		pacing.report()
+	}
 	fmt.Printf("scene draws=%d labels=%d missing_fonts=%q\n", len(document.Scene.Draws), document.Labels, document.MissingFonts)
 	fmt.Printf("backend=%s device=%s\n", latest.Backend, latest.Device)
 	fmt.Printf("frames=%d mesh_uploads=%d texture_uploads=%d uploaded_bytes=%d live_meshes=%d live_textures=%d\n", latest.Frames, latest.MeshUploads, latest.TextureUploads, latest.UploadedBytes, latest.LiveMeshes, latest.LiveTextures)

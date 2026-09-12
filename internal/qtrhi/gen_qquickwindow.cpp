@@ -5,6 +5,7 @@
 #include <QQuickGraphicsConfiguration>
 #include <QQuickWindow>
 #include <rhi/qrhi.h>
+#include <QWindow>
 #include <qquickwindow.h>
 #include "gen_qquickwindow.h"
 
@@ -18,6 +19,10 @@ extern "C" {
 
 extern "C" void qtrhi_native_destroyed(void*);
 extern "C" void qtrhi_callback_released(intptr_t);
+void qtrhi_QQuickWindow_virtbase(QQuickWindow* src, QWindow** outptr_QWindow) {
+	*outptr_QWindow = static_cast<QWindow*>(src);
+}
+
 QImage* qtrhi_QQuickWindow_grabWindow(QQuickWindow* self) {
 	return new QImage(self->grabWindow());
 }

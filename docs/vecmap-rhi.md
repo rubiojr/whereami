@@ -57,7 +57,8 @@ go run ./cmd/vecmap-fixture \
   -out /tmp/madrid-scene.json
 
 QSG_RHI_BACKEND=vulkan bin/vecmap-rhi \
-  -scene /tmp/madrid-scene.json -duration 8s -screenshot /tmp/madrid.png
+  -scene /tmp/madrid-scene.json -duration 8s -foreground -diagnostics \
+  -screenshot /tmp/madrid.png
 ```
 
 The glyph directory contains `Noto%20Sans%20Regular.pbf`,
@@ -165,6 +166,40 @@ presentation timestamp. The fixture freezes style widths, feature visibility,
 and collision decisions at zoom 10. It does not exercise tile arrivals, source
 zoom transitions, live placement, or the full application. Cold build times and
 a controlled MapLibre comparison have not been measured yet.
+
+### Control window placement when measuring pacing
+
+Use `-foreground` for desktop benchmark runs. It requests activation and keeps
+the window on top, reducing occlusion-related presentation throttling. This is
+an opt-in benchmark setting, not a change to production map windows.
+
+`-diagnostics` reports GUI timer intervals, active/exposed tick counts, and gaps
+over 100 ms with window state and Qt's queued `frameSwapped` count. Diagnostics
+retain at most 60,000 timer samples and 64 gap records. Startup's first 30 render
+callbacks are excluded from gap records, consistently with rendering timings.
+The report also records the Qt platform plugin, renderer, device and trace type.
+
+Investigation of kata `vx93` on the XCB desktop found:
+
+| Trace | Foreground | Frames / duration | Callback p99 |
+| --- | --- | ---: | ---: |
+| Geographic, Vulkan | no | 153 / 8 s | 1.001 s |
+| Geographic, Vulkan | yes | 478 / 8 s | 22.66 ms |
+| Affine, Vulkan | yes | 361 / 6 s | 18.40 ms |
+| Geographic, OpenGL | yes | 358 / 6 s | 18.38 ms |
+
+Both trace implementations exhibited gaps without the foreground control. The
+GUI timer stalled alongside rendering, while CPU draw work and GPU time remained
+small. Keeping the window on top removed the one-second gaps in these runs,
+including periods when the window was not active. Qt sometimes still reported
+`visible=true` and `exposed=true` during stalls, so those flags alone cannot certify
+a reliable timing run.
+
+This rules out the geographic camera as the specific cause of these observations
+and points to window/presentation pacing. It does not identify the exact blocking
+call in Qt, the driver or compositor. `frameSwapped` is **not** an actual display
+presentation timestamp; real presentation tracking remains a separate requirement
+for the MapLibre comparison. Poor cadence samples are reported, not discarded.
 
 ## Flatpak integration
 

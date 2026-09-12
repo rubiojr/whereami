@@ -53,6 +53,7 @@ const (
 
 type QQuickWindow struct {
 	h *C.QQuickWindow
+	*qt6.QWindow
 }
 
 func (this *QQuickWindow) cPointer() *C.QQuickWindow {
@@ -74,8 +75,11 @@ func newQQuickWindow(h *C.QQuickWindow) *QQuickWindow {
 	if h == nil {
 		return nil
 	}
+	var outptr_QWindow *C.QWindow = nil
+	C.qtrhi_QQuickWindow_virtbase(h, &outptr_QWindow)
 
-	return &QQuickWindow{h: h}
+	return &QQuickWindow{h: h,
+		QWindow: qt6.UnsafeNewQWindow(unsafe.Pointer(outptr_QWindow))}
 }
 
 // UnsafeNewQQuickWindow constructs the type using only unsafe pointers.
