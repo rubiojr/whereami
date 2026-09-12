@@ -26,8 +26,19 @@ const uniformBytes = 176
 
 type gpuMesh struct {
 	buffer   *rhi.QRhiBuffer
+	indices  *rhi.QRhiBuffer
 	revision uint64
 }
+
+func (m gpuMesh) release() {
+	if m.indices != nil {
+		m.indices.Delete()
+	}
+	if m.buffer != nil {
+		m.buffer.Delete()
+	}
+}
+
 type gpuTexture struct {
 	texture  *rhi.QRhiTexture
 	bindings [2]*rhi.QRhiShaderResourceBindings
@@ -235,27 +246,47 @@ func (r *Renderer) syncMeshes(s *scene.Scene, updates *rhi.QRhiResourceUpdateBat
 			if old.revision == mesh.Revision {
 				continue
 			}
-			old.buffer.Delete()
+			old.release()
 			delete(r.meshes, mesh.ID)
 		}
-		buffer := r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__VertexBuffer, uint32(len(mesh.Vertices)*24))
-		if !buffer.Create() {
-			buffer.Delete()
-			return fmt.Errorf("create mesh %d", mesh.ID)
+		gpu, err := r.uploadMesh(mesh, updates)
+		if err != nil {
+			return err
 		}
-		updates.UploadStaticBuffer3(buffer, unsafe.Pointer(unsafe.SliceData(mesh.Vertices)))
-		runtime.KeepAlive(mesh.Vertices)
-		r.meshes[mesh.ID] = gpuMesh{buffer, mesh.Revision}
+		r.meshes[mesh.ID] = gpu
 		r.stats.MeshUploads++
-		r.stats.UploadedBytes += uint64(len(mesh.Vertices) * 24)
+		r.stats.UploadedBytes += mesh.BufferBytes()
 	}
 	for id, mesh := range r.meshes {
 		if !desired[id] {
-			mesh.buffer.Delete()
+			mesh.release()
 			delete(r.meshes, id)
 		}
 	}
 	return nil
+}
+
+func (r *Renderer) uploadMesh(mesh scene.Mesh, updates *rhi.QRhiResourceUpdateBatch) (gpuMesh, error) {
+	gpu := gpuMesh{revision: mesh.Revision}
+	gpu.buffer = r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__VertexBuffer, uint32(len(mesh.Vertices)*24))
+	if !gpu.buffer.Create() {
+		gpu.release()
+		return gpuMesh{}, fmt.Errorf("create mesh %d", mesh.ID)
+	}
+	// Create both buffers before queuing uploads, so failure cannot leave an
+	// update batch referencing a resource released by this function.
+	if len(mesh.Indices) > 0 {
+		gpu.indices = r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__IndexBuffer, uint32(len(mesh.Indices)*4))
+		if !gpu.indices.Create() {
+			gpu.release()
+			return gpuMesh{}, fmt.Errorf("create indices for mesh %d", mesh.ID)
+		}
+		updates.UploadStaticBuffer3(gpu.indices, unsafe.Pointer(unsafe.SliceData(mesh.Indices)))
+		runtime.KeepAlive(mesh.Indices)
+	}
+	updates.UploadStaticBuffer3(gpu.buffer, unsafe.Pointer(unsafe.SliceData(mesh.Vertices)))
+	runtime.KeepAlive(mesh.Vertices)
+	return gpu, nil
 }
 
 func (r *Renderer) syncTextures(s *scene.Scene, updates *rhi.QRhiResourceUpdateBatch) error {
@@ -440,11 +471,17 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 	cb.SetGraphicsPipeline(r.pipelines[pipeline])
 	var current uint64
 	for index, draw := range r.frame.Scene.Draws {
+		mesh := r.meshes[draw.Mesh]
 		if current != draw.Mesh {
-			cb.SetVertexInput(0, 1, struct {
+			binding := struct {
 				First  *rhi.QRhiBuffer
 				Second uint32
-			}{r.meshes[draw.Mesh].buffer, 0})
+			}{mesh.buffer, 0}
+			if mesh.indices != nil {
+				cb.SetVertexInput4(0, 1, binding, mesh.indices, 0, rhi.QRhiCommandBuffer__IndexUInt32)
+			} else {
+				cb.SetVertexInput(0, 1, binding)
+			}
 			current = draw.Mesh
 		}
 		sampler := 0
@@ -455,7 +492,11 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 			First  int
 			Second uint32
 		}{0, uint32(index * r.stride)})
-		cb.Draw3(draw.Count, 1, draw.First)
+		if mesh.indices != nil {
+			cb.DrawIndexed3(draw.Count, 1, draw.First)
+		} else {
+			cb.Draw3(draw.Count, 1, draw.First)
+		}
 	}
 	r.stats.Frames++
 	r.stats.Draws += uint64(len(r.frame.Scene.Draws))
@@ -485,7 +526,7 @@ func (r *Renderer) release() {
 		r.deleteTexture(texture)
 	}
 	for _, mesh := range r.meshes {
-		mesh.buffer.Delete()
+		mesh.release()
 	}
 	if r.uniform != nil {
 		r.uniform.Delete()

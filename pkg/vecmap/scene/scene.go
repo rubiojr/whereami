@@ -44,6 +44,32 @@ type Material struct {
 type Mesh struct {
 	ID, Revision uint64
 	Vertices     []Vertex
+	// Optional uint32 indices. Draw.First/Count address this array when set,
+	// otherwise they address Vertices. Neither representation reorders draws.
+	Indices []uint32 `json:",omitempty"`
+}
+
+// BufferBytes is the packed size of the vertex and optional index buffers.
+func (m Mesh) BufferBytes() uint64 { return uint64(len(m.Vertices))*24 + uint64(len(m.Indices))*4 }
+
+// Validate checks resource bounds and every referenced vertex before GPU upload.
+func (m Mesh) Validate() error {
+	if m.ID == 0 || len(m.Vertices) == 0 || len(m.Vertices) > (1<<31-1)/24 || len(m.Indices) > (1<<31-1)/4 {
+		return fmt.Errorf("invalid mesh %d", m.ID)
+	}
+	for _, v := range m.Vertices {
+		for _, f := range [...]float32{v.X, v.Y, v.OffsetX, v.OffsetY, v.U, v.V} {
+			if !finite(f) {
+				return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
+			}
+		}
+	}
+	for _, index := range m.Indices {
+		if uint64(index) >= uint64(len(m.Vertices)) {
+			return fmt.Errorf("index out of bounds in mesh %d", m.ID)
+		}
+	}
+	return nil
 }
 
 // Texture is tightly packed, unpremultiplied RGBA8 data. Pixel storage and atlas
@@ -55,7 +81,8 @@ type Texture struct {
 }
 
 type Draw struct {
-	Mesh         uint64
+	Mesh uint64
+	// First and Count are vertex or index elements according to the mesh.
 	First, Count uint32
 	Transform    int
 	Material     Material
@@ -102,19 +129,15 @@ func (s *Scene) Validate() error {
 func validateMeshes(values []Mesh) (map[uint64]int, error) {
 	meshes := make(map[uint64]int, len(values))
 	for _, mesh := range values {
-		if mesh.ID == 0 || len(mesh.Vertices) == 0 || len(mesh.Vertices) > (1<<31-1)/24 {
-			return nil, fmt.Errorf("invalid mesh %d", mesh.ID)
+		if err := mesh.Validate(); err != nil {
+			return nil, err
 		}
 		if _, exists := meshes[mesh.ID]; exists {
 			return nil, fmt.Errorf("duplicate mesh %d", mesh.ID)
 		}
 		meshes[mesh.ID] = len(mesh.Vertices)
-		for _, v := range mesh.Vertices {
-			for _, f := range [...]float32{v.X, v.Y, v.OffsetX, v.OffsetY, v.U, v.V} {
-				if !finite(f) {
-					return nil, fmt.Errorf("non-finite vertex in mesh %d", mesh.ID)
-				}
-			}
+		if len(mesh.Indices) > 0 {
+			meshes[mesh.ID] = len(mesh.Indices)
 		}
 	}
 	return meshes, nil

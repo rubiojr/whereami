@@ -15,6 +15,7 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   camera transforms. Resource IDs and revisions are logical Go values. There are
   no Qt types, native pointers, or cgo dependencies. Adjacent compatible draws
   coalesce without sorting transparent content out of order.
+  Meshes support optional uint32 indices; draw ranges address indices when present.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -200,6 +201,47 @@ and points to window/presentation pacing. It does not identify the exact blockin
 call in Qt, the driver or compositor. `frameSwapped` is **not** an actual display
 presentation timestamp; real presentation tracking remains a separate requirement
 for the MapLibre comparison. Poor cadence samples are reported, not discarded.
+
+## Optional indexed meshes
+
+Use `vecmap-fixture -indexed` to capture a compact representation. This is an
+offline preparation step and defaults to false; it is never run on the render
+thread. `scene.IndexMesh` uses Go maps to identify bit-identical vertices, retaining
+UVs, pixel offsets, signed zero, triangle order, and all draw ranges. It returns
+the original mesh when indexing would increase buffer bytes. Already indexed
+meshes pass through unchanged.
+
+Mesh IDs/revisions remain producer-owned. Index before publication, or advance
+the revision when publishing a replacement. The Qt adapter retains both buffers
+and reuses the existing generated QRhi indexed-draw APIs. It supports switching
+between indexed and expanded revisions and releases both buffers on eviction,
+resource invalidation and destruction.
+
+For the same Madrid fixture:
+
+| Geometry | Expanded | Indexed |
+| --- | ---: | ---: |
+| Vertices | 782,409 | 272,038 |
+| uint32 indices | 0 | 782,409 |
+| Geometry buffer bytes | 18,777,816 | 9,658,548 |
+| Total initial upload bytes, including textures | 19,045,116 | 9,925,848 |
+
+Geometry buffers shrink **48.6%**. Two alternating six-second foreground Vulkan
+runs per representation had GPU p95 of 0.897–0.908 ms expanded and 0.914–0.917 ms
+indexed. Both maintained approximately 60 Hz. This establishes a memory/upload
+benefit, **not a steady-frame GPU speedup** for this scene.
+
+The generic post-processing pass initially took about 101 ms on this fixture.
+A plain-XY key fast path reduced one measured run to 77 ms. The synthetic grid
+benchmark dropped from about 31 ms to 23.5 ms. Packing still has a meaningful CPU
+and transient-allocation cost, so it remains opt-in. Live geometry preparation
+should eventually emit indices directly from triangulation/tessellation instead
+of expanding vertices and deduplicating them again.
+
+Headless tests verify exact attribute reconstruction, range validation,
+idempotence, and skipping unhelpful indexing. Qt tests compare complete
+framebuffers across representations and exercise both layout transitions,
+resource reconstruction and teardown.
 
 ## Flatpak integration
 

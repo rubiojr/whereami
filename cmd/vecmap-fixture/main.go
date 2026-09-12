@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rubiojr/whereami/pkg/vecmap"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
@@ -19,14 +20,15 @@ func main() {
 	tile := flag.String("tile", "", "pinned z9/250/193 PBF file")
 	glyphDir := flag.String("glyph-dir", "", "directory of URL-escaped font-stack.pbf files (range 0-255)")
 	output := flag.String("out", "", "output JSON scene (stdout when empty)")
+	indexed := flag.Bool("indexed", false, "deduplicate vertices into indexed buffers before capturing")
 	flag.Parse()
-	if err := run(*tile, *glyphDir, *output); err != nil {
+	if err := run(*tile, *glyphDir, *output, *indexed); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(path, glyphDir, output string) error {
+func run(path, glyphDir, output string, indexed bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -55,7 +57,12 @@ func run(path, glyphDir, output string) error {
 	document := scene.Document{Scene: *fixture.Scene, Transforms: fixture.Frame(fixture.Camera).Transforms, Width: 512, Height: 512, Labels: fixture.Labels, MissingFonts: fixture.MissingFonts, Source: "OpenFreeMap 20260823 z9/250/193; Liberty at fixed zoom 10"}
 	document.Camera = &fixture.Camera
 	document.TileSpaces = []scene.TileSpace{{Tile: view.TileID{X: 250, Y: 193, Z: 9}}}
-	fmt.Fprintf(os.Stderr, "draws=%d vertices=%d textures=%d labels=%d missing_fonts=%q\n", len(document.Scene.Draws), len(document.Scene.Meshes[0].Vertices), len(document.Scene.Textures), document.Labels, document.MissingFonts)
+	if indexed {
+		if err := indexDocument(&document); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(os.Stderr, "draws=%d vertices=%d indices=%d textures=%d labels=%d missing_fonts=%q\n", len(document.Scene.Draws), len(document.Scene.Meshes[0].Vertices), len(document.Scene.Meshes[0].Indices), len(document.Scene.Textures), document.Labels, document.MissingFonts)
 	out := os.Stdout
 	if output != "" {
 		out, err = os.Create(output)
@@ -65,4 +72,20 @@ func run(path, glyphDir, output string) error {
 		defer out.Close()
 	}
 	return json.NewEncoder(out).Encode(document)
+}
+
+func indexDocument(document *scene.Document) error {
+	start := time.Now()
+	var before, after uint64
+	for i, mesh := range document.Scene.Meshes {
+		before += mesh.BufferBytes()
+		indexed, err := scene.IndexMesh(mesh)
+		if err != nil {
+			return err
+		}
+		document.Scene.Meshes[i] = indexed
+		after += indexed.BufferBytes()
+	}
+	fmt.Fprintf(os.Stderr, "indexing=%s geometry_bytes=%d->%d\n", time.Since(start), before, after)
+	return document.Validate()
 }

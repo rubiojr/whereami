@@ -22,11 +22,12 @@ func TestRenderer(t *testing.T) {
 	app := qt.NewQApplication([]string{"rhi-test"})
 	defer app.Delete()
 	for range 3 {
-		testRendererLifetime(t)
+		testRendererLifetime(t, false)
+		testRendererLifetime(t, true)
 	}
 }
 
-func testRendererLifetime(t *testing.T) {
+func testRendererLifetime(t *testing.T, indexed bool) {
 	t.Helper()
 	vertices := []scene.Vertex{{X: 0, Y: 0}, {X: 100, Y: 0}, {X: 0, Y: 80}, {X: 100, Y: 0}, {X: 100, Y: 80}, {X: 0, Y: 80}}
 	s := &scene.Scene{Meshes: []scene.Mesh{{ID: 1, Revision: 1, Vertices: vertices}}, Draws: []scene.Draw{{Mesh: 1, Count: 6, Material: scene.Material{Color: [4]float32{1, 0, 0, 1}}}}}
@@ -44,6 +45,13 @@ func testRendererLifetime(t *testing.T) {
 			color = [4]float32{1, 1, 0, 1}
 		}
 		s.Draws = append(s.Draws, scene.Draw{Mesh: 1, First: uint32(first), Count: 6, Material: scene.Material{Kind: kind, Texture: id, Color: color, PatternSize: [2]float32{2, 2}, FontScale: 1}})
+	}
+	expandedVertices := s.Meshes[0].Vertices
+	if indexed {
+		mesh, err := scene.IndexMesh(s.Meshes[0])
+		require.NoError(t, err)
+		require.NotEmpty(t, mesh.Indices)
+		s.Meshes[0] = mesh
 	}
 	require.NoError(t, s.Validate())
 	frame := scene.Frame{Scene: s, Transforms: []scene.Affine{{M11: 1, M22: 1}}, DevicePixelRatio: 1}
@@ -93,6 +101,22 @@ Window { id:rootWindow; visible:true; width:160; height:120; color:"black"
 	checkPixel(t, image, 55, 35, 0, 0, 255)
 	checkPixel(t, image, 75, 35, 255, 255, 0)
 	checkPixel(t, image, 105, 30, 0, 0, 0) // parent's scissor excludes our wider mesh
+	// Compare the complete framebuffer across representations, not just a few
+	// sampled pixels. This also exercises switching cached buffer layouts.
+	comparison := *s
+	comparison.Meshes = []scene.Mesh{{ID: 1, Revision: 2, Vertices: expandedVertices}}
+	if !indexed {
+		mesh, err := scene.IndexMesh(comparison.Meshes[0])
+		require.NoError(t, err)
+		comparison.Meshes[0] = mesh
+	}
+	require.NoError(t, comparison.Validate())
+	frame.Scene = &comparison
+	item.Update()
+	qt.QCoreApplication_ProcessEvents()
+	other := window.GrabWindow()
+	assert.True(t, image.OperatorEqual(other), "indexed and expanded output differ")
+	other.Delete()
 	image.Delete()
 	angle := qt.NewQVariant9(15)
 	engine.RootObjects()[0].SetProperty("clipAngle", angle)
@@ -134,7 +158,12 @@ Window { id:rootWindow; visible:true; width:160; height:120; color:"black"
 	assert.Equal(t, uploads+1, stats.MeshUploads, "released resources must be reconstructed")
 	assert.Equal(t, uint64(8), stats.TextureUploads)
 	uploads = stats.MeshUploads
-	replacement := &scene.Scene{Meshes: []scene.Mesh{{ID: 1, Revision: 2, Vertices: vertices}}, Draws: []scene.Draw{{Mesh: 1, Count: 6, Material: scene.Material{Color: [4]float32{0, 0, 1, 1}}}}}
+	replacement := &scene.Scene{Meshes: []scene.Mesh{{ID: 1, Revision: 3, Vertices: vertices}}, Draws: []scene.Draw{{Mesh: 1, Count: 6, Material: scene.Material{Color: [4]float32{0, 0, 1, 1}}}}}
+	if indexed {
+		mesh, err := scene.IndexMesh(replacement.Meshes[0])
+		require.NoError(t, err)
+		replacement.Meshes[0] = mesh
+	}
 	require.NoError(t, replacement.Validate())
 	frame.Scene = replacement
 	item.Update()
