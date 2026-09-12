@@ -23,6 +23,8 @@ alive until the Qt event loop stops, then call `item.Close()` on the GUI thread.
 
 ## Package layout
 
+- `view/`: toolkit-neutral camera, projection, tile coverage and transforms
+- `scene/`: toolkit-neutral retained rendering data and geographic fixture metadata
 - `quickitem.go`: public item API, construction, publication, and shutdown
 - `quickitem_scene.go`: render-thread updates and retained-scene reconciliation
 - `quickitem_liberty.go`: Liberty layer, SDF atlas, and symbol orchestration

@@ -21,12 +21,6 @@ const (
 
 var errRoadResourceLimit = errors.New("MVT road resource limit exceeded")
 
-type vectorTileID struct {
-	X uint32
-	Y uint32
-	Z uint32
-}
-
 type mvtValue struct {
 	value    any
 	text     string

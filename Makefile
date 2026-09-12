@@ -98,7 +98,7 @@ rhi-build: rhi-shaders
 	QT_RHI_INCLUDE="$(QT_RHI_INCLUDE)" GOAMD64=v4 sh scripts/qt-rhi-env.sh $(GO) build -tags vecmap_rhi -ldflags '$(LDFLAGS)' -o "$(BIN_DIR)/vecmap-rhi" ./cmd/vecmap-rhi
 
 rhi-test:
-	CGO_ENABLED=0 $(GO) test ./pkg/vecmap/scene
+	CGO_ENABLED=0 $(GO) test ./pkg/vecmap/scene ./pkg/vecmap/view
 	QT_RHI_INCLUDE="$(QT_RHI_INCLUDE)" $(GO) test ./cmd/qt-rhi-gen
 	QT_RHI_INCLUDE="$(QT_RHI_INCLUDE)" sh scripts/qt-rhi-env.sh $(GO) test -tags 'vecmap_rhi integration' ./internal/qtrhi ./internal/vecmaprhi
 

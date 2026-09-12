@@ -106,7 +106,7 @@ func NewWithOptions(options Options) (*Item, error) {
 	if options.InitialCamera == nil {
 		initialCamera = NewCamera(Coordinate{}, 9, 0, 0, 0)
 	} else {
-		initialCamera = options.InitialCamera.normalized()
+		initialCamera = options.InitialCamera.Normalized()
 	}
 	item, err := newItem(openFreeMapRoadLoader(options.CacheDir), initialCamera)
 	if err != nil {

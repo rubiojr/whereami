@@ -56,16 +56,8 @@ func readDocument(path string) (scene.Document, error) {
 	if err != nil {
 		return document, err
 	}
-	if err := document.Scene.Validate(); err != nil {
+	if err := document.Validate(); err != nil {
 		return document, err
-	}
-	if document.Width <= 0 || document.Height <= 0 || document.Width > 8192 || document.Height > 8192 {
-		return document, fmt.Errorf("invalid viewport")
-	}
-	for _, draw := range document.Scene.Draws {
-		if draw.Transform >= len(document.Transforms) {
-			return document, fmt.Errorf("missing transform")
-		}
 	}
 	return document, nil
 }
@@ -183,6 +175,15 @@ func (s *frameSamples) add(stats vecmaprhi.Stats) {
 }
 
 func traceTransforms(document scene.Document, t float64, animate bool) []scene.Affine {
+	if document.Camera != nil && len(document.TileSpaces) > 0 {
+		camera := document.Camera.WithViewport(float64(document.Width), float64(document.Height))
+		if animate {
+			camera.Zoom += 0.2 * math.Sin(t)
+			camera.Bearing += 0.15 * math.Sin(t*0.7) * 180 / math.Pi
+			camera = camera.Normalized().Panned(-math.Sin(t*1.3)*20, 0)
+		}
+		return document.FrameAt(camera).Transforms
+	}
 	transforms := slices.Clone(document.Transforms)
 	if !animate {
 		return transforms

@@ -1,4 +1,4 @@
-package vecmap
+package view
 
 import (
 	"testing"
@@ -6,6 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var pinnedTile = TileID{X: 250, Y: 193, Z: 9}
 
 func TestVisibleTileCoverIncludesCenterAndPrefetchRing(t *testing.T) {
 	camera := NewCamera(
@@ -16,7 +18,7 @@ func TestVisibleTileCoverIncludesCenterAndPrefetchRing(t *testing.T) {
 		256,
 	)
 
-	cover := visibleTileCover(camera)
+	cover := VisibleTileCover(camera)
 
 	require.NotEmpty(t, cover)
 	assert.Equal(t, pinnedTile, cover[0])
@@ -28,17 +30,17 @@ func TestVisibleTileCoverIncludesCenterAndPrefetchRing(t *testing.T) {
 func TestVisibleTileCoverWrapsAtAntimeridian(t *testing.T) {
 	camera := NewCamera(Coordinate{Latitude: 0, Longitude: 179.9}, 2, 0, 256, 256)
 
-	cover := visibleTileCover(camera)
+	cover := VisibleTileCover(camera)
 
-	assert.Contains(t, cover, vectorTileID{X: 0, Y: 2, Z: 2})
-	assert.Contains(t, cover, vectorTileID{X: 3, Y: 2, Z: 2})
+	assert.Contains(t, cover, TileID{X: 0, Y: 2, Z: 2})
+	assert.Contains(t, cover, TileID{X: 3, Y: 2, Z: 2})
 	assertUniqueValidTileIDs(t, cover)
 }
 
 func TestVisibleTileCoverBoundsLargeViewportAndSourceZoom(t *testing.T) {
 	camera := NewCamera(Coordinate{}, 20, 33, 1_000_000, 1_000_000)
 
-	cover := visibleTileCover(camera)
+	cover := VisibleTileCover(camera)
 
 	require.NotEmpty(t, cover)
 	assert.LessOrEqual(t, len(cover), maximumCoverSide*maximumCoverSide)
@@ -49,24 +51,24 @@ func TestVisibleTileCoverBoundsLargeViewportAndSourceZoom(t *testing.T) {
 }
 
 func TestVisibleTileCoverRequiresViewport(t *testing.T) {
-	assert.Empty(t, visibleTileCover(NewCamera(Coordinate{}, 9, 0, 0, 100)))
-	assert.Empty(t, visibleTileCover(NewCamera(Coordinate{}, 9, 0, 100, 0)))
+	assert.Empty(t, VisibleTileCover(NewCamera(Coordinate{}, 9, 0, 0, 100)))
+	assert.Empty(t, VisibleTileCover(NewCamera(Coordinate{}, 9, 0, 100, 0)))
 }
 
 func TestTileHierarchyWrapsAtAntimeridian(t *testing.T) {
-	west := vectorTileID{X: 0, Y: 2, Z: 3}
-	east := vectorTileID{X: 7, Y: 2, Z: 3}
+	west := TileID{X: 0, Y: 2, Z: 3}
+	east := TileID{X: 7, Y: 2, Z: 3}
 
-	westParent, exists := west.parent()
+	westParent, exists := west.Parent()
 	assert.True(t, exists)
-	assert.Equal(t, vectorTileID{X: 0, Y: 1, Z: 2}, westParent)
-	eastParent, exists := east.parent()
+	assert.Equal(t, TileID{X: 0, Y: 1, Z: 2}, westParent)
+	eastParent, exists := east.Parent()
 	assert.True(t, exists)
-	assert.Equal(t, vectorTileID{X: 3, Y: 1, Z: 2}, eastParent)
-	assert.True(t, tileContains(westParent, west))
-	assert.True(t, tileContains(eastParent, east))
-	assert.False(t, tilesOverlap(westParent, eastParent))
-	_, exists = (vectorTileID{}).parent()
+	assert.Equal(t, TileID{X: 3, Y: 1, Z: 2}, eastParent)
+	assert.True(t, TileContains(westParent, west))
+	assert.True(t, TileContains(eastParent, east))
+	assert.False(t, TilesOverlap(westParent, eastParent))
+	_, exists = (TileID{}).Parent()
 	assert.False(t, exists)
 }
 
@@ -84,9 +86,9 @@ func TestBoundedTileRangeCentersAndRespectsEdges(t *testing.T) {
 	assert.Equal(t, int64(20), end)
 }
 
-func assertUniqueValidTileIDs(t *testing.T, cover []vectorTileID) {
+func assertUniqueValidTileIDs(t *testing.T, cover []TileID) {
 	t.Helper()
-	seen := make(map[vectorTileID]struct{}, len(cover))
+	seen := make(map[TileID]struct{}, len(cover))
 	for _, tile := range cover {
 		dimension := uint32(1) << tile.Z
 		assert.Less(t, tile.X, dimension)

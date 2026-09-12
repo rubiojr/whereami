@@ -363,7 +363,7 @@ func TestTileSchedulerKeepsDeepDescendantsDuringZoomOut(t *testing.T) {
 
 func TestTileSchedulerKeepsParentWhenChildFails(t *testing.T) {
 	target := vectorTileID{X: 3, Y: 2, Z: 3}
-	parent, exists := target.parent()
+	parent, exists := target.Parent()
 	require.True(t, exists)
 	var targetCalls atomic.Int32
 	var latest atomic.Pointer[roadTileSnapshot]
@@ -431,7 +431,7 @@ func TestRenderSelectionUsesCoarseContinuityAncestor(t *testing.T) {
 func TestRenderSelectionUsesSharedParentForMixedContinuity(t *testing.T) {
 	first := vectorTileID{X: 2, Y: 2, Z: 3}
 	second := vectorTileID{X: 3, Y: 2, Z: 3}
-	parent, exists := first.parent()
+	parent, exists := first.Parent()
 	require.True(t, exists)
 	firstChildren := []vectorTileID{
 		{X: 4, Y: 4, Z: 4},
@@ -654,7 +654,7 @@ func TestSetCoverPrioritizesFallbackParents(t *testing.T) {
 
 	require.Len(t, state.resourceOrder, 4)
 	for index, target := range targets {
-		parent, exists := target.parent()
+		parent, exists := target.Parent()
 		require.True(t, exists)
 		assert.Equal(t, parent, state.resourceOrder[index])
 		assert.Equal(t, target, state.resourceOrder[index+len(targets)])

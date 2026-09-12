@@ -6,6 +6,11 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
 
 ## What is implemented
 
+- `pkg/vecmap/view`: the existing camera/projection, tile hierarchy, bounded
+  nearest-first cover, tile transforms, pattern phase and world-wrap algorithms,
+  moved with their regression tests into a Qt-free package. The public vecmap
+  camera types remain source-compatible aliases. No cover conversion copies are
+  introduced between the existing scheduler and the shared package.
 - `pkg/vecmap/scene`: immutable meshes, textures, ordered draws, materials, and
   camera transforms. Resource IDs and revisions are logical Go values. There are
   no Qt types, native pointers, or cgo dependencies. Adjacent compatible draws
@@ -23,6 +28,10 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   Its dependency graph contains no legacy `internal/miqtquick` bridge and no
   handwritten application C++. It reports CPU preparation/submission, available
   GPU timestamps, render-callback intervals, uploads, and live resource counts.
+
+Geographic fixture captures carry a `view.Camera` and tile-space descriptions.
+The viewer reprojects those through `Document.FrameAt` without replacing scene
+resources. Older affine-only captures remain readable.
 
 The existing decoder/compiler is reused by the fixture producer. It still lives
 in the Qt-bound `pkg/vecmap` package; extracting the rest of the engine into
@@ -176,7 +185,8 @@ are open. This prototype adds explicit opt-in build/test targets.
 
 ## Remaining migration gates
 
-- Move the existing CPU engine out of its Qt-bound package.
+- Continue moving the CPU engine out of its Qt-bound package; camera, projection,
+  tile coverage and transforms have been extracted into `pkg/vecmap/view`.
 - Reuse geometry across live style-zoom changes; add shader-driven line
   extrusion/dashes where appropriate instead of repeatedly rebuilding triangles.
 - Replace the fixture with incremental live tile/placement updates and bounded

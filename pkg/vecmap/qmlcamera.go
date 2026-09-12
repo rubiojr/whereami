@@ -38,7 +38,7 @@ func newQMLCamera(item *Item, initial Camera) *qmlCamera {
 	if properties == nil {
 		return nil
 	}
-	initial = initial.normalized()
+	initial = initial.Normalized()
 	camera := &qmlCamera{
 		item:         item,
 		properties:   properties,
@@ -200,7 +200,7 @@ func (c *qmlCamera) handleValueChanged(key string, value float64) {
 		return
 	}
 
-	next = next.normalized()
+	next = next.Normalized()
 	snapshot := &cameraSnapshot{Camera: next, Revision: current.Revision + 1}
 	c.snapshot.Store(snapshot)
 	c.publish(snapshot)

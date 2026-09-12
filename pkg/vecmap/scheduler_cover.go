@@ -33,7 +33,7 @@ func (s *tileSchedulerState) setCover(tiles []vectorTileID) {
 	// Load coarse fallback coverage before detailed targets so camera flights
 	// fill the viewport before refining it.
 	for _, tile := range order {
-		if parent, exists := tile.parent(); exists {
+		if parent, exists := tile.Parent(); exists {
 			if _, duplicate := desired[parent]; !duplicate {
 				desired[parent] = struct{}{}
 				resourceOrder = append(resourceOrder, parent)
@@ -144,7 +144,7 @@ func (s *tileSchedulerState) targetGroups() []tileTargetGroup {
 	groups := make([]tileTargetGroup, 0, len(s.order))
 	indexes := make(map[vectorTileID]int, len(s.order))
 	for _, tile := range s.order {
-		parent, hasParent := tile.parent()
+		parent, hasParent := tile.Parent()
 		if !hasParent {
 			groups = append(groups, tileTargetGroup{targets: []vectorTileID{tile}})
 			continue

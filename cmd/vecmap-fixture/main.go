@@ -12,6 +12,7 @@ import (
 
 	"github.com/rubiojr/whereami/pkg/vecmap"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
+	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
 
 func main() {
@@ -52,6 +53,8 @@ func run(path, glyphDir, output string) error {
 		}
 	}
 	document := scene.Document{Scene: *fixture.Scene, Transforms: fixture.Frame(fixture.Camera).Transforms, Width: 512, Height: 512, Labels: fixture.Labels, MissingFonts: fixture.MissingFonts, Source: "OpenFreeMap 20260823 z9/250/193; Liberty at fixed zoom 10"}
+	document.Camera = &fixture.Camera
+	document.TileSpaces = []scene.TileSpace{{Tile: view.TileID{X: 250, Y: 193, Z: 9}}}
 	fmt.Fprintf(os.Stderr, "draws=%d vertices=%d textures=%d labels=%d missing_fonts=%q\n", len(document.Scene.Draws), len(document.Scene.Meshes[0].Vertices), len(document.Scene.Textures), document.Labels, document.MissingFonts)
 	out := os.Stdout
 	if output != "" {

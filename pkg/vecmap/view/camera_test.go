@@ -1,4 +1,4 @@
-package vecmap
+package view
 
 import (
 	"math"
@@ -124,6 +124,13 @@ func TestCameraNormalizesSupportedZoomRange(t *testing.T) {
 	assert.Equal(t, float64(0), camera.MinimumZoom)
 	assert.Equal(t, float64(20), camera.MaximumZoom)
 	assert.Equal(t, float64(0), camera.Zoom)
+}
+
+func TestCameraMinimumZoomCannotRaiseMaximumBeyondSupportedRange(t *testing.T) {
+	camera := (Camera{Zoom: 100, MinimumZoom: 100, MaximumZoom: 100}).Normalized()
+	assert.Equal(t, float64(20), camera.MinimumZoom)
+	assert.Equal(t, float64(20), camera.MaximumZoom)
+	assert.Equal(t, float64(20), camera.Zoom)
 }
 
 func TestCameraLiteralUsesDefaultZoomRange(t *testing.T) {
