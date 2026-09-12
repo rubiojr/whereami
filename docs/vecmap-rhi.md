@@ -16,6 +16,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   no Qt types, native pointers, or cgo dependencies. Adjacent compatible draws
   coalesce without sorting transparent content out of order.
   Meshes support optional uint32 indices; draw ranges address indices when present.
+- `pkg/vecmap/geometry`: bounded polygon cleanup and Earcut preparation with a
+  direct uint32 indexed result. The existing compiler uses its expanded
+  compatibility path; end-to-end index propagation is still pending.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -242,6 +245,44 @@ Headless tests verify exact attribute reconstruction, range validation,
 idempotence, and skipping unhelpful indexing. Qt tests compare complete
 framebuffers across representations and exercise both layout transitions,
 resource reconstruction and teardown.
+
+### Direct polygon preparation checkpoint
+
+Kata **tgde** tracks direct indexed compilation. `pkg/vecmap/geometry` now retains
+Earcut topology as owned float64 points and uint32 indices, without expanding and
+hashing triangles. Ring cleanup and conservative operation accounting were
+extracted from the existing implementation. `roadPoint` is an alias, avoiding
+conversion allocations. The expanded adapter uses Earcut's original integer
+indices directly, so existing consumers do not pay for a temporary uint32 buffer.
+
+On the same Ryzen AI 7 PRO 350, Go 1.27.1, `GOAMD64=v4`, three sequential runs of
+`BenchmarkPolygonPreparation` gave these ranges for a synthetic 4096-point ring:
+
+| Preparation | Time/op | Allocated bytes/op | Allocs/op | Scene geometry bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Expanded | 688–736 µs | 1,399,790–1,399,791 | 8,214 | 294,768 |
+| Direct indexed | 619–653 µs | 1,055,721 | 8,214 | 147,432 |
+| Expanded + `IndexMesh` | 1,248–1,254 µs | 1,695,021–1,695,022 | 8,233 | 147,432 |
+
+Each mode includes the same triangulation and float32 scene packing. Direct
+indexing reduces allocation volume by about 24.6% versus expansion and 37.7%
+versus post-indexing here. It does not reduce the dominant Earcut allocation
+count. A 16-point ring measured 1.37–1.47 µs expanded, 1.21–1.22 µs direct, and
+3.55–3.84 µs post-indexed. An initial run overlapped build/race checks and had
+wider timing ranges (large ring: 733–893 / 584–621 / 1,218–1,265 µs respectively);
+the table is the rerun with no concurrent agent checks.
+
+These are isolated polygon measurements, not full-tile speedups. Feature storage
+and fill batching still expand triangles, and line/glyph construction still
+needs direct indexed output. Fixture defaults remain unchanged.
+
+Headless geometry coverage is 97.4%. Tests cover holes, concavity, cleanup,
+degeneracy, signed zero, input ownership, large polygons, index validation, and
+budget exhaustion. Regenerating the complete expanded Madrid capture with the
+same `GOAMD64=v1` setting produced byte-for-byte identical JSON, including draw
+order, all vertices and textures. Comparing a `v4` capture to that older `v1`
+capture instead exposed 12 tiny glyph-offset differences; pin the Go architecture
+setting as well as the binary, data and camera options when testing equality.
 
 ## Flatpak integration
 

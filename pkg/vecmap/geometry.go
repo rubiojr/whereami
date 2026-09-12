@@ -1,13 +1,13 @@
 package vecmap
 
-import "github.com/rubiojr/whereami/pkg/vecmap/view"
+import (
+	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
+	"github.com/rubiojr/whereami/pkg/vecmap/view"
+)
 
 const tileSize = mercatorTileSize
 
-type roadPoint struct {
-	X float64
-	Y float64
-}
+type roadPoint = geometry.Point
 
 type roadSegment struct {
 	Start roadPoint

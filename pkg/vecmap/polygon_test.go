@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,6 +84,18 @@ func TestTriangulatePolygonBoundedHandlesLargePolygonWithinBudget(t *testing.T) 
 	require.NoError(t, err)
 	assert.Len(t, triangles, (pointCount-2)*3)
 	assert.Positive(t, budget.remaining)
+}
+
+func TestPolygonAdapterPreservesLimitsAndSpentBudget(t *testing.T) {
+	assert.Equal(t, maxFillRingPoints, geometry.MaxPolygonPoints)
+	assert.Equal(t, maxTileStyleTriangles, geometry.MaxPolygonTriangles)
+	polygon := vectorPolygon{exterior: []roadPoint{{X: 0, Y: 0}, {X: 10, Y: 0}, {X: 10, Y: 10}, {X: 0, Y: 10}}}
+	budget := triangulationBudget{remaining: 5}
+	_, err := triangulatePolygonBounded(polygon, &budget)
+	assert.ErrorIs(t, err, errPolygonResourceLimit)
+	assert.Zero(t, budget.remaining, "failed cleanup must retain the work already charged")
+	_, err = triangulatePolygonBounded(polygon, nil)
+	assert.ErrorIs(t, err, errPolygonResourceLimit)
 }
 
 func triangleMeshArea(triangles []roadPoint) float64 {

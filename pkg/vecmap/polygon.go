@@ -2,15 +2,14 @@ package vecmap
 
 import (
 	"errors"
-	"fmt"
 	"math"
 
-	"github.com/rubiojr/whereami/internal/earcut"
+	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 )
 
-const polygonEpsilon = 1e-9
+const polygonEpsilon = geometry.Epsilon
 
-var errPolygonResourceLimit = errors.New("MVT polygon resource limit exceeded")
+var errPolygonResourceLimit = geometry.ErrResourceLimit
 
 type triangulationBudget struct {
 	remaining int
@@ -21,12 +20,7 @@ func fillTriangleCount(bucket fillBucket) int {
 }
 
 func signedRingArea(ring []roadPoint) float64 {
-	area := 0.0
-	for index, point := range ring {
-		next := ring[(index+1)%len(ring)]
-		area += point.X*next.Y - point.Y*next.X
-	}
-	return area / 2
+	return geometry.SignedRingArea(ring)
 }
 
 func triangulateRingBounded(ring []roadPoint, budget *triangulationBudget) ([]roadPoint, error) {
@@ -83,131 +77,30 @@ func triangulateRingBounded(ring []roadPoint, budget *triangulationBudget) ([]ro
 }
 
 func triangulatePolygonBounded(polygon vectorPolygon, budget *triangulationBudget) ([]roadPoint, error) {
-	rawVertexCount := len(polygon.exterior)
-	if rawVertexCount > maxFillRingPoints {
-		return nil, fmt.Errorf("%w: styled polygon exceeds %d-point limit", errPolygonResourceLimit, maxFillRingPoints)
-	}
-	for _, hole := range polygon.holes {
-		if len(hole) > maxFillRingPoints-rawVertexCount {
-			return nil, fmt.Errorf("%w: styled polygon exceeds %d-point limit", errPolygonResourceLimit, maxFillRingPoints)
-		}
-		rawVertexCount += len(hole)
-	}
-	if err := budget.consumeN(rawVertexCount); err != nil {
-		return nil, err
-	}
-
-	exterior, err := cleanRing(polygon.exterior, budget)
-	if err != nil {
-		return nil, err
-	}
-	if len(exterior) < 3 || math.Abs(signedRingArea(exterior)) <= polygonEpsilon {
-		return nil, nil
-	}
-	holes := make([][]roadPoint, 0, len(polygon.holes))
-	for _, rawHole := range polygon.holes {
-		hole, err := cleanRing(rawHole, budget)
-		if err != nil {
-			return nil, err
-		}
-		if len(hole) < 3 || math.Abs(signedRingArea(hole)) <= polygonEpsilon {
-			continue
-		}
-		holes = append(holes, hole)
-	}
-
-	vertexCount := len(exterior)
-	for _, hole := range holes {
-		vertexCount += len(hole)
-	}
-	expectedTriangleCount := vertexCount + 2*len(holes) - 2
-	if expectedTriangleCount > maxTileStyleTriangles {
-		return nil, fmt.Errorf("%w: styled polygon exceeds %d-triangle limit", errPolygonResourceLimit, maxTileStyleTriangles)
-	}
-
-	vertices := make([]roadPoint, 0, vertexCount)
-	vertices = append(vertices, exterior...)
-	holeIndices := make([]int, 0, len(holes))
-	for _, hole := range holes {
-		holeIndices = append(holeIndices, len(vertices))
-		vertices = append(vertices, hole...)
-	}
-	coordinates := make([]float64, 0, len(vertices)*2)
-	for _, point := range vertices {
-		coordinates = append(coordinates, point.X, point.Y)
-	}
-
-	if err := budget.consumeN(polygonEarcutBudgetCost(vertexCount, len(holes))); err != nil {
-		return nil, err
-	}
-	indices, err := earcut.Earcut(coordinates, holeIndices, 2)
-	if err != nil {
-		return nil, fmt.Errorf("MVT polygon triangulation failed: %w", err)
-	}
-	if err := budget.consumeN(len(indices)); err != nil {
-		return nil, err
-	}
-	if len(indices)%3 != 0 {
-		return nil, errors.New("MVT polygon triangulation returned an incomplete triangle")
-	}
-	if len(indices) > expectedTriangleCount*3 {
-		return nil, fmt.Errorf(
-			"MVT polygon triangulation returned %d triangles, maximum is %d",
-			len(indices)/3,
-			expectedTriangleCount,
-		)
-	}
-
-	triangles := make([]roadPoint, len(indices))
-	for index, vertexIndex := range indices {
-		if vertexIndex < 0 || vertexIndex >= len(vertices) {
-			return nil, fmt.Errorf("MVT polygon triangulation returned out-of-range vertex index %d", vertexIndex)
-		}
-		triangles[index] = vertices[vertexIndex]
-	}
-	return triangles, nil
-}
-
-func polygonEarcutBudgetCost(vertexCount, holeCount int) int {
-	// Account for indexed ear clipping and a conservative full scan per hole.
-	levels := 1
-	for remaining := vertexCount; remaining > 1; remaining = (remaining + 1) / 2 {
-		levels++
-	}
-	return vertexCount * (levels + holeCount)
+	core := budget.geometryBudget()
+	triangles, err := geometry.TriangulatePolygonExpanded(polygon.exterior, polygon.holes, core)
+	budget.updateGeometryBudget(core)
+	return triangles, err
 }
 
 func cleanRing(ring []roadPoint, budget *triangulationBudget) ([]roadPoint, error) {
-	points := make([]roadPoint, 0, len(ring))
-	for _, point := range ring {
-		if len(points) == 0 || points[len(points)-1] != point {
-			points = append(points, point)
-		}
+	core := budget.geometryBudget()
+	points, err := geometry.CleanRing(ring, core)
+	budget.updateGeometryBudget(core)
+	return points, err
+}
+
+func (b *triangulationBudget) geometryBudget() *geometry.Budget {
+	if b == nil {
+		return nil
 	}
-	if len(points) > 1 && points[0] == points[len(points)-1] {
-		points = points[:len(points)-1]
+	return &geometry.Budget{Remaining: b.remaining}
+}
+
+func (b *triangulationBudget) updateGeometryBudget(core *geometry.Budget) {
+	if b != nil {
+		b.remaining = core.Remaining
 	}
-	for len(points) >= 3 {
-		removed := false
-		for index := range points {
-			if err := budget.consume(); err != nil {
-				return nil, err
-			}
-			previous := points[(index+len(points)-1)%len(points)]
-			current := points[index]
-			next := points[(index+1)%len(points)]
-			if math.Abs(pointCross(previous, current, next)) > polygonEpsilon {
-				continue
-			}
-			points = append(points[:index], points[index+1:]...)
-			removed = true
-			break
-		}
-		if !removed {
-			break
-		}
-	}
-	return points, nil
 }
 
 func reversePoints(points []roadPoint) {
@@ -217,7 +110,7 @@ func reversePoints(points []roadPoint) {
 }
 
 func pointCross(first, second, third roadPoint) float64 {
-	return (second.X-first.X)*(third.Y-first.Y) - (second.Y-first.Y)*(third.X-first.X)
+	return geometry.Cross(first, second, third)
 }
 
 func triangleContainsOtherPoint(
