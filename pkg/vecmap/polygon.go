@@ -78,7 +78,7 @@ func triangulateRingBounded(ring []roadPoint, budget *triangulationBudget) ([]ro
 
 func triangulatePolygonBounded(polygon vectorPolygon, budget *triangulationBudget) ([]roadPoint, error) {
 	core := budget.geometryBudget()
-	triangles, err := geometry.TriangulatePolygonExpanded(polygon.exterior, polygon.holes, core)
+	triangles, err := geometry.TriangulatePolygonExpanded(polygon.Exterior, polygon.Holes, core)
 	budget.updateGeometryBudget(core)
 	return triangles, err
 }

@@ -16,7 +16,7 @@ func newLibertyRasterTileNode(
 	layer compiledLibertyLayer,
 	zoom float64,
 ) *quick.QSGTransformNode {
-	if len(bucket.raster.rgba) == 0 || !layer.visibleAt(zoom) || libertyLayerHidden(layer) {
+	if len(bucket.raster.rgba) == 0 || !layer.VisibleAt(zoom) || libertyLayerHidden(layer) {
 		return nil
 	}
 	evaluation := libertyEvaluation{zoom: zoom}
@@ -79,7 +79,7 @@ func newLibertyLayerTileNode(
 	complete := true
 	for _, primitive := range matching {
 		if primitive.patternName != "" {
-			sprite, exists := libertySprite(primitive.patternName, mapColor{red: 255, green: 255, blue: 255, alpha: 255}, 1)
+			sprite, exists := libertySprite(primitive.patternName, mapColor{Red: 255, Green: 255, Blue: 255, Alpha: 255}, 1)
 			if !exists {
 				continue
 			}
@@ -158,10 +158,10 @@ func appendTileContents(parent *quick.QSGNode, bucket *tileBucket) {
 }
 
 var (
-	mapBackgroundColor = mapColor{red: 20, green: 27, blue: 30, alpha: 255}
-	mapLandColor       = mapColor{red: 42, green: 57, blue: 51, alpha: 255}
-	mapWaterColor      = mapColor{red: 28, green: 72, blue: 91, alpha: 255}
-	mapRoadColor       = mapColor{red: 121, green: 220, blue: 255, alpha: 255}
+	mapBackgroundColor = mapColor{Red: 20, Green: 27, Blue: 30, Alpha: 255}
+	mapLandColor       = mapColor{Red: 42, Green: 57, Blue: 51, Alpha: 255}
+	mapWaterColor      = mapColor{Red: 28, Green: 72, Blue: 91, Alpha: 255}
+	mapRoadColor       = mapColor{Red: 121, Green: 220, Blue: 255, Alpha: 255}
 )
 
 func appendGeometryNode(parent *quick.QSGNode, points []roadPoint, mode quick.QSGGeometry__DrawingMode, colorValue mapColor) bool {
@@ -183,7 +183,7 @@ func appendGeometryNode(parent *quick.QSGNode, points []roadPoint, mode quick.QS
 		geometry.Delete()
 		return false
 	}
-	color := qt.NewQColor11(colorValue.red, colorValue.green, colorValue.blue, colorValue.alpha)
+	color := qt.NewQColor11(colorValue.Red, colorValue.Green, colorValue.Blue, colorValue.Alpha)
 	material.SetColor(color)
 	color.Delete()
 

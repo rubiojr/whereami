@@ -46,7 +46,7 @@ func TestLibertyDesktopFontUsesBundledOpenMapTilesFamily(t *testing.T) {
 }
 
 func TestLibertyEvaluatedFontsPreservesOrderedStack(t *testing.T) {
-	layer := compiledLibertyLayer{layout: map[string]any{
+	layer := compiledLibertyLayer{Layout: map[string]any{
 		"text-font": []any{"Noto Sans Regular", "Noto Sans CJK TC Regular"},
 	}}
 	family, stack := libertyEvaluatedFonts(layer, libertyEvaluation{})
@@ -58,7 +58,7 @@ func TestLibertyCandidateCollisionUsesSDFMetrics(t *testing.T) {
 	candidate := libertySymbolCandidate{
 		anchor:      roadPoint{X: 100, Y: 100},
 		text:        "label",
-		textColor:   mapColor{alpha: 255},
+		textColor:   mapColor{Alpha: 255},
 		textSize:    10,
 		textOffset:  roadPoint{X: 1, Y: 2},
 		textPadding: 2,
@@ -81,7 +81,7 @@ func TestLibertyCandidateCollisionRotatesSDFMetrics(t *testing.T) {
 		anchor:      roadPoint{X: 100, Y: 100},
 		lineAngle:   math.Pi / 2,
 		text:        "label",
-		textColor:   mapColor{alpha: 255},
+		textColor:   mapColor{Alpha: 255},
 		textSize:    10,
 		textPadding: 0,
 	}
@@ -131,7 +131,7 @@ func TestAcceptedLibertySymbolsUsesLayerPriority(t *testing.T) {
 	candidate := libertySymbolCandidate{
 		anchor:       roadPoint{X: 128, Y: 128},
 		text:         "label",
-		textColor:    mapColor{alpha: 255},
+		textColor:    mapColor{Alpha: 255},
 		textSize:     16,
 		lineHeight:   1.2,
 		maximumWidth: 10,
@@ -165,7 +165,7 @@ func TestAcceptedLibertySymbolsKeepsOptionalIcon(t *testing.T) {
 		order:        2,
 		anchor:       roadPoint{X: 128, Y: 128},
 		text:         "blocking label",
-		textColor:    mapColor{alpha: 255},
+		textColor:    mapColor{Alpha: 255},
 		textSize:     16,
 		lineHeight:   1.2,
 		maximumWidth: 10,
@@ -197,7 +197,7 @@ func TestAcceptedLibertySymbolsWaitsForRequiredSDFText(t *testing.T) {
 	candidate := libertySymbolCandidate{
 		anchor:       roadPoint{X: 128, Y: 128},
 		text:         "airport",
-		textColor:    mapColor{alpha: 255},
+		textColor:    mapColor{Alpha: 255},
 		textSize:     16,
 		lineHeight:   1.2,
 		maximumWidth: 10,
@@ -216,7 +216,7 @@ func TestAcceptedLibertySymbolsWaitsForRequiredSDFText(t *testing.T) {
 func TestAcceptedLibertySymbolsReflowsWhenCameraZoomChanges(t *testing.T) {
 	candidate := libertySymbolCandidate{
 		text:         "label",
-		textColor:    mapColor{alpha: 255},
+		textColor:    mapColor{Alpha: 255},
 		textSize:     16,
 		lineHeight:   1.2,
 		maximumWidth: 10,

@@ -226,7 +226,7 @@ func libertyCandidateCollisionBoxes(
 ) (libertyCollisionBox, bool, bool, libertyCollisionBox, bool, bool) {
 	anchor := transform.mapPoint(candidate.anchor)
 	textBox := libertyCollisionBox{}
-	textPresent := candidate.text != "" && candidate.textColor.alpha > 0
+	textPresent := candidate.text != "" && candidate.textColor.Alpha > 0
 	textVisible := false
 	if textPresent && libertyTextRenderable(candidate.text, sdfLayout) {
 		offsetX := candidate.textOffset.X * candidate.textSize
@@ -416,7 +416,7 @@ func newLibertySymbolLayerTileNode(
 				}
 			}
 		}
-		if placement.text && candidate.text != "" && candidate.textColor.alpha > 0 {
+		if placement.text && candidate.text != "" && candidate.textColor.Alpha > 0 {
 			var textNode *quick.QSGNode
 			usedSDF := false
 			sdfEligible := sdfTextEligible(candidate.text)
@@ -613,5 +613,5 @@ func libertyTextAnchors(anchor string) (quick.TextAnchor, quick.TextAnchor) {
 }
 
 func libertyColorArray(color mapColor) [4]int {
-	return [4]int{color.red, color.green, color.blue, color.alpha}
+	return [4]int{color.Red, color.Green, color.Blue, color.Alpha}
 }

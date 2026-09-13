@@ -24,9 +24,9 @@ func TestEmbeddedLibertyStyleIsPinned(t *testing.T) {
 	layers, err := compiledLibertyLayers()
 	require.NoError(t, err)
 	require.Len(t, layers, 111)
-	assert.Equal(t, "background", layers[0].id)
-	assert.Equal(t, "background", layers[0].kind)
-	assert.Equal(t, "label_country_1", layers[len(layers)-1].id)
+	assert.Equal(t, "background", layers[0].ID)
+	assert.Equal(t, "background", layers[0].Kind)
+	assert.Equal(t, "label_country_1", layers[len(layers)-1].ID)
 }
 
 func TestEmbeddedLibertySpritesArePinned(t *testing.T) {
@@ -37,7 +37,7 @@ func TestEmbeddedLibertySpritesArePinned(t *testing.T) {
 	require.NoError(t, loadLibertySprites())
 	assert.Len(t, libertySpriteIndex, 264)
 
-	sprite, ok := libertySprite("airport", mapColor{red: 1, green: 2, blue: 3, alpha: 255}, 1)
+	sprite, ok := libertySprite("airport", mapColor{Red: 1, Green: 2, Blue: 3, Alpha: 255}, 1)
 	assert.True(t, ok)
 	assert.NotEmpty(t, sprite.pixels)
 }
@@ -204,16 +204,16 @@ func TestLibertyEvaluatorRejectsUnknownAndDeepExpressions(t *testing.T) {
 
 func TestCompileLibertyPatternFill(t *testing.T) {
 	polygon := vectorPolygon{
-		exterior:  []roadPoint{{X: 0, Y: 0}, {X: 32, Y: 0}, {X: 32, Y: 32}, {X: 0, Y: 32}},
-		triangles: backgroundTriangles(),
+		Exterior: []roadPoint{{X: 0, Y: 0}, {X: 32, Y: 0}, {X: 32, Y: 32}, {X: 0, Y: 32}},
+		Vertices: backgroundTriangles(),
 	}
 	bucket := &tileBucket{
 		tile: vectorTileID{X: 0, Y: 0, Z: 12},
 		sourceLayers: map[string][]vectorFeature{
 			"landcover": {{
-				geometryID: mvtPolygonType,
-				properties: featureProperties{"class": "wetland"},
-				polygons:   []vectorPolygon{polygon},
+				GeometryType: mvtPolygonType,
+				Properties:   featureProperties{"class": "wetland"},
+				Polygons:     []vectorPolygon{polygon},
 			}},
 		},
 	}
@@ -252,9 +252,9 @@ func TestParseLibertyColors(t *testing.T) {
 		value    string
 		expected mapColor
 	}{
-		{value: "#f8f4f0", expected: mapColor{red: 248, green: 244, blue: 240, alpha: 255}},
-		{value: "rgba(95, 208, 100, 0.5)", expected: mapColor{red: 95, green: 208, blue: 100, alpha: 128}},
-		{value: "hsla(0, 0%, 100%, 0.25)", expected: mapColor{red: 255, green: 255, blue: 255, alpha: 64}},
+		{value: "#f8f4f0", expected: mapColor{Red: 248, Green: 244, Blue: 240, Alpha: 255}},
+		{value: "rgba(95, 208, 100, 0.5)", expected: mapColor{Red: 95, Green: 208, Blue: 100, Alpha: 128}},
+		{value: "hsla(0, 0%, 100%, 0.25)", expected: mapColor{Red: 255, Green: 255, Blue: 255, Alpha: 64}},
 	}
 	for _, test := range tests {
 		actual, ok := parseLibertyColor(test.value)

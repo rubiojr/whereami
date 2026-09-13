@@ -13,18 +13,9 @@ func backgroundGeometry(indexed bool) geometry.Mesh {
 }
 
 func tessellateLibertyGeometry(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int, indexed bool) (geometry.Mesh, error) {
-	if maximumTriangles < 0 || maximumTriangles > maxTileRenderedTriangles {
-		return geometry.Mesh{}, fmt.Errorf("%w: invalid line triangle limit", errFeatureResourceLimit)
-	}
-	mesh := geometry.NewBuilder[roadPoint](indexed, maximumTriangles*3)
-	capacity := libertyLineVertexCapacity(paths, paint, maximumTriangles)
-	if indexed {
-		mesh.Indices = make([]uint32, 0, capacity)
-		capacity /= 2
-	}
-	mesh.Vertices = make([]roadPoint, 0, capacity)
-	if err := appendLibertyLines(paths, paint, maximumTriangles, &mesh); err != nil {
+	mesh, err := geometry.TessellateLines(paths, geometry.LineStyle{Width: paint.width, Offset: paint.offset, Dashes: paint.dashes, Cap: paint.lineCap, Join: paint.lineJoin}, maximumTriangles, indexed)
+	if err != nil {
 		return geometry.Mesh{}, fmt.Errorf("%w: %v", errFeatureResourceLimit, err)
 	}
-	return geometry.Mesh{Vertices: mesh.Vertices, Indices: mesh.Indices}, nil
+	return mesh, nil
 }

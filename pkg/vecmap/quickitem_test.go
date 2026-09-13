@@ -154,8 +154,8 @@ func TestReconcileLibertyTilesRetainsUnchangedNativeNodes(t *testing.T) {
 	firstID := vectorTileID{X: 7, Y: 7, Z: 4}
 	secondID := vectorTileID{X: 8, Y: 7, Z: 4}
 	triangle := []roadPoint{{X: 0, Y: 0}, {X: 1, Y: 0}, {X: 0, Y: 1}}
-	first := &tileBucket{tile: firstID, liberty: []libertyRenderPrimitive{{order: 0, triangles: triangle, color: mapColor{alpha: 255}}}}
-	second := &tileBucket{tile: secondID, liberty: []libertyRenderPrimitive{{order: 0, triangles: triangle, color: mapColor{alpha: 255}}}}
+	first := &tileBucket{tile: firstID, liberty: []libertyRenderPrimitive{{order: 0, triangles: triangle, color: mapColor{Alpha: 255}}}}
+	second := &tileBucket{tile: secondID, liberty: []libertyRenderPrimitive{{order: 0, triangles: triangle, color: mapColor{Alpha: 255}}}}
 	item := &Item{
 		retainedTiles: make(map[vectorTileID]*tileBucket),
 		tileNodes:     make(map[vectorTileID][]retainedTileTransform),
@@ -199,7 +199,7 @@ func TestReconcileLibertyTilesRetainsUnchangedNativeNodes(t *testing.T) {
 
 func (i *Item) libertyBasemapNode(order int, key libertyLayerTileKey) *quick.QSGTransformNode {
 	for index := range i.basemapLayers {
-		if i.basemapLayers[index].layer.order == order {
+		if i.basemapLayers[index].layer.Order == order {
 			return i.basemapLayers[index].nodes[key]
 		}
 	}

@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/mvt"
 )
 
 const (
@@ -28,10 +30,10 @@ const (
 	pinnedTileURL               = openFreeMapBaseURL + "/9/250/193.pbf"
 	pinnedTileCacheName         = "openfreemap-20260823-z9-250-193.pbf"
 	pinnedTileSHA256            = "5007c887f3c99a2c0737b9a3afdf3813ef3e1ce939a63aa09a8407b7c3770c79"
-	maxTileBytes                = 2 << 20
+	maxTileBytes                = mvt.MaxTileBytes
 	maxRoadSegments             = 100_000
 	maxFillTriangles            = 100_000
-	maxFillRingPoints           = 32_768
+	maxFillRingPoints           = mvt.MaxPolygonPoints
 	maxTriangulationOps         = 10_000_000
 	defaultTileCacheBytes int64 = 256 << 20
 )

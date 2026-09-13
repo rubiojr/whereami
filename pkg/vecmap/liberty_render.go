@@ -10,10 +10,7 @@ import (
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 )
 
-const (
-	maxTileRenderedTriangles = 2_000_000
-	maxDashedSegmentsPerPath = 100_000
-)
+const maxTileRenderedTriangles = geometry.MaxLineTriangles
 
 type libertyRenderPrimitive struct {
 	order     int
@@ -61,7 +58,7 @@ func compileLibertyTileGeometry(bucket *tileBucket, zoom float64, indexed bool) 
 		if mesh.Indices != nil {
 			count = len(mesh.Indices)
 		}
-		if count == 0 || color.alpha == 0 {
+		if count == 0 || color.Alpha == 0 {
 			return nil
 		}
 		if count%3 != 0 {
@@ -73,8 +70,8 @@ func compileLibertyTileGeometry(bucket *tileBucket, zoom float64, indexed bool) 
 		}
 		totalTriangles += triangleCount
 		primitives = append(primitives, libertyRenderPrimitive{
-			order:     layer.order,
-			layerID:   layer.id,
+			order:     layer.Order,
+			layerID:   layer.ID,
 			triangles: mesh.Vertices,
 			indices:   mesh.Indices,
 			color:     color,
@@ -103,8 +100,8 @@ func compileLibertyTileGeometry(bucket *tileBucket, zoom float64, indexed bool) 
 		}
 		totalTriangles += triangleCount
 		primitives = append(primitives, libertyRenderPrimitive{
-			order:        layer.order,
-			layerID:      layer.id,
+			order:        layer.Order,
+			layerID:      layer.ID,
 			triangles:    mesh.Vertices,
 			indices:      mesh.Indices,
 			patternName:  patternName,
@@ -115,13 +112,13 @@ func compileLibertyTileGeometry(bucket *tileBucket, zoom float64, indexed bool) 
 	}
 
 	for _, layer := range layers {
-		if !layer.visibleAt(zoom) || libertyLayerHidden(layer) {
+		if !layer.VisibleAt(zoom) || libertyLayerHidden(layer) {
 			continue
 		}
-		switch layer.kind {
+		switch layer.Kind {
 		case "background":
 			evaluation := libertyEvaluation{zoom: zoom}
-			color, ok := libertyEvaluatedColor(layer, "background-color", evaluation, mapColor{alpha: 255})
+			color, ok := libertyEvaluatedColor(layer, "background-color", evaluation, mapColor{Alpha: 255})
 			if !ok {
 				continue
 			}
@@ -158,7 +155,7 @@ func compileLibertyFillLayer(
 	appendPattern func(compiledLibertyLayer, geometry.Mesh, string, float64, float64) error,
 ) error {
 	geometryScale := math.Exp2(zoom - float64(bucket.tile.Z))
-	features := bucket.sourceLayers[layer.sourceLayer]
+	features := bucket.sourceLayers[layer.SourceLayer]
 	type fillBatch struct {
 		color mapColor
 		mesh  geometry.Builder[roadPoint]
@@ -175,19 +172,19 @@ func compileLibertyFillLayer(
 	outlineBatches := make([]libertyLineBatch, 0, 2)
 	outlineIndexes := make(map[string]int)
 	colorProperty := "fill-color"
-	if layer.kind == "fill-extrusion" {
+	if layer.Kind == "fill-extrusion" {
 		colorProperty = "fill-extrusion-color"
 	}
 	for _, feature := range features {
-		if feature.geometryID != mvtPolygonType {
+		if feature.GeometryType != mvtPolygonType {
 			continue
 		}
-		evaluation := libertyEvaluation{zoom: zoom, geometryID: feature.geometryID, properties: feature.properties}
-		if !layer.matches(evaluation) {
+		evaluation := libertyEvaluation{zoom: zoom, geometryID: feature.GeometryType, properties: feature.Properties}
+		if !layer.Matches(evaluation.context()) {
 			continue
 		}
 		opacityProperty := "fill-opacity"
-		if layer.kind == "fill-extrusion" {
+		if layer.Kind == "fill-extrusion" {
 			opacityProperty = "fill-extrusion-opacity"
 		}
 		opacity := libertyEvaluatedNumber(layer, opacityProperty, evaluation, 1)
@@ -200,13 +197,13 @@ func compileLibertyFillLayer(
 				patternIndexes[patternKey] = patternIndex
 				patternBatches = append(patternBatches, patternBatch{name: patternName, opacity: opacity, mesh: geometry.NewBuilder[roadPoint](indexed, maxTileRenderedTriangles*3)})
 			}
-			for _, polygon := range feature.polygons {
-				if err := patternBatches[patternIndex].mesh.Append(polygon.triangles, polygon.indices); err != nil {
+			for _, polygon := range feature.Polygons {
+				if err := patternBatches[patternIndex].mesh.Append(polygon.Vertices, polygon.Indices); err != nil {
 					return fmt.Errorf("%w: %v", errFeatureResourceLimit, err)
 				}
 			}
 		} else {
-			color, ok := libertyEvaluatedColor(layer, colorProperty, evaluation, mapColor{alpha: 255})
+			color, ok := libertyEvaluatedColor(layer, colorProperty, evaluation, mapColor{Alpha: 255})
 			if !ok {
 				continue
 			}
@@ -217,15 +214,15 @@ func compileLibertyFillLayer(
 				batchIndexes[color] = batchIndex
 				batches = append(batches, fillBatch{color: color, mesh: geometry.NewBuilder[roadPoint](indexed, maxTileRenderedTriangles*3)})
 			}
-			for _, polygon := range feature.polygons {
-				if err := batches[batchIndex].mesh.Append(polygon.triangles, polygon.indices); err != nil {
+			for _, polygon := range feature.Polygons {
+				if err := batches[batchIndex].mesh.Append(polygon.Vertices, polygon.Indices); err != nil {
 					return fmt.Errorf("%w: %v", errFeatureResourceLimit, err)
 				}
 			}
 		}
 
 		outline, hasOutline := libertyEvaluatedColor(layer, "fill-outline-color", evaluation, mapColor{})
-		if !hasOutline || outline.alpha == 0 {
+		if !hasOutline || outline.Alpha == 0 {
 			continue
 		}
 		outline = libertyColorWithOpacity(outline, libertyEvaluatedNumber(layer, "fill-opacity", evaluation, 1))
@@ -237,9 +234,9 @@ func compileLibertyFillLayer(
 			outlineIndexes[paintKey] = outlineIndex
 			outlineBatches = append(outlineBatches, libertyLineBatch{paint: paint})
 		}
-		for _, polygon := range feature.polygons {
-			outlineBatches[outlineIndex].paths = append(outlineBatches[outlineIndex].paths, closedLibertyRing(polygon.exterior))
-			for _, hole := range polygon.holes {
+		for _, polygon := range feature.Polygons {
+			outlineBatches[outlineIndex].paths = append(outlineBatches[outlineIndex].paths, closedLibertyRing(polygon.Exterior))
+			for _, hole := range polygon.Holes {
 				outlineBatches[outlineIndex].paths = append(outlineBatches[outlineIndex].paths, closedLibertyRing(hole))
 			}
 		}
@@ -273,23 +270,23 @@ func compileLibertyLineLayer(
 	indexed bool,
 	appendPrimitive func(compiledLibertyLayer, geometry.Mesh, mapColor) error,
 ) error {
-	features := bucket.sourceLayers[layer.sourceLayer]
+	features := bucket.sourceLayers[layer.SourceLayer]
 	geometryScale := math.Exp2(zoom - float64(bucket.tile.Z))
 	batches := make([]libertyLineBatch, 0, 4)
 	indexes := make(map[string]int)
 	for _, feature := range features {
-		evaluation := libertyEvaluation{zoom: zoom, geometryID: feature.geometryID, properties: feature.properties}
-		if !layer.matches(evaluation) {
+		evaluation := libertyEvaluation{zoom: zoom, geometryID: feature.GeometryType, properties: feature.Properties}
+		if !layer.Matches(evaluation.context()) {
 			continue
 		}
-		color, ok := libertyEvaluatedColor(layer, "line-color", evaluation, mapColor{alpha: 255})
+		color, ok := libertyEvaluatedColor(layer, "line-color", evaluation, mapColor{Alpha: 255})
 		if !ok {
 			continue
 		}
 		color = libertyColorWithOpacity(color, libertyEvaluatedNumber(layer, "line-opacity", evaluation, 1))
 		width := libertyEvaluatedNumber(layer, "line-width", evaluation, 1) / geometryScale
 		gap := libertyEvaluatedNumber(layer, "line-gap-width", evaluation, 0) / geometryScale
-		if width <= 0 || color.alpha == 0 {
+		if width <= 0 || color.Alpha == 0 {
 			continue
 		}
 		dashes := libertyEvaluatedNumbers(layer, "line-dasharray", evaluation)
@@ -319,13 +316,13 @@ func compileLibertyLineLayer(
 				indexes[paintKey] = batchIndex
 				batches = append(batches, libertyLineBatch{paint: paint})
 			}
-			switch feature.geometryID {
+			switch feature.GeometryType {
 			case mvtLineStringType:
-				batches[batchIndex].paths = append(batches[batchIndex].paths, feature.lines...)
+				batches[batchIndex].paths = append(batches[batchIndex].paths, feature.Lines...)
 			case mvtPolygonType:
-				for _, polygon := range feature.polygons {
-					batches[batchIndex].paths = append(batches[batchIndex].paths, closedLibertyRing(polygon.exterior))
-					for _, hole := range polygon.holes {
+				for _, polygon := range feature.Polygons {
+					batches[batchIndex].paths = append(batches[batchIndex].paths, closedLibertyRing(polygon.Exterior))
+					for _, hole := range polygon.Holes {
 						batches[batchIndex].paths = append(batches[batchIndex].paths, closedLibertyRing(hole))
 					}
 				}
@@ -345,8 +342,7 @@ func compileLibertyLineLayer(
 }
 
 func libertyLayerHidden(layer compiledLibertyLayer) bool {
-	visibility, exists := layer.layout["visibility"]
-	return exists && visibility == "none"
+	return layer.Hidden()
 }
 
 func libertyEvaluatedColor(
@@ -355,7 +351,7 @@ func libertyEvaluatedColor(
 	evaluation libertyEvaluation,
 	fallback mapColor,
 ) (mapColor, bool) {
-	value, exists := layer.value(name, evaluation)
+	value, exists := layer.Value(name, evaluation.context())
 	if !exists {
 		return fallback, true
 	}
@@ -363,7 +359,7 @@ func libertyEvaluatedColor(
 }
 
 func libertyEvaluatedNumber(layer compiledLibertyLayer, name string, evaluation libertyEvaluation, fallback float64) float64 {
-	value, exists := layer.value(name, evaluation)
+	value, exists := layer.Value(name, evaluation.context())
 	if !exists {
 		return fallback
 	}
@@ -375,7 +371,7 @@ func libertyEvaluatedNumber(layer compiledLibertyLayer, name string, evaluation 
 }
 
 func libertyEvaluatedString(layer compiledLibertyLayer, name string, evaluation libertyEvaluation, fallback string) string {
-	value, exists := layer.value(name, evaluation)
+	value, exists := layer.Value(name, evaluation.context())
 	if !exists {
 		return fallback
 	}
@@ -387,7 +383,7 @@ func libertyEvaluatedString(layer compiledLibertyLayer, name string, evaluation 
 }
 
 func libertyEvaluatedNumbers(layer compiledLibertyLayer, name string, evaluation libertyEvaluation) []float64 {
-	value, exists := layer.value(name, evaluation)
+	value, exists := layer.Value(name, evaluation.context())
 	if !exists {
 		return nil
 	}
@@ -418,10 +414,10 @@ func libertyNumberListKey(numbers []float64) string {
 func libertyLinePaintKey(paint libertyLinePaint) string {
 	return fmt.Sprintf(
 		"%d/%d/%d/%d/%.9g/%.9g/%s/%s/%s",
-		paint.color.red,
-		paint.color.green,
-		paint.color.blue,
-		paint.color.alpha,
+		paint.color.Red,
+		paint.color.Green,
+		paint.color.Blue,
+		paint.color.Alpha,
 		paint.width,
 		paint.offset,
 		paint.dashKey,
@@ -445,253 +441,8 @@ func tessellateLibertyLines(paths [][]roadPoint, paint libertyLinePaint, maximum
 	return mesh.Vertices, err
 }
 
-func appendLibertyLines(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int, mesh *geometry.Builder[roadPoint]) error {
-	if paint.width <= polygonEpsilon {
-		return nil
-	}
-	for _, rawPath := range paths {
-		path := cleanLibertyLine(rawPath)
-		if len(path) < 2 {
-			continue
-		}
-		path = offsetLibertyLine(path, paint.offset)
-		segments, err := libertyDashedSegments(path, paint.dashes, paint.width, maximumTriangles)
-		if err != nil {
-			return err
-		}
-		if len(segments) == 0 {
-			continue
-		}
-		for _, segment := range segments {
-			if err := geometry.AppendLineSegment(mesh, segment.Start, segment.End, paint.width, paint.lineCap, len(paint.dashes) > 0); err != nil {
-				return err
-			}
-		}
-		if len(paint.dashes) == 0 {
-			if err := appendLibertyLineJoins(path, paint, mesh); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func appendLibertyLineJoins(path []roadPoint, paint libertyLinePaint, mesh *geometry.Builder[roadPoint]) error {
-	for index := 1; index+1 < len(path); index++ {
-		var err error
-		if paint.lineJoin == "round" {
-			err = geometry.AppendDisk(mesh, path[index], paint.width/2)
-		} else {
-			err = appendLibertyMiterJoin(path[index-1], path[index], path[index+1], paint.width/2, mesh.Triangle)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	if paint.lineCap == "round" && path[0] != path[len(path)-1] {
-		if err := geometry.AppendDisk(mesh, path[0], paint.width/2); err != nil {
-			return err
-		}
-		return geometry.AppendDisk(mesh, path[len(path)-1], paint.width/2)
-	}
-	return nil
-}
-
-func libertyLineVertexCapacity(paths [][]roadPoint, paint libertyLinePaint, maximumTriangles int) int {
-	if len(paint.dashes) > 0 {
-		return 0
-	}
-	vertices := 0
-	for _, path := range paths {
-		points := len(path)
-		if points < 2 {
-			continue
-		}
-		vertices += (points - 1) * 6
-		if paint.lineJoin == "round" && points > 2 {
-			vertices += (points - 2) * libertyDiskSections * 3
-		}
-		if paint.lineCap == "round" && path[0] != path[points-1] {
-			vertices += 2 * libertyDiskSections * 3
-		}
-	}
-	return min(vertices, maximumTriangles*3)
-}
-
-func appendLibertyMiterJoin(
-	previous, point, next roadPoint,
-	halfWidth float64,
-	appendTriangle func(roadPoint, roadPoint, roadPoint) error,
-) error {
-	firstX, firstY := point.X-previous.X, point.Y-previous.Y
-	secondX, secondY := next.X-point.X, next.Y-point.Y
-	firstLength := math.Hypot(firstX, firstY)
-	secondLength := math.Hypot(secondX, secondY)
-	if firstLength <= polygonEpsilon || secondLength <= polygonEpsilon || halfWidth <= polygonEpsilon {
-		return nil
-	}
-	firstX, firstY = firstX/firstLength, firstY/firstLength
-	secondX, secondY = secondX/secondLength, secondY/secondLength
-	cross := firstX*secondY - firstY*secondX
-	if math.Abs(cross) <= polygonEpsilon {
-		return nil
-	}
-	for _, side := range []float64{-1, 1} {
-		firstCorner := roadPoint{X: point.X - firstY*halfWidth*side, Y: point.Y + firstX*halfWidth*side}
-		secondCorner := roadPoint{X: point.X - secondY*halfWidth*side, Y: point.Y + secondX*halfWidth*side}
-		deltaX := secondCorner.X - firstCorner.X
-		deltaY := secondCorner.Y - firstCorner.Y
-		factor := (deltaX*secondY - deltaY*secondX) / cross
-		miter := roadPoint{X: firstCorner.X + firstX*factor, Y: firstCorner.Y + firstY*factor}
-		if math.Hypot(miter.X-point.X, miter.Y-point.Y) > halfWidth*4 {
-			miter = point
-		}
-		if err := appendTriangle(firstCorner, miter, secondCorner); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func libertyDashedSegments(path []roadPoint, dashes []float64, width float64, maximumTriangles int) ([]roadSegment, error) {
-	if len(dashes) == 0 {
-		return solidLibertySegments(path), nil
-	}
-	pattern := make([]float64, len(dashes))
-	patternLength := 0.0
-	for index, dash := range dashes {
-		pattern[index] = dash * width
-		if pattern[index] < 0 || math.IsNaN(pattern[index]) || math.IsInf(pattern[index], 0) {
-			return nil, fmt.Errorf("%w: invalid dashed line pattern", errFeatureResourceLimit)
-		}
-		patternLength += pattern[index]
-	}
-	if patternLength <= polygonEpsilon {
-		return solidLibertySegments(path), nil
-	}
-	if len(pattern)%2 != 0 {
-		pattern = append(pattern, pattern...)
-	}
-	segments := make([]roadSegment, 0, len(path))
-	patternIndex := 0
-	remaining := pattern[0]
-	drawing := true
-	advancePattern := func() bool {
-		for range len(pattern) {
-			if remaining > polygonEpsilon {
-				return true
-			}
-			patternIndex = (patternIndex + 1) % len(pattern)
-			remaining = pattern[patternIndex]
-			drawing = patternIndex%2 == 0
-		}
-		return remaining > polygonEpsilon
-	}
-	if !advancePattern() {
-		return solidLibertySegments(path), nil
-	}
-	iterations := 0
-	maximumSegments := min(maxDashedSegmentsPerPath, maximumTriangles/2)
-	maximumIterations := max(1024, maximumSegments*4)
-	for index := 1; index < len(path); index++ {
-		start := path[index-1]
-		end := path[index]
-		deltaX := end.X - start.X
-		deltaY := end.Y - start.Y
-		length := math.Hypot(deltaX, deltaY)
-		position := 0.0
-		for position < length-polygonEpsilon {
-			iterations++
-			if iterations > maximumIterations {
-				return nil, fmt.Errorf("%w: dashed line exceeds %d-iteration limit", errFeatureResourceLimit, maximumIterations)
-			}
-			step := min(remaining, length-position)
-			if drawing {
-				if len(segments) >= maximumSegments {
-					return nil, fmt.Errorf("%w: dashed line exceeds %d-segment limit", errFeatureResourceLimit, maximumSegments)
-				}
-				firstFactor := position / length
-				secondFactor := (position + step) / length
-				segments = append(segments, roadSegment{
-					Start: roadPoint{X: start.X + deltaX*firstFactor, Y: start.Y + deltaY*firstFactor},
-					End:   roadPoint{X: start.X + deltaX*secondFactor, Y: start.Y + deltaY*secondFactor},
-				})
-			}
-			position += step
-			remaining -= step
-			if !advancePattern() {
-				return solidLibertySegments(path), nil
-			}
-		}
-	}
-	return segments, nil
-}
-
-func solidLibertySegments(path []roadPoint) []roadSegment {
-	segments := make([]roadSegment, 0, max(0, len(path)-1))
-	for index := 1; index < len(path); index++ {
-		segments = append(segments, roadSegment{Start: path[index-1], End: path[index]})
-	}
-	return segments
-}
-
-func cleanLibertyLine(path []roadPoint) []roadPoint {
-	cleaned := make([]roadPoint, 0, len(path))
-	for _, point := range path {
-		if len(cleaned) == 0 || cleaned[len(cleaned)-1] != point {
-			cleaned = append(cleaned, point)
-		}
-	}
-	return cleaned
-}
-
 func offsetLibertyLine(path []roadPoint, offset float64) []roadPoint {
-	if offset == 0 {
-		return path
-	}
-	offsetPath := make([]roadPoint, len(path))
-	for index, point := range path {
-		var normalX, normalY float64
-		var referenceX, referenceY float64
-		normalCount := 0
-		if index > 0 {
-			deltaX := point.X - path[index-1].X
-			deltaY := point.Y - path[index-1].Y
-			length := math.Hypot(deltaX, deltaY)
-			if length > polygonEpsilon {
-				referenceX, referenceY = -deltaY/length, deltaX/length
-				normalX += referenceX
-				normalY += referenceY
-				normalCount++
-			}
-		}
-		if index+1 < len(path) {
-			deltaX := path[index+1].X - point.X
-			deltaY := path[index+1].Y - point.Y
-			length := math.Hypot(deltaX, deltaY)
-			if length > polygonEpsilon {
-				referenceX, referenceY = -deltaY/length, deltaX/length
-				normalX += referenceX
-				normalY += referenceY
-				normalCount++
-			}
-		}
-		length := math.Hypot(normalX, normalY)
-		if length > polygonEpsilon {
-			normalX /= length
-			normalY /= length
-		}
-		distance := offset
-		if normalCount == 2 {
-			denominator := normalX*referenceX + normalY*referenceY
-			if math.Abs(denominator) > polygonEpsilon {
-				distance = offset / denominator
-				distance = max(-4*math.Abs(offset), min(4*math.Abs(offset), distance))
-			}
-		}
-		offsetPath[index] = roadPoint{X: point.X + normalX*distance, Y: point.Y + normalY*distance}
-	}
-	return offsetPath
+	return geometry.OffsetLine(path, offset)
 }
 
 func appendLibertyDisk(

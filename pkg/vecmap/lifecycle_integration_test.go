@@ -111,15 +111,15 @@ func testRenderedItemLifecycle(t *testing.T) {
 			},
 			liberty: []libertyRenderPrimitive{{
 				order: 0, layerID: "background", triangles: background,
-				color: mapColor{red: 248, green: 244, blue: 240, alpha: 255},
+				color: mapColor{Red: 248, Green: 244, Blue: 240, Alpha: 255},
 			}},
 			symbols: []libertySymbolCandidate{{
 				order: 110, layerID: "label_country_1", anchor: roadPoint{X: 128, Y: 128},
 				text: "Madrid", fontFamily: "Noto Sans Bold", textSize: 14,
-				textColor: mapColor{red: 40, green: 48, blue: 54, alpha: 255},
-				haloColor: mapColor{red: 255, green: 255, blue: 255, alpha: 255}, haloWidth: 1,
+				textColor: mapColor{Red: 40, Green: 48, Blue: 54, Alpha: 255},
+				haloColor: mapColor{Red: 255, Green: 255, Blue: 255, Alpha: 255}, haloWidth: 1,
 				lineHeight: 1.2, maximumWidth: 10, iconName: "airport", iconSize: 0.6,
-				iconColor: mapColor{red: 80, green: 90, blue: 100, alpha: 255}, iconOpacity: 1,
+				iconColor: mapColor{Red: 80, Green: 90, Blue: 100, Alpha: 255}, iconOpacity: 1,
 				viewportAligned: true, iconViewportAligned: true,
 			}},
 		}, nil

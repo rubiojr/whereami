@@ -1,5 +1,5 @@
-// Package geometry prepares toolkit-neutral map geometry using the existing
-// bounded ring cleanup and Go Earcut implementation.
+// Package geometry prepares toolkit-neutral map meshes using the existing
+// bounded polygon, line and symbol-quad algorithms, including Go Earcut.
 package geometry
 
 import (

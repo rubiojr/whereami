@@ -82,7 +82,7 @@ func prepareSDFLayouts(
 			continue
 		}
 		for index, candidate := range tile.roads.symbols {
-			if !sdfTextEligible(candidate.text) || candidate.fontStack == "" || candidate.textColor.alpha == 0 {
+			if !sdfTextEligible(candidate.text) || candidate.fontStack == "" || candidate.textColor.Alpha == 0 {
 				continue
 			}
 			hasCandidates = true

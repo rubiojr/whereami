@@ -107,7 +107,7 @@ func libertySprite(name string, color mapColor, opacity float64) (libertySpriteI
 	if !exists || entry.Width <= 0 || entry.Height <= 0 || entry.PixelRatio <= 0 {
 		return libertySpriteImage{}, false
 	}
-	key := fmt.Sprintf("%s/%d/%d/%d/%d/%.4f", name, color.red, color.green, color.blue, color.alpha, opacity)
+	key := fmt.Sprintf("%s/%d/%d/%d/%d/%.4f", name, color.Red, color.Green, color.Blue, color.Alpha, opacity)
 	if cached, exists := libertySpriteCache.get(key); exists {
 		return cached, true
 	}
@@ -124,10 +124,10 @@ func libertySprite(name string, color mapColor, opacity float64) (libertySpriteI
 			sourceOffset := (entry.Y+y)*libertySpriteAtlas.Stride + (entry.X+x)*4
 			targetOffset := (y*entry.Width + x) * 4
 			if entry.SDF {
-				pixels[targetOffset] = byte(color.red)
-				pixels[targetOffset+1] = byte(color.green)
-				pixels[targetOffset+2] = byte(color.blue)
-				pixels[targetOffset+3] = byte(math.Round(float64(libertySpriteAtlas.Pix[sourceOffset+3]) * alphaScale * float64(color.alpha) / 255))
+				pixels[targetOffset] = byte(color.Red)
+				pixels[targetOffset+1] = byte(color.Green)
+				pixels[targetOffset+2] = byte(color.Blue)
+				pixels[targetOffset+3] = byte(math.Round(float64(libertySpriteAtlas.Pix[sourceOffset+3]) * alphaScale * float64(color.Alpha) / 255))
 				continue
 			}
 			copy(pixels[targetOffset:targetOffset+3], libertySpriteAtlas.Pix[sourceOffset:sourceOffset+3])

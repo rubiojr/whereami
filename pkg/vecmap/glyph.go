@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/internal/pbf"
 )
 
 const (
@@ -295,21 +297,21 @@ func glyphRangeName(start uint32) string {
 }
 
 func decodeSDFGlyphRange(data []byte, key glyphRangeKey) (*sdfGlyphRange, error) {
-	reader := protobufReader{data: data}
+	reader := pbf.NewReader(data)
 	var matched *sdfGlyphRange
 	stackCount := 0
-	for reader.more() {
-		field, wire, err := reader.field()
+	for reader.More() {
+		field, wire, err := reader.Field()
 		if err != nil {
 			return nil, fmt.Errorf("decode glyph range: %w", err)
 		}
 		if field != 1 {
-			if err := reader.skip(wire); err != nil {
+			if err := reader.Skip(wire); err != nil {
 				return nil, fmt.Errorf("decode glyph range: %w", err)
 			}
 			continue
 		}
-		payload, err := reader.bytes(wire)
+		payload, err := reader.Bytes(wire)
 		if err != nil {
 			return nil, fmt.Errorf("decode glyph range stack: %w", err)
 		}
@@ -336,22 +338,22 @@ func decodeSDFGlyphRange(data []byte, key glyphRangeKey) (*sdfGlyphRange, error)
 }
 
 func decodeSDFGlyphStack(data []byte, rangeStart uint32) (*sdfGlyphRange, error) {
-	reader := protobufReader{data: data}
+	reader := pbf.NewReader(data)
 	stack := &sdfGlyphRange{glyphs: make(map[uint32]sdfGlyph)}
-	for reader.more() {
-		field, wire, err := reader.field()
+	for reader.More() {
+		field, wire, err := reader.Field()
 		if err != nil {
 			return nil, fmt.Errorf("decode glyph stack: %w", err)
 		}
 		switch field {
 		case 1:
-			value, err := reader.bytes(wire)
+			value, err := reader.Bytes(wire)
 			if err != nil {
 				return nil, fmt.Errorf("decode glyph stack name: %w", err)
 			}
 			stack.fontStack = string(value)
 		case 2:
-			value, err := reader.bytes(wire)
+			value, err := reader.Bytes(wire)
 			if err != nil {
 				return nil, fmt.Errorf("decode glyph stack range: %w", err)
 			}
@@ -360,7 +362,7 @@ func decodeSDFGlyphStack(data []byte, rangeStart uint32) (*sdfGlyphRange, error)
 			if len(stack.glyphs) >= maximumGlyphsPerRange {
 				return nil, errors.New("glyph range exceeds glyph count limit")
 			}
-			payload, err := reader.bytes(wire)
+			payload, err := reader.Bytes(wire)
 			if err != nil {
 				return nil, fmt.Errorf("decode glyph: %w", err)
 			}
@@ -373,7 +375,7 @@ func decodeSDFGlyphStack(data []byte, rangeStart uint32) (*sdfGlyphRange, error)
 			}
 			stack.glyphs[glyph.id] = glyph
 		default:
-			if err := reader.skip(wire); err != nil {
+			if err := reader.Skip(wire); err != nil {
 				return nil, fmt.Errorf("decode glyph stack: %w", err)
 			}
 		}
@@ -385,30 +387,30 @@ func decodeSDFGlyphStack(data []byte, rangeStart uint32) (*sdfGlyphRange, error)
 }
 
 func decodeSDFGlyph(data []byte, rangeStart uint32) (sdfGlyph, error) {
-	reader := protobufReader{data: data}
+	reader := pbf.NewReader(data)
 	glyph := sdfGlyph{}
 	var required uint8
-	for reader.more() {
-		field, wire, err := reader.field()
+	for reader.More() {
+		field, wire, err := reader.Field()
 		if err != nil {
 			return sdfGlyph{}, fmt.Errorf("decode glyph: %w", err)
 		}
 		switch field {
 		case 1:
-			value, err := reader.varint(wire)
+			value, err := reader.Varint(wire)
 			if err != nil || value > math.MaxUint32 {
 				return sdfGlyph{}, errors.New("glyph id is invalid")
 			}
 			glyph.id = uint32(value)
 			required |= 1 << 0
 		case 2:
-			value, err := reader.bytes(wire)
+			value, err := reader.Bytes(wire)
 			if err != nil {
 				return sdfGlyph{}, fmt.Errorf("decode glyph bitmap: %w", err)
 			}
 			glyph.bitmap = append([]byte(nil), value...)
 		case 3, 4, 7:
-			value, err := reader.varint(wire)
+			value, err := reader.Varint(wire)
 			if err != nil || value > math.MaxUint32 {
 				return sdfGlyph{}, errors.New("glyph unsigned metric is invalid")
 			}
@@ -424,7 +426,7 @@ func decodeSDFGlyph(data []byte, rangeStart uint32) (sdfGlyph, error) {
 				required |= 1 << 5
 			}
 		case 5, 6:
-			value, err := reader.varint(wire)
+			value, err := reader.Varint(wire)
 			if err != nil || value > math.MaxUint32 {
 				return sdfGlyph{}, errors.New("glyph signed metric is invalid")
 			}
@@ -437,7 +439,7 @@ func decodeSDFGlyph(data []byte, rangeStart uint32) (sdfGlyph, error) {
 				required |= 1 << 4
 			}
 		default:
-			if err := reader.skip(wire); err != nil {
+			if err := reader.Skip(wire); err != nil {
 				return sdfGlyph{}, fmt.Errorf("decode glyph: %w", err)
 			}
 		}

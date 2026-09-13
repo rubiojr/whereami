@@ -17,9 +17,17 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   coalesce without sorting transparent content out of order.
   Meshes support optional uint32 indices; draw ranges address indices when present.
 - `pkg/vecmap/geometry`: bounded polygon cleanup and Earcut preparation, indexed
-  topology assembly, line-segment extrusion, cap/join disks and glyph/icon quads.
+  topology assembly, complete line preparation (cleanup, offsets, dashing,
+  extrusion, caps and joins), and glyph/icon quads.
   The fixture can carry direct uint32 indices through feature storage, fill
   batching, line construction and symbol packing.
+- `pkg/vecmap/mvt`: bounded PBF tile preparation, shared feature/property/polygon
+  data, geometry decoding, ring grouping, Earcut and aggregate budgets without Qt
+  or cgo. `pkg/vecmap/internal/pbf` shares the existing reader with glyph parsing.
+- `pkg/vecmap/style`: document/layer preparation, the existing expression subset,
+  primitive conversions, numeric/color interpolation and color parsing/opacity.
+  It depends only on the standard library; pinned assets and caching remain
+  caller-owned in vecmap.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -38,10 +46,12 @@ Geographic fixture captures carry a `view.Camera` and tile-space descriptions.
 The viewer reprojects those through `Document.FrameAt` without replacing scene
 resources. Older affine-only captures remain readable.
 
-The existing decoder/compiler is reused by the fixture producer. It still lives
-in the Qt-bound `pkg/vecmap` package; extracting the rest of the engine into
-headless packages remains work under the umbrella issue. The scene consumer
-already builds independently of that package.
+The fixture producer reuses the existing compiler and the extracted headless MVT
+preparation and style compiler. Symbol layout/placement and scene compilation
+still live in the Qt-bound `pkg/vecmap`
+package. Extracting that remaining CPU work is
+tracked by the umbrella issue. The scene consumer already builds independently
+of that package.
 
 The native bindings and Go renderer are separate packages. Editing rendering
 logic rebuilds the Go backend without recompiling the binding package's C++.
@@ -447,6 +457,255 @@ GOAMD64=v4 go test ./pkg/vecmap -run '^$' \
 ```
 
 Remaining CPU-engine extraction and live scheduler work are tracked by **ngrb**.
+
+### Toolkit-neutral line engine
+
+Kata **1fy1** moves the complete existing line preparation pipeline into
+`geometry.TessellateLines`, taking a Go-only `LineStyle` and producing expanded
+or indexed meshes. Path cleanup, offsets, dash phase across path vertices,
+segment extrusion, miter/round joins and endpoint caps now run without importing
+the Qt-bound parent package. Vecmap supplies evaluated paint and maps failures
+back to its existing feature-resource error classification.
+
+The extraction preserves the 2,000,000-triangle policy, 100,000 dashed segments
+per path, dash iteration budget, miter bound of four half-widths, offset bound of
+four times the requested offset, and original triangle order. Capacity estimation
+now saturates before multiplication, preventing an
+integer overflow for repeated/shared input paths on 32-bit targets. The result
+owns its data, and failed preparation publishes no partial mesh.
+
+Headless geometry coverage is **97.4%**, with regressions for dash phase and odd
+patterns, zero/invalid dash entries, closed-path caps, sharp/degenerate miters,
+offset bounds, input ownership, exact indexed expansion and limit exhaustion.
+Both `CGO_ENABLED=0` amd64 and 386 tests pass, as do the existing parent-package
+tests, integration/race checks, staticcheck and application build. All three
+Madrid representation captures remain byte-for-byte identical at `GOAMD64=v1`.
+
+The solid, round-joined 1024-point headless line benchmark measured 200–206 µs
+expanded (557,057–557,058 B/op, four allocations) and 177–193 µs indexed
+(434,176 B/op, five allocations),
+using Go 1.27.1 and `GOAMD64=v4`. These compare representations in the extracted
+engine, not before/after extraction or rendering performance.
+The benchmark also includes a dashed, round-capped case to track dash-buffer
+allocation behavior.
+
+Full-fixture timing was variable: an initial sweep measured 97.2–111.5 ms expanded,
+40.0–68.1 ms direct, and 143.6–158.3 ms post-indexed; a direct-only repeat measured
+45.5–49.9 ms. Those samples are retained here. To check extraction overhead,
+separate test binaries were built from the previous `99d28ab` implementation
+(through a Go build overlay) and the working implementation, then run in
+before/after/after/before order with the same inputs and architecture setting.
+
+That comparison first exposed roughly 16 extra dash-buffer allocations after
+extraction. Keeping allocation and growth in the consuming function, while a
+helper scales the caller-owned buffer, preserved Go's stack-allocation option.
+The final alternating run measured **33.3–35.0 ms before** and **32.9–33.5 ms after**,
+both about **90.75 MB/op** and 102,312–102,315 allocations. This supports retaining
+the preparation cost; no extraction speedup or MapLibre parity is claimed.
+
+```sh
+CGO_ENABLED=0 go test -cover ./pkg/vecmap/geometry
+CGO_ENABLED=0 GOARCH=386 go test ./pkg/vecmap/geometry
+CGO_ENABLED=0 GOAMD64=v4 go test ./pkg/vecmap/geometry \
+  -run '^$' -bench '^BenchmarkTessellateLines$' -benchmem -count 3
+```
+
+### Toolkit-neutral MVT geometry commands
+
+Kata **fc0r** extracts the existing point, line-string and polygon-ring command
+decoders into `pkg/vecmap/mvt`. Parent adapters use `geometry.Point` directly and
+share the feature resource-error identity and point-limit constant. No conversion
+slices, new library, or changes to the pending line engine are involved.
+
+This preserves int64 delta accumulation across paths/rings, repeated points,
+winding, implicit polygon closure, command validation and nil output on failure.
+The ceilings remain 1,000,000 points per point/line feature and 32,768 points per
+polygon feature, including all rings. At this checkpoint, protobuf parsing,
+feature data, ring grouping and aggregate tile budgets were the next extraction
+boundary; the following checkpoint provides standalone PBF tile preparation.
+
+Verification on Go 1.27.1:
+
+- Headless amd64 tests: **100.0% statement coverage** in `mvt`; headless 386 tests
+  pass. Cases cover malformed commands, bounds across multiple paths/rings, exact
+  limits, signed coordinates beyond int32, ownership and atomic failure.
+- `GOAMD64=v4 go test -cover ./...` passes with the pinned tile/glyph assets.
+- `GOAMD64=v1 go test -race -tags integration` passes for vecmap, mvt and geometry.
+- Expanded, direct-indexed and post-indexed captures regenerated with the same
+  `GOAMD64=v1` binary each compare byte-for-byte equal to the previous references:
+  45 draws, 62 labels, complete fonts and unchanged geometry counts.
+- Targeted staticcheck and `go build ./...` pass. Repository-wide staticcheck
+  reports only existing ST1006 receiver-name diagnostics in generated
+  `internal/miqtquick` bindings. Gopls reports no new build errors.
+- Complexity review retains the two original sequential command state machines
+  (line/ring decoding each scores 16); their branches encode distinct validation
+  and path-transition rules. A future decoder-wide refactor could share command
+  traversal, but is not needed for this behavior-preserving extraction.
+- The pre-edit vulnerability scan reported standard-library **GO-2026-5024**
+  (`NewNTUnicodeString` length overflow). This checkpoint adds no dependencies or
+  toolchain changes and does not resolve that baseline finding.
+
+The synthetic command benchmark is a maintenance tool, not extraction speedup
+or full-map parity evidence. Renderer/GPU code is unchanged; verification here is
+CPU preparation and full-capture equality, rather than a fresh backend benchmark.
+
+### Headless MVT tile preparation and source model
+
+Kata **ydc3** extends `pkg/vecmap/mvt` with `DecodeTile(data, indexed)`, returning
+owned source-layer features, properties, polygon topology and degradation
+summaries. The existing protobuf reader is shared with glyph decoding through
+`pkg/vecmap/internal/pbf`. The existing parser, ring grouping and Earcut behavior
+are reused; no production dependency is added.
+
+Vecmap's source types are aliases of `mvt.Feature`, `mvt.Properties` and
+`mvt.Polygon`. Exporting their fields lets style and symbol consumers share the
+same data without conversion slices/maps. Production uses `DecodeLayers` plus
+one `Decoder` per tile, keeping legacy fallback work and warning delivery in the
+original per-layer order. The standalone decoder instead returns ordered resource
+summaries and owns no logger, I/O or Qt state. Parsed layer payloads borrow the PBF
+buffer until preparation ends; completed features do not retain it.
+
+Shared limits remain 100,000 accepted features, 1,000,000 source points, 500,000
+styled triangles and 50,000,000 polygon-preparation operations per tile. Skipped
+features do not charge accepted output, while spent triangulation work stays
+charged. The parser now enforces the existing 2 MiB I/O ceiling itself, and feature
+slice capacity is capped at remaining slots before allocation. An oversized
+protobuf field number is rejected before conversion to `int`, preventing a
+malformed key from aliasing a known field on 32-bit targets. These explicit
+boundary checks leave valid fixture output unchanged.
+
+Verification:
+
+- Headless MVT coverage **100.0%**, shared reader coverage **98.8%**; amd64/386
+  tests pass. The reader's remaining uncovered return is the original unreachable
+  fallthrough after its bounded varint loop.
+- Tests cover typed values, packed/unpacked fields, explicit zero IDs, borrowed
+  parsing versus owned output, duplicate layers, malformed data, aggregate budgets,
+  spent-work retention and exact indexed reconstruction of the pinned tile.
+- A 20-second headless fuzz run completed **1,115,109 executions** without failure.
+- Full `GOAMD64=v4 go test -cover ./...`, `GOAMD64=v1` integration/race checks for
+  vecmap/mvt/pbf/geometry, targeted staticcheck and the application build pass.
+  The previously recorded generated ST1006 warnings and standard-library
+  GO-2026-5024 vulnerability baseline remain unresolved.
+- All three regenerated `GOAMD64=v1` captures compare byte-for-byte equal to their
+  references: 45 draws, 62 labels, complete fonts and unchanged geometry counts.
+- Complexity review retains the existing parser's explicit field dispatch
+  (`decodeValue` 18, `DecodeFeature` 14, layer fields 13); the new aggregate
+  preparation functions are at most 10. No renderer or binding code is changed.
+
+Two v4 test binaries, built immediately before and after this extraction, ran the
+direct fixture benchmark in before/after/after/before order, with identical pinned
+tile/glyph inputs, Go 1.27.1, GOMAXPROCS 16 and two-second samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before tile extraction | 30.81 / 30.27 ms | 90,747,860 / 90,747,880 | 102,311 / 102,312 |
+| After tile extraction | 30.45 / 30.38 ms | 90,748,797 / 90,748,317 | 102,314 / 102,313 |
+
+This supports preserving preparation cost, not an extraction speedup or full-map
+parity claim. The benchmark excludes I/O, JSON and GPU work. Style evaluation,
+glyph/atlas preparation, placement and scene compilation are the next CPU-engine
+boundaries; live scheduling/upload migration and broader rendering gates remain
+open. The offline fixture producer still imports the Qt-bound parent package.
+
+### Headless expression and color evaluation
+
+Kata **ddp2** moves the existing Liberty interpreter into `pkg/vecmap/style`, with
+`Evaluate(expression, Context)`, primitive conversion helpers and shared `Color`
+values. Parent adapters borrow the existing feature property map, and the color
+type is an alias. The package imports only the standard library. The pinned style
+JSON, document/layer compiler and cache remain parent-owned for a later checkpoint.
+
+The operator subset, 64-level recursion bound, numeric/color interpolation,
+literal font arrays, missing-property handling and short-circuit/fallback behavior
+are preserved. This remains an application-owned style interpreter, not a complete
+MapLibre expression engine or a total work/output budget for arbitrary styles.
+Returned literal/property arrays/maps may alias immutable inputs.
+
+New regressions exposed two existing correctness bugs, fixed in this checkpoint:
+
+- Interface equality on array/map values could panic; non-comparable values now
+  compare unequal, including structs containing non-comparable interface fields.
+- Four/eight-digit hex parsing incorrectly read blue from the alpha byte. It now
+  extracts the correct blue byte (`#01020304` is RGBA 1,2,3,4).
+
+All three final `GOAMD64=v1` captures remain byte-for-byte identical to their
+references: 45 ordered draws, 62 labels, complete fonts and unchanged geometry.
+Headless style coverage is **100.0%**, with amd64/386, full v4 normal tests, v1
+integration/race tests, targeted staticcheck and application build passing. A
+20-second JSON fuzz run completed **1,306,828 executions** without failure. Existing
+generated ST1006 and standard-library GO-2026-5024 baseline findings remain as
+previously recorded. Gopls reports no new errors. Complexity review retains the
+original explicit dispatcher (43) and comparison dispatch (now 20); separating
+operator groups is a possible focused follow-up, not part of this extraction.
+
+The first v4 direct-fixture comparison found a small-byte but significant-count
+allocation regression: 102,313–102,314 before versus 106,715 after, with roughly
+5 KB extra allocated. Profiling identified `reflect.Value.Comparable` on Color:
+Go 1.27 iterates struct fields through an allocating iterator. A scalar fast path
+now bypasses reflection for Color and the normal primitive values, retaining the
+safe fallback for composites. Allocation count is back to the original range.
+
+Before/after/after/before runs used separate v4 test binaries, identical pinned
+tile/glyph bytes, Go 1.27.1, GOMAXPROCS 16 and two-second direct-fixture samples:
+
+| Run | Before time/op | After time/op | Before / after allocations |
+| --- | ---: | ---: | ---: |
+| Initial, reflective guard | 30.96 / 30.39 ms | 29.95 / 30.06 ms | 102,313–102,314 / 106,715 |
+| Scalar fast path, variable samples | 45.30 / 36.92 ms | 32.23 / 32.68 ms | 102,314–102,317 / 102,310–102,312 |
+| Final repeat | 32.66 / 35.45 ms | 31.50 / 33.40 ms | 102,312–102,313 / 102,311–102,313 |
+
+Final allocation volume is about **90.75 MB/op** in both versions. Slow samples
+are retained; this establishes removal of the allocation regression, not a robust
+preparation speedup or rendering-parity claim. The separate synthetic filter
+benchmark measured **42.65–47.69 ns/op, zero allocations** for one small filter.
+It does not measure complete style compilation, map preparation or GPU work.
+
+### Headless document and layer preparation
+
+Kata **hbxm** extracts the existing version-8 document model and layer compiler
+into `style.Parse` and `style.Compile`. `CompiledLayer` provides `VisibleAt`,
+`Hidden`, `Matches` and `Value`. Parent type aliases share compiled slices/maps;
+the pinned JSON asset, generator and once/cache policy stay in vecmap. Preparation
+uses the existing standard-library JSON decoder and expression evaluator.
+
+Order includes duplicate IDs and unsupported layer types. Zoom ranges remain
+half-open with defaults of zero/infinity, paint shadows layout even for null or
+failed expressions, and hidden visibility recognizes only literal layout `none`.
+Compilation now returns nil on any error instead of exposing earlier compiled
+layers. `Parse` owns decoded data; `Compile` borrows its already-decoded filter
+expressions but owns paint/layout output and copies zoom bounds. This remains an
+application-owned style subset, with caller-owned input/work policy.
+
+Verification on Go 1.27.1:
+
+- Headless style tests retain **100.0% coverage** on amd64 and pass on 386.
+  Regressions cover order/duplicates, the pinned 111-layer style, ownership, zoom
+  boundaries, filter/value/visibility semantics and atomic malformed-JSON failures.
+- Full v4 module coverage tests, v1 parent/style integration-race tests, targeted
+  staticcheck and application build pass. Gopls reports no build errors.
+- Expanded/direct/post-indexed v1 captures are byte-for-byte identical to their
+  references: 45 draws, 62 labels, complete fonts and unchanged geometry counts.
+- Repository-wide staticcheck retains the existing generated MIQT ST1006 warnings;
+  the pre-edit scan still reports standard-library GO-2026-5024. New document
+  preparation functions are all below the complexity-review threshold of 11;
+  the earlier expression dispatch is unchanged.
+
+Separate v4 binaries from immediately before/after this checkpoint ran the direct
+fixture benchmark in before/after/after/before order, with the same pinned assets,
+GOMAXPROCS 16 and two-second samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before document extraction | 45.70 / 32.33 ms | 90,749,369 / 90,747,860 | 102,314 / 102,311 |
+| After document extraction | 40.46 / 33.95 ms | 90,749,254 / 90,748,892 | 102,314 / 102,314 |
+
+Allocation cost is preserved at about 90.75 MB and 102,311–102,314 allocations.
+Timing varies substantially; these samples do not establish a speedup. The warm
+cache benchmark checks full preparation and layer evaluation, not cold JSON
+compilation, I/O, GPU work or MapLibre parity. Glyph/atlas/layout/placement and
+scene compilation are the next headless boundaries; the fixture producer still
+imports the Qt-bound parent package.
 
 ## Flatpak integration
 

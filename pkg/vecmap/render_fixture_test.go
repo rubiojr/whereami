@@ -69,9 +69,9 @@ func TestDirectRenderFixture(t *testing.T) {
 	}
 	for _, features := range direct.bucket.sourceLayers {
 		for _, feature := range features {
-			for _, polygon := range feature.polygons {
-				if len(polygon.triangles) != 0 {
-					assert.NotNil(t, polygon.indices, "retain Earcut topology in feature storage")
+			for _, polygon := range feature.Polygons {
+				if len(polygon.Vertices) != 0 {
+					assert.NotNil(t, polygon.Indices, "retain Earcut topology in feature storage")
 				}
 			}
 		}

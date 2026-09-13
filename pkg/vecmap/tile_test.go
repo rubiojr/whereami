@@ -3,10 +3,8 @@ package vecmap
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,33 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestDecodeMVTTypedValues(t *testing.T) {
-	floatBits := make([]byte, 4)
-	binary.LittleEndian.PutUint32(floatBits, math.Float32bits(1.5))
-	doubleBits := make([]byte, 8)
-	binary.LittleEndian.PutUint64(doubleBits, math.Float64bits(2.5))
-	tests := []struct {
-		name     string
-		message  []byte
-		expected any
-	}{
-		{name: "string", message: appendBytesField(nil, 1, []byte("road")), expected: "road"},
-		{name: "float", message: append(appendProtoVarint(nil, 2<<3|protobufWireFixed32), floatBits...), expected: float32(1.5)},
-		{name: "double", message: append(appendProtoVarint(nil, 3<<3|protobufWireFixed64), doubleBits...), expected: float64(2.5)},
-		{name: "int", message: appendProtoVarint(appendProtoVarint(nil, 4<<3|protobufWireVarint), uint64(42)), expected: int64(42)},
-		{name: "uint", message: appendProtoVarint(appendProtoVarint(nil, 5<<3|protobufWireVarint), uint64(43)), expected: uint64(43)},
-		{name: "sint", message: appendProtoVarint(appendProtoVarint(nil, 6<<3|protobufWireVarint), uint64(9)), expected: int64(-5)},
-		{name: "bool", message: appendProtoVarint(appendProtoVarint(nil, 7<<3|protobufWireVarint), uint64(1)), expected: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			value, err := decodeMVTValue(test.message)
-			require.NoError(t, err)
-			assert.Equal(t, test.expected, value.value)
-		})
-	}
-}
 
 func TestDecodeRoadBucket(t *testing.T) {
 	tile := vectorTileID{X: 250, Y: 193, Z: 9}
@@ -204,34 +175,6 @@ func TestDecodeRoadBucketSkipsResourceLimitedLandcoverFeature(t *testing.T) {
 		assert.Contains(t, message, "last feature index=0")
 		assert.Contains(t, message, "polygon resource limit exceeded")
 	}
-}
-
-func TestDecodeFeaturesKeepsEarlierContentWhenBudgetIsExhausted(t *testing.T) {
-	large := make([][2]int32, 20)
-	for index := range large {
-		angle := 2 * math.Pi * float64(index) / float64(len(large))
-		large[index] = [2]int32{
-			int32(1000 + 500*math.Cos(angle)),
-			int32(1000 + 500*math.Sin(angle)),
-		}
-	}
-	valid := [][2]int32{{0, 0}, {100, 0}, {0, 100}}
-	layerData := mvtLayerMessage(
-		"landcover",
-		mvtTypedFeatureMessage(0, mvtPolygonType, mvtPolygonGeometry(valid)),
-		mvtTypedFeatureMessage(0, mvtPolygonType, mvtPolygonGeometry(large)),
-	)
-	layers, err := decodeMVTLayers(mvtTile(layerData))
-	require.NoError(t, err)
-	require.Len(t, layers, 1)
-	budget := triangulationBudget{remaining: 30}
-	features, limits := layers[0].decodeFeatures(new(int), new(int), new(int), &budget)
-
-	require.Len(t, features, 1)
-	assert.Equal(t, 1, limits.skipped)
-	assert.Equal(t, 1, limits.lastFeatureIndex)
-	assert.ErrorIs(t, limits.last, errPolygonResourceLimit)
-	assert.Equal(t, 12, budget.remaining)
 }
 
 func TestDecodePinnedRoadFixture(t *testing.T) {

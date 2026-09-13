@@ -54,14 +54,14 @@ type libertySymbolCandidate struct {
 }
 
 func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, zoom float64) error {
-	features := bucket.sourceLayers[layer.sourceLayer]
+	features := bucket.sourceLayers[layer.SourceLayer]
 	for _, feature := range features {
-		evaluation := libertyEvaluation{zoom: zoom, geometryID: feature.geometryID, properties: feature.properties}
-		if !layer.matches(evaluation) {
+		evaluation := libertyEvaluation{zoom: zoom, geometryID: feature.GeometryType, properties: feature.Properties}
+		if !layer.Matches(evaluation.context()) {
 			continue
 		}
 		text := libertyEvaluatedString(layer, "text-field", evaluation, "")
-		text = expandLibertyTokens(text, feature.properties)
+		text = expandLibertyTokens(text, feature.Properties)
 		switch libertyEvaluatedString(layer, "text-transform", evaluation, "none") {
 		case "uppercase":
 			text = strings.ToUpper(text)
@@ -71,7 +71,7 @@ func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, z
 		text = normalizeLibertySymbolText(text)
 		text = boundedLibertySymbolText(text)
 		iconName := libertyEvaluatedString(layer, "icon-image", evaluation, "")
-		iconName = expandLibertyTokens(iconName, feature.properties)
+		iconName = expandLibertyTokens(iconName, feature.Properties)
 		if text == "" && iconName == "" {
 			continue
 		}
@@ -88,8 +88,8 @@ func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, z
 				return errFeatureResourceLimit
 			}
 			candidate := libertySymbolCandidate{
-				order:               layer.order,
-				layerID:             layer.id,
+				order:               layer.Order,
+				layerID:             layer.ID,
 				anchor:              anchor.point,
 				lineAngle:           anchor.angle,
 				iconLineAngle:       anchor.rawAngle,
@@ -126,7 +126,7 @@ func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, z
 			if libertyEvaluatedBool(layer, "icon-keep-upright", evaluation, false) {
 				candidate.iconLineAngle = anchor.angle
 			}
-			candidate.textColor, _ = libertyEvaluatedColor(layer, "text-color", evaluation, mapColor{alpha: 255})
+			candidate.textColor, _ = libertyEvaluatedColor(layer, "text-color", evaluation, mapColor{Alpha: 255})
 			candidate.textColor = libertyColorWithOpacity(
 				candidate.textColor,
 				libertyEvaluatedNumber(layer, "text-opacity", evaluation, 1),
@@ -134,7 +134,7 @@ func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, z
 			candidate.haloColor, _ = libertyEvaluatedColor(layer, "text-halo-color", evaluation, mapColor{})
 			candidate.haloWidth = libertyEvaluatedNumber(layer, "text-halo-width", evaluation, 0)
 			candidate.haloBlur = libertyEvaluatedNumber(layer, "text-halo-blur", evaluation, 0)
-			candidate.iconColor, _ = libertyEvaluatedColor(layer, "icon-color", evaluation, mapColor{alpha: 255})
+			candidate.iconColor, _ = libertyEvaluatedColor(layer, "icon-color", evaluation, mapColor{Alpha: 255})
 			if alignment := libertyEvaluatedString(layer, "text-rotation-alignment", evaluation, "auto"); alignment == "viewport" {
 				candidate.viewportAligned = true
 			} else if alignment == "map" {
@@ -163,8 +163,8 @@ type libertySymbolAnchor struct {
 
 func libertyFeatureAnchors(feature vectorFeature, placement string, spacing float64) []libertySymbolAnchor {
 	if placement == "line" || placement == "line-center" {
-		anchors := make([]libertySymbolAnchor, 0, len(feature.lines))
-		for _, line := range feature.lines {
+		anchors := make([]libertySymbolAnchor, 0, len(feature.Lines))
+		for _, line := range feature.Lines {
 			if placement == "line-center" {
 				if anchor, ok := libertyLineAnchor(line, 0.5); ok {
 					anchors = append(anchors, anchor)
@@ -175,15 +175,15 @@ func libertyFeatureAnchors(feature vectorFeature, placement string, spacing floa
 		}
 		return anchors
 	}
-	anchors := make([]libertySymbolAnchor, 0, len(feature.points)+len(feature.polygons))
-	for _, point := range feature.points {
+	anchors := make([]libertySymbolAnchor, 0, len(feature.Points)+len(feature.Polygons))
+	for _, point := range feature.Points {
 		anchors = append(anchors, libertySymbolAnchor{point: point})
 	}
-	for _, polygon := range feature.polygons {
-		anchors = append(anchors, libertySymbolAnchor{point: libertyPolygonCentroid(polygon.exterior)})
+	for _, polygon := range feature.Polygons {
+		anchors = append(anchors, libertySymbolAnchor{point: libertyPolygonCentroid(polygon.Exterior)})
 	}
 	if len(anchors) == 0 {
-		for _, line := range feature.lines {
+		for _, line := range feature.Lines {
 			if anchor, ok := libertyLineAnchor(line, 0.5); ok {
 				anchors = append(anchors, anchor)
 			}
@@ -300,7 +300,7 @@ func expandLibertyTokens(text string, properties featureProperties) string {
 		}
 		end := start + endOffset + 1
 		name := text[start+1 : end]
-		value, _ := properties.get(name)
+		value, _ := properties.Get(name)
 		replacement := libertyString(value)
 		retainedBytes := len(text) - (end + 1 - start)
 		if len(replacement) > maximumSymbolTextBytes-retainedBytes {
@@ -320,7 +320,7 @@ func boundedLibertySymbolText(text string) string {
 }
 
 func libertyEvaluatedBool(layer compiledLibertyLayer, name string, evaluation libertyEvaluation, fallback bool) bool {
-	value, exists := layer.value(name, evaluation)
+	value, exists := layer.Value(name, evaluation.context())
 	if !exists {
 		return fallback
 	}
@@ -340,7 +340,7 @@ func libertyEvaluatedPoint(layer compiledLibertyLayer, name string, evaluation l
 }
 
 func libertyEvaluatedNumberArray(layer compiledLibertyLayer, name string, evaluation libertyEvaluation) []float64 {
-	value, exists := layer.value(name, evaluation)
+	value, exists := layer.Value(name, evaluation.context())
 	if !exists {
 		return nil
 	}
@@ -360,7 +360,7 @@ func libertyEvaluatedNumberArray(layer compiledLibertyLayer, name string, evalua
 }
 
 func libertyEvaluatedFonts(layer compiledLibertyLayer, evaluation libertyEvaluation) (string, string) {
-	value, exists := layer.value("text-font", evaluation)
+	value, exists := layer.Value("text-font", evaluation.context())
 	if !exists {
 		return "Noto Sans Regular", "Noto Sans Regular"
 	}

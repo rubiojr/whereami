@@ -38,8 +38,8 @@ func (i *Item) appendLibertyScene(root *quick.QSGNode, camera Camera, scene *lib
 		}
 		root.AppendChildNode(layerRoot)
 		i.sceneNodes = append(i.sceneNodes, layerRoot)
-		if layer.kind == "symbol" {
-			symbolLayer := retainedLibertySymbolLayer{root: layerRoot, order: layer.order}
+		if layer.Kind == "symbol" {
+			symbolLayer := retainedLibertySymbolLayer{root: layerRoot, order: layer.Order}
 			i.appendLibertySymbolLayerNodes(&symbolLayer, camera, tiles, wraps, acceptedSymbols, sdfScene, activeSDFAtlas)
 			i.symbolLayers = append(i.symbolLayers, symbolLayer)
 			continue
@@ -88,14 +88,14 @@ func (i *Item) newLibertyBasemapTileNode(
 	layer compiledLibertyLayer,
 	styleZoom float64,
 ) (*quick.QSGTransformNode, bool) {
-	if layer.kind == "raster" {
-		if len(tile.roads.raster.rgba) == 0 || !layer.visibleAt(styleZoom) || libertyLayerHidden(layer) {
+	if layer.Kind == "raster" {
+		if len(tile.roads.raster.rgba) == 0 || !layer.VisibleAt(styleZoom) || libertyLayerHidden(layer) {
 			return nil, true
 		}
 		node := newLibertyRasterTileNode(i.quickItem, camera, tile.id, wrap, tile.roads, layer, styleZoom)
 		return node, node != nil
 	}
-	return newLibertyLayerTileNode(i.quickItem, camera, tile.id, wrap, tile.roads.liberty, layer.order)
+	return newLibertyLayerTileNode(i.quickItem, camera, tile.id, wrap, tile.roads.liberty, layer.Order)
 }
 
 func (i *Item) reconcileLibertyTiles(

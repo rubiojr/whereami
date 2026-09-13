@@ -96,11 +96,11 @@ func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, option
 		return nil, err
 	}
 	for _, layer := range layers {
-		for _, primitive := range libertyPrimitivesAtOrder(bucket.liberty, layer.order) {
+		for _, primitive := range libertyPrimitivesAtOrder(bucket.liberty, layer.Order) {
 			builder.primitive(primitive)
 		}
-		if layer.kind == "symbol" {
-			builder.symbols(layer.order)
+		if layer.Kind == "symbol" {
+			builder.symbols(layer.Order)
 		}
 	}
 	if builder.err != nil {
@@ -220,7 +220,7 @@ func (b *fixtureBuilder) texture(key string, width, height int, pixels []byte) u
 }
 
 func fixtureColor(c mapColor) [4]float32 {
-	return [4]float32{float32(c.red) / 255, float32(c.green) / 255, float32(c.blue) / 255, float32(c.alpha) / 255}
+	return [4]float32{float32(c.Red) / 255, float32(c.Green) / 255, float32(c.Blue) / 255, float32(c.Alpha) / 255}
 }
 
 func (b *fixtureBuilder) draw(first int, material scene.Material, clip [4]float32) {
@@ -293,7 +293,7 @@ func (b *fixtureBuilder) symbols(order int) {
 			}
 			color := candidate.textColor
 			if kind == scene.SDFHalo {
-				if candidate.haloWidth <= 0 || candidate.haloColor.alpha == 0 {
+				if candidate.haloWidth <= 0 || candidate.haloColor.Alpha == 0 {
 					continue
 				}
 				color = candidate.haloColor
