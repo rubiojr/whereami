@@ -32,8 +32,8 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   deterministic atlas packing and glyph-metric text layout. Font I/O/cache/retry,
   retained-atlas policy, eligibility and placement stay caller-owned.
 - `pkg/vecmap/placement`: feature-anchor selection, line interpolation/repetition,
-  upright/raw angles and exterior-ring centroids. Symbol paint, collision and
-  priority decisions remain caller-owned.
+  upright/raw angles, exterior-ring centroids and streaming evaluated text/icon
+  candidates. Collision and priority decisions remain caller-owned.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -53,8 +53,8 @@ The viewer reprojects those through `Document.FrameAt` without replacing scene
 resources. Older affine-only captures remain readable.
 
 The fixture producer reuses the existing compiler and the extracted headless MVT
-preparation, style compiler, glyph/atlas preparation and text layout. Symbol
-candidate preparation, placement and scene compilation still live in the Qt-bound
+preparation, style compiler, glyph/atlas preparation, text layout and symbol
+candidates. Collision/priority decisions and scene compilation still live in the Qt-bound
 `pkg/vecmap` package. Extracting that remaining CPU work is
 tracked by the umbrella issue. The scene consumer already builds independently
 of that package.
@@ -873,6 +873,64 @@ runs; no speedup or precise timing equivalence is established. These are CPU
 preparation measurements, excluding I/O/JSON/GPU work, rather than full-map parity
 evidence. The next boundaries are evaluated symbol candidate preparation,
 collision/priority decisions and scene compilation.
+
+### Headless evaluated symbol candidates
+
+Committed anchors as `2aabbcf`, then continued with kata **0yzm**.
+`placement.PrepareSymbols` now applies feature filters, bounded token/text
+preparation, font stacks, source-zoom spacing and per-anchor text/icon paint. It
+streams Go-only `Symbol` values to a caller-owned sink in feature/anchor order.
+Vecmap retains its renderer representation through a small value adapter, without
+an intermediate candidate slice or map/string-payload copies. Other consumers
+can retain the shared Symbol values directly.
+
+Typed paint helpers moved into standard-library-only `style.CompiledLayer` methods
+and are reused by both symbol preparation and the parent fill/line compiler.
+Existing defaults, finite scalar-number checks, loose point-array components,
+invalid-color distinctions and font-stack trimming/order are preserved. Text
+expansion keeps its 4096-byte/256-rune and 256-substitution limits, nonrecursive
+replacement and missing-property semantics. Text transformation/normalization and
+icon expansion retain their original order.
+
+The caller selects visible symbol layers and supplies remaining tile capacity.
+The shared API caps it at 10,000; an additional candidate returns `ErrSymbolLimit`
+without undoing earlier sink calls. Sink errors stop emission and propagate.
+The parent maps the limit identity to its existing feature-resource error and
+preserves partial candidates, covered by a new adapter regression. Text
+eligibility/Qt fallback, collision acceptance and priority, atlas-dependent quads
+and scene packing remain parent-owned.
+
+Verification:
+
+- Headless placement/style coverage is **100%**, with amd64/386 tests passing.
+  Regressions cover complete default/custom symbol paint, filter/order behavior,
+  text/icon transformations, font stacks, alignment/upright angles, zoom spacing,
+  malformed values, owned numeric arrays, budgets and sink errors.
+- A 20-second symbol-text fuzz run completed **389,271 executions** without failure.
+- Full v4 module coverage tests, v1 vecmap/placement/style integration-race tests,
+  targeted staticcheck and application build pass. Gopls reports no build errors.
+  Repository-wide staticcheck retains the generated MIQT ST1006 warnings, and the
+  earlier standard-library GO-2026-5024 baseline remains unresolved.
+- All three v1 captures are byte-for-byte identical: 45 draws, 62 labels, complete
+  fonts and unchanged geometry/textures. This verifies CPU output; QRhi algorithms
+  and generated bindings are unchanged.
+- Complexity review flags the streaming preparation loop at 12 (the previous
+  combined compiler scored 15); its evaluation helper and new typed helpers are
+  at most 10. Existing expression/anchor complexity remains documented above.
+
+Separate before/after v4 binaries used identical pinned inputs and GOMAXPROCS 16:
+
+| Sequence / duration | Before time/op | After time/op | Before / after allocations |
+| --- | ---: | ---: | ---: |
+| Before/after/after/before, 2 s | 34.50 / 35.41 ms | 41.85 / 44.65 ms | 102,313 / 102,313–102,316 |
+| After/before/before/after, 3 s | 32.28 / 31.42 ms | 31.22 / 31.37 ms | 102,311–102,313 / 102,312–102,315 |
+
+Both versions allocate about **90.75 MB/op**. The first sequence suggested a
+slowdown, but the reversed sequence did not reproduce it. Both sequences are
+retained; they establish comparable allocation cost, not a robust speedup or exact
+timing equivalence. The benchmark excludes I/O, JSON and GPU work. Collision/
+priority decisions and scene compilation are the next CPU boundaries before
+bounded live updates and matched-quality MapLibre validation.
 
 ## Flatpak integration
 

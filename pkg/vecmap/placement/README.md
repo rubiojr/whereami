@@ -1,9 +1,9 @@
 # placement
 
-Toolkit-neutral feature-anchor preparation extracted from vecmap. It reuses the
-existing selection, line interpolation, angle and polygon-centroid algorithms,
-using shared `mvt.Feature` and `geometry.Point` values. It builds without Qt or cgo
-and introduces no production dependency.
+Toolkit-neutral symbol-candidate preparation extracted from vecmap. It reuses
+existing text/token handling, style defaults, feature-anchor selection, line
+interpolation, angle and polygon-centroid algorithms, using shared MVT/style/Go
+geometry values. It builds without Qt or cgo and introduces no production dependency.
 
 ```go
 anchors := placement.FeatureAnchors(feature, "line", tileLocalSpacing)
@@ -49,9 +49,54 @@ follows source point/ring/line cardinality; caller-owned tile candidate budgets
 remain in force. The standalone line/ring helpers do not impose an input point
 limit. Schedule preparation away from rendering callbacks.
 
-This package currently prepares anchor candidates. Evaluated symbol paint/text,
-text normalization/eligibility, collision/priority/optional-symbol decisions,
-atlas-dependent quads and scene compilation remain in vecmap.
+## Evaluated symbol candidates
+
+```go
+err := placement.PrepareSymbols(features, layer, placement.SymbolOptions{
+    SourceZoom: tileZoom, Zoom: styleZoom,
+    Limit: placement.MaxSymbols - len(symbols),
+}, func(candidate placement.Symbol) error {
+    symbols = append(symbols, candidate)
+    return nil
+})
+```
+
+The caller selects visible symbol layers and the matching source-layer features.
+`PrepareSymbols` applies filters, expands text/icon tokens, transforms and normalizes
+text, selects fonts and anchors, and evaluates per-anchor text/icon paint. It emits
+`Symbol` values in feature/anchor order through a synchronous sink. A Symbol has
+logical font names, geometry, colors and paint values, with no native resources or
+property maps. String payloads may borrow immutable input data.
+
+Pass remaining capacity across all layers of a tile. `Limit` is capped at the
+existing **10,000** candidates. Reaching the limit returns `ErrSymbolLimit` only
+when another candidate would be emitted. Sink errors stop preparation and are
+returned unchanged. Earlier sink calls remain accepted on error, preserving
+legacy partial-budget behavior. A nil sink is rejected. Layer type, zoom visibility
+and hidden-state selection remain caller policy; this API does not repeat them.
+
+Text preparation retains the existing **4096-byte/256-rune** ceiling, **256 token
+substitutions**, missing-property empty strings, literal unmatched braces and
+nonrecursive replacements. Upper/lowercase runs after substitution; CR/LF and
+Unicode whitespace normalization then runs before the final bound check. Icons
+receive token expansion without text transforms. `ExpandTokens`, `BoundedText` and
+`NormalizeText` expose these operations; normalization alone has caller-bounded
+input. Properties normally contain MVT primitives. Arbitrary style/property object
+formatting is not an untrusted-input work budget.
+
+Paint/default behavior is reused through typed `style.CompiledLayer` methods.
+Scalar numbers require finiteness; point-array components retain the previous
+looser semantics. Invalid present colors remain parse failures, distinct from
+missing-property defaults. Font stacks retain trimmed order and duplicates, with
+Noto Sans Regular fallback. Spacing converts style pixels to source-tile units;
+rotation, keep-upright, alignment, padding and overlap/optional flags retain their
+previous values. These are evaluated candidates, not collision acceptance results.
+
+Vecmap's legacy renderer uses a single value adapter at the sink. It allocates no
+intermediate candidate slice and copies no maps/string payloads. Other consumers
+can retain `placement.Symbol` directly. Text eligibility/Qt fallback,
+collision/priority/optional-symbol decisions, atlas-dependent quads and scene
+compilation remain in vecmap.
 
 ## Verification
 
@@ -60,11 +105,16 @@ CGO_ENABLED=0 go test -cover ./pkg/vecmap/placement
 CGO_ENABLED=0 GOARCH=386 go test ./pkg/vecmap/placement
 CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
   -fuzz '^FuzzLineAnchors$' -fuzztime=20s
+CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
+  -fuzz '^FuzzSymbolText$' -fuzztime=20s
 ```
 
 Tests cover source-order/fallback selection, ownership, arc-length interpolation,
 vertex angles, clamped fractions, reversal/upright behavior, repeated/degenerate
 points, tiny spacing, nonfinite inputs, winding and legacy centroid fallbacks.
-Headless coverage is **100%**. See kata **zxys** and
+Candidate tests also cover complete default/custom text/icon paint, filters,
+text/token rules, font fallback, zoom spacing, caller-owned visibility, budgets,
+sink errors and partial output. Headless coverage is **100%**. See kata **zxys**,
+**0yzm** and
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full-capture equality and
 controlled preparation measurements.

@@ -33,6 +33,28 @@ func TestLibertyLineAnchorRetainsRawDirection(t *testing.T) {
 	assert.Greater(t, math.Cos(anchor.Angle), 0.0)
 }
 
+func TestCompileSymbolLayerPreservesPartialLimit(t *testing.T) {
+	layer := compiledLibertyLayer{ID: "labels", Order: 3, SourceLayer: "places", Layout: map[string]any{
+		"text-field": "{name}", "icon-image": "airport", "text-optional": true,
+		"icon-rotate": 90.0, "symbol-sort-key": 7.0,
+	}}
+	bucket := &tileBucket{symbols: make([]libertySymbolCandidate, maxTileSymbols-1),
+		sourceLayers: map[string][]vectorFeature{"places": {{Properties: featureProperties{"name": "Madrid"}, Points: []roadPoint{{X: 1}, {X: 2}}}}}}
+	bucket.symbols[0].text = "earlier layer"
+	assert.ErrorIs(t, compileLibertySymbolLayer(bucket, layer, 10), errFeatureResourceLimit)
+	require.Len(t, bucket.symbols, maxTileSymbols)
+	assert.Equal(t, "earlier layer", bucket.symbols[0].text)
+	last := bucket.symbols[len(bucket.symbols)-1]
+	assert.Equal(t, "Madrid", last.text)
+	assert.Equal(t, roadPoint{X: 1}, last.anchor)
+	assert.Equal(t, 3, last.order)
+	assert.Equal(t, "labels", last.layerID)
+	assert.Equal(t, "airport", last.iconName)
+	assert.Equal(t, math.Pi/2, last.iconRotate)
+	assert.True(t, last.textOptional)
+	assert.Equal(t, 7.0, last.sortKey)
+}
+
 func TestLibertyViewportAlignedSymbolIgnoresLineAngle(t *testing.T) {
 	assert.InDelta(t, 0.25, libertyRenderedSymbolAngle(1.5, 0.25, true), 1e-12)
 	assert.InDelta(t, 1.75, libertyRenderedSymbolAngle(1.5, 0.25, false), 1e-12)

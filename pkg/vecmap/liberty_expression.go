@@ -19,4 +19,3 @@ func (e libertyEvaluation) context() style.Context {
 }
 
 func libertyNumber(value any) (float64, bool) { return style.Number(value) }
-func libertyString(value any) string          { return style.String(value) }

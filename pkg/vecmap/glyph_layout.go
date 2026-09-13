@@ -1,12 +1,12 @@
 package vecmap
 
 import (
-	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
+	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
 
 const (
@@ -271,25 +271,7 @@ func libertyTextRenderable(text string, sdfLayout *sdfTextLayout) bool {
 }
 
 func normalizeLibertySymbolText(text string) string {
-	var normalized strings.Builder
-	normalized.Grow(len(text))
-	previousCarriageReturn := false
-	for _, codePoint := range text {
-		if codePoint == '\n' && previousCarriageReturn {
-			previousCarriageReturn = false
-			continue
-		}
-		previousCarriageReturn = codePoint == '\r'
-		switch {
-		case codePoint == '\r' || codePoint == '\n':
-			normalized.WriteByte('\n')
-		case unicode.IsSpace(codePoint):
-			normalized.WriteByte(' ')
-		default:
-			normalized.WriteRune(codePoint)
-		}
-	}
-	return normalized.String()
+	return placement.NormalizeText(text)
 }
 
 func shapeSDFText(candidate libertySymbolCandidate, glyphs map[uint32]sdfGlyph) *sdfTextLayout {

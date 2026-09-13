@@ -1,16 +1,14 @@
 package vecmap
 
 import (
-	"math"
-	"strings"
-	"unicode/utf8"
+	"errors"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
 
 const (
-	maxTileSymbols         = 10_000
+	maxTileSymbols         = placement.MaxSymbols
 	maximumSymbolTextBytes = glyph.MaxTextBytes
 	maximumSymbolTextRunes = glyph.MaxTextRunes
 )
@@ -57,213 +55,53 @@ type libertySymbolCandidate struct {
 }
 
 func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, zoom float64) error {
-	features := bucket.sourceLayers[layer.SourceLayer]
-	for _, feature := range features {
-		evaluation := libertyEvaluation{zoom: zoom, geometryID: feature.GeometryType, properties: feature.Properties}
-		if !layer.Matches(evaluation.context()) {
-			continue
-		}
-		text := libertyEvaluatedString(layer, "text-field", evaluation, "")
-		text = expandLibertyTokens(text, feature.Properties)
-		switch libertyEvaluatedString(layer, "text-transform", evaluation, "none") {
-		case "uppercase":
-			text = strings.ToUpper(text)
-		case "lowercase":
-			text = strings.ToLower(text)
-		}
-		text = normalizeLibertySymbolText(text)
-		text = boundedLibertySymbolText(text)
-		iconName := libertyEvaluatedString(layer, "icon-image", evaluation, "")
-		iconName = expandLibertyTokens(iconName, feature.Properties)
-		if text == "" && iconName == "" {
-			continue
-		}
-		placement := libertyEvaluatedString(layer, "symbol-placement", evaluation, "point")
-		spacing := libertySymbolSpacing(
-			libertyEvaluatedNumber(layer, "symbol-spacing", evaluation, 250),
-			bucket.tile.Z,
-			zoom,
-		)
-		fontFamily, fontStack := libertyEvaluatedFonts(layer, evaluation)
-		anchors := libertyFeatureAnchors(feature, placement, spacing)
-		for _, anchor := range anchors {
-			if len(bucket.symbols) >= maxTileSymbols {
-				return errFeatureResourceLimit
-			}
-			candidate := libertySymbolCandidate{
-				order:               layer.Order,
-				layerID:             layer.ID,
-				anchor:              anchor.Point,
-				lineAngle:           anchor.Angle,
-				iconLineAngle:       anchor.RawAngle,
-				viewportAligned:     placement == "point",
-				iconViewportAligned: placement == "point",
-				sortKey:             libertyEvaluatedNumber(layer, "symbol-sort-key", evaluation, 0),
-				textAllowsOverlap:   libertyEvaluatedBool(layer, "text-allow-overlap", evaluation, false),
-				iconAllowsOverlap:   libertyEvaluatedBool(layer, "icon-allow-overlap", evaluation, false),
-				textOptional:        libertyEvaluatedBool(layer, "text-optional", evaluation, false),
-				iconOptional:        libertyEvaluatedBool(layer, "icon-optional", evaluation, false),
-				textPadding:         libertyEvaluatedNumber(layer, "text-padding", evaluation, 2),
-				iconPadding:         libertyEvaluatedNumber(layer, "icon-padding", evaluation, 2),
-				text:                text,
-				fontFamily:          fontFamily,
-				fontStack:           fontStack,
-				textSize:            libertyEvaluatedNumber(layer, "text-size", evaluation, 16),
-				letterSpacing:       libertyEvaluatedNumber(layer, "text-letter-spacing", evaluation, 0),
-				lineHeight:          libertyEvaluatedNumber(layer, "text-line-height", evaluation, 1.2),
-				maximumWidth:        libertyEvaluatedNumber(layer, "text-max-width", evaluation, 10),
-				textAnchor:          libertyEvaluatedString(layer, "text-anchor", evaluation, "center"),
-				textJustify:         libertyEvaluatedString(layer, "text-justify", evaluation, "auto"),
-				textOffset:          libertyEvaluatedPoint(layer, "text-offset", evaluation),
-				textRotate:          libertyEvaluatedNumber(layer, "text-rotate", evaluation, 0) * math.Pi / 180,
-				iconName:            iconName,
-				iconSize:            libertyEvaluatedNumber(layer, "icon-size", evaluation, 1),
-				iconOpacity:         libertyEvaluatedNumber(layer, "icon-opacity", evaluation, 1),
-				iconAnchor:          libertyEvaluatedString(layer, "icon-anchor", evaluation, "center"),
-				iconOffset:          libertyEvaluatedPoint(layer, "icon-offset", evaluation),
-				iconRotate:          libertyEvaluatedNumber(layer, "icon-rotate", evaluation, 0) * math.Pi / 180,
-			}
-			if !libertyEvaluatedBool(layer, "text-keep-upright", evaluation, true) {
-				candidate.lineAngle = anchor.RawAngle
-			}
-			if libertyEvaluatedBool(layer, "icon-keep-upright", evaluation, false) {
-				candidate.iconLineAngle = anchor.Angle
-			}
-			candidate.textColor, _ = libertyEvaluatedColor(layer, "text-color", evaluation, mapColor{Alpha: 255})
-			candidate.textColor = libertyColorWithOpacity(
-				candidate.textColor,
-				libertyEvaluatedNumber(layer, "text-opacity", evaluation, 1),
-			)
-			candidate.haloColor, _ = libertyEvaluatedColor(layer, "text-halo-color", evaluation, mapColor{})
-			candidate.haloWidth = libertyEvaluatedNumber(layer, "text-halo-width", evaluation, 0)
-			candidate.haloBlur = libertyEvaluatedNumber(layer, "text-halo-blur", evaluation, 0)
-			candidate.iconColor, _ = libertyEvaluatedColor(layer, "icon-color", evaluation, mapColor{Alpha: 255})
-			if alignment := libertyEvaluatedString(layer, "text-rotation-alignment", evaluation, "auto"); alignment == "viewport" {
-				candidate.viewportAligned = true
-			} else if alignment == "map" {
-				candidate.viewportAligned = false
-			}
-			if alignment := libertyEvaluatedString(layer, "icon-rotation-alignment", evaluation, "auto"); alignment == "viewport" {
-				candidate.iconViewportAligned = true
-			} else if alignment == "map" {
-				candidate.iconViewportAligned = false
-			}
-			bucket.symbols = append(bucket.symbols, candidate)
-		}
+	err := placement.PrepareSymbols(bucket.sourceLayers[layer.SourceLayer], layer, placement.SymbolOptions{
+		SourceZoom: bucket.tile.Z, Zoom: zoom, Limit: maxTileSymbols - len(bucket.symbols),
+	}, func(symbol placement.Symbol) error {
+		bucket.symbols = append(bucket.symbols, legacySymbol(symbol))
+		return nil
+	})
+	if errors.Is(err, placement.ErrSymbolLimit) {
+		return errFeatureResourceLimit
 	}
-	return nil
+	return err
+}
+
+// Keep the legacy retained renderer's representation behind one value adapter.
+// The streaming producer avoids a second candidate slice and copies no maps or
+// string payloads. Other consumers can retain placement.Symbol directly.
+func legacySymbol(s placement.Symbol) libertySymbolCandidate {
+	return libertySymbolCandidate{
+		order: s.Order, layerID: s.LayerID, anchor: s.Anchor,
+		lineAngle: s.LineAngle, iconLineAngle: s.IconLineAngle,
+		viewportAligned: s.ViewportAligned, iconViewportAligned: s.IconViewportAligned,
+		sortKey: s.SortKey, textAllowsOverlap: s.TextAllowsOverlap, iconAllowsOverlap: s.IconAllowsOverlap,
+		textOptional: s.TextOptional, iconOptional: s.IconOptional,
+		textPadding: s.TextPadding, iconPadding: s.IconPadding,
+		text: s.Text, fontFamily: s.FontFamily, fontStack: s.FontStack,
+		textSize: s.TextSize, textColor: s.TextColor, haloColor: s.HaloColor,
+		haloWidth: s.HaloWidth, haloBlur: s.HaloBlur, letterSpacing: s.LetterSpacing,
+		lineHeight: s.LineHeight, maximumWidth: s.MaximumWidth,
+		textAnchor: s.TextAnchor, textJustify: s.TextJustify, textOffset: s.TextOffset, textRotate: s.TextRotate,
+		iconName: s.IconName, iconSize: s.IconSize, iconColor: s.IconColor, iconOpacity: s.IconOpacity,
+		iconAnchor: s.IconAnchor, iconOffset: s.IconOffset, iconRotate: s.IconRotate,
+	}
 }
 
 func libertySymbolSpacing(screenPixels float64, tileZoom uint32, styleZoom float64) float64 {
-	return screenPixels * math.Exp2(float64(tileZoom)-styleZoom)
+	return placement.SymbolSpacing(screenPixels, tileZoom, styleZoom)
 }
 
-type libertySymbolAnchor = placement.Anchor
-
-func libertyFeatureAnchors(feature vectorFeature, mode string, spacing float64) []libertySymbolAnchor {
-	return placement.FeatureAnchors(feature, mode, spacing)
-}
-
-func libertyLineAnchor(line []roadPoint, fraction float64) (libertySymbolAnchor, bool) {
+func libertyLineAnchor(line []roadPoint, fraction float64) (placement.Anchor, bool) {
 	return placement.LineAnchor(line, fraction)
 }
 
 func expandLibertyTokens(text string, properties featureProperties) string {
-	const maximumExpansions = 256
-	if len(text) > maximumSymbolTextBytes || !utf8.ValidString(text) {
-		return ""
-	}
-	offset := 0
-	for range maximumExpansions {
-		startOffset := strings.IndexByte(text[offset:], '{')
-		if startOffset < 0 {
-			return boundedLibertySymbolText(text)
-		}
-		start := offset + startOffset
-		endOffset := strings.IndexByte(text[start+1:], '}')
-		if endOffset < 0 {
-			return boundedLibertySymbolText(text)
-		}
-		end := start + endOffset + 1
-		name := text[start+1 : end]
-		value, _ := properties.Get(name)
-		replacement := libertyString(value)
-		retainedBytes := len(text) - (end + 1 - start)
-		if len(replacement) > maximumSymbolTextBytes-retainedBytes {
-			return ""
-		}
-		text = text[:start] + replacement + text[end+1:]
-		offset = start + len(replacement)
-	}
-	return boundedLibertySymbolText(text)
+	return placement.ExpandTokens(text, properties)
 }
 
-func boundedLibertySymbolText(text string) string {
-	if len(text) > maximumSymbolTextBytes || !utf8.ValidString(text) || utf8.RuneCountInString(text) > maximumSymbolTextRunes {
-		return ""
-	}
-	return text
-}
-
-func libertyEvaluatedBool(layer compiledLibertyLayer, name string, evaluation libertyEvaluation, fallback bool) bool {
-	value, exists := layer.Value(name, evaluation.context())
-	if !exists {
-		return fallback
-	}
-	boolean, ok := value.(bool)
-	if !ok {
-		return fallback
-	}
-	return boolean
-}
-
-func libertyEvaluatedPoint(layer compiledLibertyLayer, name string, evaluation libertyEvaluation) roadPoint {
-	values := libertyEvaluatedNumberArray(layer, name, evaluation)
-	if len(values) != 2 {
-		return roadPoint{}
-	}
-	return roadPoint{X: values[0], Y: values[1]}
-}
-
-func libertyEvaluatedNumberArray(layer compiledLibertyLayer, name string, evaluation libertyEvaluation) []float64 {
-	value, exists := layer.Value(name, evaluation.context())
-	if !exists {
-		return nil
-	}
-	items, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	numbers := make([]float64, 0, len(items))
-	for _, item := range items {
-		number, ok := libertyNumber(item)
-		if !ok {
-			return nil
-		}
-		numbers = append(numbers, number)
-	}
-	return numbers
-}
+func boundedLibertySymbolText(text string) string { return placement.BoundedText(text) }
 
 func libertyEvaluatedFonts(layer compiledLibertyLayer, evaluation libertyEvaluation) (string, string) {
-	value, exists := layer.Value("text-font", evaluation.context())
-	if !exists {
-		return "Noto Sans Regular", "Noto Sans Regular"
-	}
-	fonts, ok := value.([]any)
-	if !ok {
-		return "Noto Sans Regular", "Noto Sans Regular"
-	}
-	fontStack := make([]string, 0, len(fonts))
-	for _, value := range fonts {
-		font, ok := value.(string)
-		if !ok || strings.TrimSpace(font) == "" {
-			continue
-		}
-		fontStack = append(fontStack, strings.TrimSpace(font))
-	}
-	if len(fontStack) == 0 {
-		return "Noto Sans Regular", "Noto Sans Regular"
-	}
-	return fontStack[0], strings.Join(fontStack, ",")
+	return layer.FontStack(evaluation.context())
 }

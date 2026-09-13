@@ -351,35 +351,15 @@ func libertyEvaluatedColor(
 	evaluation libertyEvaluation,
 	fallback mapColor,
 ) (mapColor, bool) {
-	value, exists := layer.Value(name, evaluation.context())
-	if !exists {
-		return fallback, true
-	}
-	return parseLibertyColor(value)
+	return layer.ColorValue(name, evaluation.context(), fallback)
 }
 
 func libertyEvaluatedNumber(layer compiledLibertyLayer, name string, evaluation libertyEvaluation, fallback float64) float64 {
-	value, exists := layer.Value(name, evaluation.context())
-	if !exists {
-		return fallback
-	}
-	number, ok := libertyNumber(value)
-	if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
-		return fallback
-	}
-	return number
+	return layer.NumberValue(name, evaluation.context(), fallback)
 }
 
 func libertyEvaluatedString(layer compiledLibertyLayer, name string, evaluation libertyEvaluation, fallback string) string {
-	value, exists := layer.Value(name, evaluation.context())
-	if !exists {
-		return fallback
-	}
-	text, ok := value.(string)
-	if !ok {
-		return fallback
-	}
-	return text
+	return layer.StringValue(name, evaluation.context(), fallback)
 }
 
 func libertyEvaluatedNumbers(layer compiledLibertyLayer, name string, evaluation libertyEvaluation) []float64 {

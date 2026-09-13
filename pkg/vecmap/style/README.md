@@ -51,6 +51,15 @@ The pinned asset and `sync.Once` cache stay caller-owned in vecmap. Its compiled
 layer alias shares the output slice/maps without conversions. The package owns
 no filesystem/network access, scheduling, global style cache or input-size policy.
 
+Typed layer helpers reuse the original paint defaults: `NumberValue` rejects
+nonfinite/nonnumeric values, `StringValue` and `BoolValue` do not coerce types,
+and `ColorValue` distinguishes a missing/failed expression (fallback) from a
+present invalid color (parse failure). `NumberArrayValue` owns its returned slice
+but retains the previous signed/nonfinite component semantics. `FontStack`
+evaluates `text-font`, trims names, skips invalid/empty elements, preserves order
+and duplicates, and returns the first family plus comma-joined stack. Its default
+is Noto Sans Regular. Fallback values themselves remain caller-owned paint policy.
+
 ## Supported behavior
 
 The existing subset supports `get`, `has`, `zoom`, `geometry-type`, `!`, `all`,
@@ -94,7 +103,8 @@ semantics can absorb an operand failure. This API is not an untrusted style-file
 ingestion policy; its caller owns style size/validation and scheduling.
 
 Glyph decoding, atlas packing and text layout now live in the headless `glyph`
-package. Placement and scene compilation are still parent-bound.
+package. Evaluated symbol candidates now live in `placement`; collision decisions
+and scene compilation are still parent-bound.
 No renderer/scheduler migration is involved.
 
 ## Verification and performance
