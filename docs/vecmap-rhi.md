@@ -29,8 +29,8 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   It depends only on the standard library; pinned assets and caching remain
   caller-owned in vecmap.
 - `pkg/vecmap/glyph`: bounded SDF glyph PBF decoding, shared metrics/bitmaps and
-  deterministic atlas packing. Font I/O/cache/retry and retained-atlas policy
-  stay caller-owned; text layout and placement are still in vecmap.
+  deterministic atlas packing and glyph-metric text layout. Font I/O/cache/retry,
+  retained-atlas policy, eligibility and placement stay caller-owned.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -50,10 +50,9 @@ The viewer reprojects those through `Document.FrameAt` without replacing scene
 resources. Older affine-only captures remain readable.
 
 The fixture producer reuses the existing compiler and the extracted headless MVT
-preparation, style compiler and glyph/atlas preparation. Symbol layout/placement
-and scene compilation
-still live in the Qt-bound `pkg/vecmap`
-package. Extracting that remaining CPU work is
+preparation, style compiler, glyph/atlas preparation and text layout. Symbol
+candidate preparation, placement and scene compilation still live in the Qt-bound
+`pkg/vecmap` package. Extracting that remaining CPU work is
 tracked by the umbrella issue. The scene consumer already builds independently
 of that package.
 
@@ -768,6 +767,58 @@ timing equivalence; they show comparable allocation cost. The benchmark includes
 CPU preparation, excludes I/O/JSON/GPU work, and is not a MapLibre comparison.
 Text layout, placement/collision and scene compilation remain the next headless
 boundaries; the fixture producer still imports the Qt-bound parent.
+
+### Headless glyph-metric text layout
+
+Committed glyph decoding/atlas preparation as `049342f`, then continued with kata
+**hk7t**. `glyph.LayoutText` now owns the existing metric layout, line breaking,
+measurement, anchor/justification alignment, positioned glyphs and halo bounds.
+The parent adapter passes evaluated options and shares the returned positioned
+slice through an alias, copying only the small bounds value. Text eligibility,
+normalization and Qt fallback policy, atlas-dependent quads, collision/placement
+and scene packing remain caller-owned.
+
+This reuses the existing algorithm, including its 24-unit em, -17 baseline,
+whitespace/paragraph handling, overlong-word splitting, negative spacing, line
+height fallback, anchor substring rules and scaled halo clamp. It adds no shaping
+dependency and does not implement OpenType shaping, bidi or kerning. The shared
+entry point enforces the existing 4096-byte/256-rune text limits before allocation,
+rejects invalid UTF-8 and nonpositive text sizes, and rejects nonfinite options or
+overflowing positioned/bounds arithmetic. Failures return a zero layout, never a
+partial slice. Glyph metrics are copied by value; bitmaps remain immutable borrows.
+
+Verification:
+
+- Headless glyph coverage is **99.7%**, with all new layout functions at **100%**.
+  Regressions cover metrics/halo bounds, multiline anchors/justification, spacing,
+  wrapping and blank paragraphs, missing/bitmap-free glyphs, ownership, exact text
+  limits, UTF-8 and floating-point overflow. Headless 386 tests pass.
+- A 20-second headless layout fuzz run completed **281,047 executions** with no
+  failures. Full v4 module tests, v1 parent/glyph integration-race checks, targeted
+  staticcheck and application build pass; gopls reports no build errors.
+- Expanded, direct-indexed and post-indexed v1 captures are byte-for-byte identical
+  to their references: 45 draws, 62 labels, complete fonts and unchanged geometry.
+- Repository-wide staticcheck retains only the generated MIQT ST1006 warnings.
+  The earlier GO-2026-5024 toolchain baseline remains unresolved. Complexity review
+  retains the original line-break state machine (18); layout scores 16 including
+  the new finite-output guards. Separating line-break transitions is a possible
+  focused refactor, rather than part of this behavior-preserving extraction.
+
+Separate before/after v4 binaries used the same pinned tile/glyph inputs and
+GOMAXPROCS 16. Direct-fixture preparation samples, including the initially slower
+after measurements:
+
+| Sequence / duration | Before time/op | After time/op | Before / after allocations |
+| --- | ---: | ---: | ---: |
+| Before/after/after/before, 2 s | 32.38 / 32.52 ms | 34.71 / 35.22 ms | 102,311–102,312 / 102,313–102,315 |
+| After/before/before/after, 3 s | 34.63 / 34.50 ms | 34.63 / 35.34 ms | 102,313–102,314 / 102,313 |
+
+Both versions allocate about **90.75 MB/op**. The first sequence showed a 2–3 ms
+after difference; the reversed sequence mostly overlapped. These measurements
+support comparable allocation cost but do not establish a speedup or precise
+timing equivalence. They measure CPU preparation, excluding I/O/JSON/GPU work;
+MapLibre-quality and live-presentation gates remain open. Next extraction targets
+are symbol candidate preparation, placement/collision and scene compilation.
 
 ## Flatpak integration
 

@@ -1,8 +1,9 @@
 # glyph
 
-Toolkit-neutral SDF glyph-range decoding and atlas preparation, extracted from
-vecmap. It reuses the existing protobuf reader and deterministic shelf packer,
-adds no production dependency, and builds without Qt or cgo.
+Toolkit-neutral SDF glyph-range decoding, atlas preparation and text layout,
+extracted from vecmap. It reuses the existing protobuf reader, deterministic shelf
+packer and glyph-metric layout algorithm, adds no production dependency, and
+builds without Qt or cgo.
 
 ```go
 font, err := glyph.DecodeRange(data, "Noto Sans Regular", 0)
@@ -69,8 +70,50 @@ and logical font/glyph keys, not native graphics resources.
 Vecmap aliases the shared glyph/range/key/rectangle/atlas data without conversion
 maps or bitmap copies. Its manager still owns loading, cancellation, retries,
 cache paths, immutable merged font snapshots and retained-atlas policy. Text
-layout, eligibility and Qt fallback, collision/placement and scene compilation
-remain the next extraction boundaries. No new shaping engine is introduced.
+eligibility and Qt fallback, collision/placement and scene compilation remain
+caller-owned. No new shaping engine is introduced.
+
+## Text layout
+
+```go
+layout, ok := glyph.LayoutText("Madrid", font.FontStack, font.Glyphs, glyph.LayoutOptions{
+    TextSize: 16, LineHeight: 1.2, MaximumWidth: 10,
+    Anchor: "center", Justify: "auto", HaloWidth: 1,
+})
+// layout.Glyphs contains unscaled origins plus the original glyph metrics.
+// layout.Scale converts origins/metrics to logical pixels.
+// layout.Bounds is already in logical pixels and includes the rendered halo.
+```
+
+`LayoutText` reuses the existing 24-unit em, -17 baseline, line measurement,
+wrapping and alignment arithmetic. It lays out glyph metrics; it does not provide
+OpenType shaping, bidi, kerning or script eligibility. Callers choose suitable
+text and validated metrics, normally from `DecodeRange`. Font-stack and style
+strings are application-owned.
+
+- CRLF becomes a line break; blank paragraphs retain their vertical space.
+  Whitespace within paragraphs collapses to a single space. Overlong words split
+  at glyph boundaries, retaining the existing behavior even when one glyph alone
+  exceeds the requested width.
+- Text size and halo values use logical pixels. Letter spacing, maximum width and
+  line height use ems. Nonpositive maximum width disables wrapping; nonpositive
+  line height defaults to 1.2 ems. Negative letter spacing remains supported.
+- Anchor strings retain substring matching, defaulting to center; `left`/`top`
+  win over `right`/`bottom`. Justification accepts left/right/center, otherwise
+  following the horizontal anchor.
+- Halo width is clamped to the scaled PBF border; nonnegative blur extends bounds.
+  Glyphs without ink use the original advance/block rectangle fallback.
+- Input is limited to the existing **4096 bytes and 256 runes**, checked before
+  layout allocation. Invalid UTF-8, nonpositive text size, nonfinite options or
+  overflowing output coordinates fail with a zero layout and `false`. Empty text
+  or missing glyphs needed by the final lines also fail atomically. A missing
+  space can be harmless when wrapping removes it.
+
+The returned positioned slice is owned. Metrics are value copies; immutable
+bitmaps are borrowed. The input glyph map is not retained or modified. The parent
+adapter aliases `PositionedGlyph`, shares its slice directly and copies only the
+small bounds value into its collision type. Atlas-dependent quads, packed scene
+vertices and collision decisions remain caller-owned.
 
 ## Verification
 
@@ -80,13 +123,18 @@ WHEREAMI_VECTOR_GLYPH_FIXTURE_DIR=/path/to/glyphs \
   CGO_ENABLED=0 GOARCH=386 go test ./pkg/vecmap/glyph
 CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
   -fuzz '^FuzzDecodeRange$' -fuzztime=20s
+CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
+  -fuzz '^FuzzLayoutText$' -fuzztime=20s
 ```
 
 Tests cover parser limits and exact boundaries, malformed fields, failure after
 valid content, repeated fields, ownership, fallback stack naming, empty glyphs,
 signed bearings, deterministic ordering, complete bitmap borders/guards, atlas
 growth, partial packing and 32-bit validation. Local font ranges are optional
-headless fixtures. Coverage is **99.4%**; only the atlas growth loop's unreachable
-final return is uncovered. See kata **sp7z** and
+headless fixtures. Layout regressions cover anchors/justification, spacing,
+wrapping, missing/bitmap-free glyphs, bounds/halo arithmetic, ownership, UTF-8,
+limits and nonfinite/overflow rejection. Coverage is **99.7%**, with the new layout
+functions at **100%**; only the atlas growth loop's unreachable final return is
+uncovered. See kata **sp7z**, **hk7t** and
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full-capture equality and
 controlled before/after preparation measurements.

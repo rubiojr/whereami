@@ -93,8 +93,8 @@ expression width or output-string size. Operator-specific short-circuit/fallback
 semantics can absorb an operand failure. This API is not an untrusted style-file
 ingestion policy; its caller owns style size/validation and scheduling.
 
-Glyph decoding and atlas packing now live in the headless `glyph` package.
-Text layout, placement and scene compilation are still parent-bound.
+Glyph decoding, atlas packing and text layout now live in the headless `glyph`
+package. Placement and scene compilation are still parent-bound.
 No renderer/scheduler migration is involved.
 
 ## Verification and performance

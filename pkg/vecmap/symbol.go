@@ -4,12 +4,14 @@ import (
 	"math"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 )
 
 const (
 	maxTileSymbols         = 10_000
-	maximumSymbolTextBytes = 4_096
-	maximumSymbolTextRunes = 256
+	maximumSymbolTextBytes = glyph.MaxTextBytes
+	maximumSymbolTextRunes = glyph.MaxTextRunes
 )
 
 type libertySymbolCandidate struct {

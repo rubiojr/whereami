@@ -1,7 +1,6 @@
 package vecmap
 
 import (
-	"math"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -11,8 +10,6 @@ import (
 )
 
 const (
-	sdfGlyphEmSize         = 24.0
-	sdfDefaultBaseline     = -17.0
 	maximumSDFSceneLayouts = 10_000
 	sdfAtlasVertexElements = 4
 )
@@ -24,12 +21,7 @@ type libertySDFLayoutKey struct {
 
 type sdfGlyphKey = glyph.Key
 
-type sdfPositionedGlyph struct {
-	key   sdfGlyphKey
-	glyph sdfGlyph
-	x     float64
-	y     float64
-}
+type sdfPositionedGlyph = glyph.PositionedGlyph
 
 type sdfTextLayout struct {
 	glyphs          []sdfPositionedGlyph
@@ -135,8 +127,8 @@ func sdfLayoutGlyphs(layouts map[libertySDFLayoutKey]*sdfTextLayout) map[sdfGlyp
 	glyphs := make(map[sdfGlyphKey]sdfGlyph)
 	for _, layout := range layouts {
 		for _, positioned := range layout.glyphs {
-			if len(positioned.glyph.Bitmap) > 0 {
-				glyphs[positioned.key] = positioned.glyph
+			if len(positioned.Glyph.Bitmap) > 0 {
+				glyphs[positioned.Key] = positioned.Glyph
 			}
 		}
 	}
@@ -212,10 +204,10 @@ func sdfLayoutFitsAtlas(layout *sdfTextLayout, atlas *sdfGlyphAtlas) bool {
 		return false
 	}
 	for _, positioned := range layout.glyphs {
-		if len(positioned.glyph.Bitmap) == 0 {
+		if len(positioned.Glyph.Bitmap) == 0 {
 			continue
 		}
-		if _, exists := atlas.Positions[positioned.key]; !exists {
+		if _, exists := atlas.Positions[positioned.Key]; !exists {
 			return false
 		}
 	}
@@ -301,208 +293,18 @@ func normalizeLibertySymbolText(text string) string {
 }
 
 func shapeSDFText(candidate libertySymbolCandidate, glyphs map[uint32]sdfGlyph) *sdfTextLayout {
-	if candidate.textSize <= 0 {
+	prepared, ok := glyph.LayoutText(candidate.text, candidate.fontStack, glyphs, glyph.LayoutOptions{
+		TextSize: candidate.textSize, LetterSpacing: candidate.letterSpacing,
+		MaximumWidth: candidate.maximumWidth, LineHeight: candidate.lineHeight,
+		Anchor: candidate.textAnchor, Justify: candidate.textJustify,
+		HaloWidth: candidate.haloWidth, HaloBlur: candidate.haloBlur,
+	})
+	if !ok {
 		return nil
 	}
-	spacing := candidate.letterSpacing * sdfGlyphEmSize
-	maximumWidth := candidate.maximumWidth * sdfGlyphEmSize
-	lines := breakSDFLines(candidate.text, glyphs, spacing, maximumWidth)
-	if len(lines) == 0 {
-		return nil
-	}
-	lineHeight := candidate.lineHeight * sdfGlyphEmSize
-	if lineHeight <= 0 {
-		lineHeight = 1.2 * sdfGlyphEmSize
-	}
-	horizontalAlign, verticalAlign := libertyAnchorAlignment(candidate.textAnchor)
-	justify := libertyTextJustification(candidate.textJustify, horizontalAlign)
-	positioned := make([]sdfPositionedGlyph, 0, len([]rune(candidate.text)))
-	maximumLineWidth := 0.0
-	for lineIndex, line := range lines {
-		lineWidth := measureSDFLine(line, glyphs, spacing)
-		maximumLineWidth = max(maximumLineWidth, lineWidth)
-		x := -justify * lineWidth
-		y := float64(lineIndex)*lineHeight + sdfDefaultBaseline
-		for index, codePoint := range line {
-			glyph, exists := glyphs[uint32(codePoint)]
-			if !exists {
-				return nil
-			}
-			positioned = append(positioned, sdfPositionedGlyph{
-				key:   sdfGlyphKey{FontStack: candidate.fontStack, ID: uint32(codePoint)},
-				glyph: glyph,
-				x:     x,
-				y:     y,
-			})
-			x += float64(glyph.Advance)
-			if index+1 < len(line) {
-				x += spacing
-			}
-		}
-	}
-	if len(positioned) == 0 {
-		return nil
-	}
-	blockHeight := float64(len(lines)) * lineHeight
-	shiftX := (justify - horizontalAlign) * maximumLineWidth
-	shiftY := -verticalAlign*blockHeight + 0.5*lineHeight
-	for index := range positioned {
-		positioned[index].x += shiftX
-		positioned[index].y += shiftY
-	}
-	scale := candidate.textSize / sdfGlyphEmSize
-	renderedHaloWidth := min(max(0, candidate.haloWidth), glyphPBFBorder*scale)
-	haloExtent := renderedHaloWidth + max(0, candidate.haloBlur)
-	bounds := sdfPositionedGlyphBounds(positioned, scale)
-	if math.IsInf(bounds.left, 1) {
-		bounds = libertyCollisionBox{
-			left:   -horizontalAlign * maximumLineWidth * scale,
-			top:    -verticalAlign * blockHeight * scale,
-			right:  (1 - horizontalAlign) * maximumLineWidth * scale,
-			bottom: (1 - verticalAlign) * blockHeight * scale,
-		}
-	}
-	bounds.left -= haloExtent
-	bounds.top -= haloExtent
-	bounds.right += haloExtent
-	bounds.bottom += haloExtent
-	return &sdfTextLayout{
-		glyphs: positioned,
-		scale:  scale,
-		bounds: bounds,
-	}
-}
-
-func sdfPositionedGlyphBounds(glyphs []sdfPositionedGlyph, scale float64) libertyCollisionBox {
-	bounds := libertyCollisionBox{
-		left:   math.Inf(1),
-		top:    math.Inf(1),
-		right:  math.Inf(-1),
-		bottom: math.Inf(-1),
-	}
-	for _, positioned := range glyphs {
-		if positioned.glyph.Width == 0 || positioned.glyph.Height == 0 {
-			continue
-		}
-		left := (positioned.x + float64(positioned.glyph.Left)) * scale
-		top := (positioned.y - float64(positioned.glyph.Top)) * scale
-		bounds.left = min(bounds.left, left)
-		bounds.top = min(bounds.top, top)
-		bounds.right = max(bounds.right, left+float64(positioned.glyph.Width)*scale)
-		bounds.bottom = max(bounds.bottom, top+float64(positioned.glyph.Height)*scale)
-	}
-	return bounds
-}
-
-func breakSDFLines(text string, glyphs map[uint32]sdfGlyph, spacing, maximumWidth float64) [][]rune {
-	paragraphs := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	lines := make([][]rune, 0, len(paragraphs))
-	for _, paragraph := range paragraphs {
-		words := strings.Fields(paragraph)
-		if len(words) == 0 {
-			lines = append(lines, nil)
-			continue
-		}
-		current := make([]rune, 0, len([]rune(paragraph)))
-		currentWidth := 0.0
-		for _, word := range words {
-			wordRunes := []rune(word)
-			wordWidth := measureSDFLine(wordRunes, glyphs, spacing)
-			if maximumWidth > 0 && wordWidth > maximumWidth {
-				if len(current) > 0 {
-					lines = append(lines, current)
-					current = nil
-					currentWidth = 0
-				}
-				for _, codePoint := range wordRunes {
-					glyph, exists := glyphs[uint32(codePoint)]
-					glyphWidth := math.Inf(1)
-					if exists {
-						glyphWidth = float64(glyph.Advance)
-					}
-					candidateWidth := glyphWidth
-					if len(current) > 0 {
-						candidateWidth += currentWidth + spacing
-					}
-					if len(current) > 0 && candidateWidth > maximumWidth {
-						lines = append(lines, current)
-						current = []rune{codePoint}
-						currentWidth = glyphWidth
-						continue
-					}
-					current = append(current, codePoint)
-					currentWidth = candidateWidth
-				}
-				continue
-			}
-			candidateWidth := wordWidth
-			if len(current) > 0 {
-				space, exists := glyphs[' ']
-				if !exists {
-					candidateWidth = math.Inf(1)
-				} else {
-					candidateWidth += currentWidth + float64(space.Advance) + 2*spacing
-				}
-			}
-			if maximumWidth > 0 && len(current) > 0 && candidateWidth > maximumWidth {
-				lines = append(lines, current)
-				current = append([]rune(nil), wordRunes...)
-				currentWidth = wordWidth
-				continue
-			}
-			if len(current) > 0 {
-				current = append(current, ' ')
-			}
-			current = append(current, wordRunes...)
-			currentWidth = candidateWidth
-		}
-		lines = append(lines, current)
-	}
-	return lines
-}
-
-func measureSDFLine(line []rune, glyphs map[uint32]sdfGlyph, spacing float64) float64 {
-	width := 0.0
-	for index, codePoint := range line {
-		glyph, exists := glyphs[uint32(codePoint)]
-		if !exists {
-			return math.Inf(1)
-		}
-		width += float64(glyph.Advance)
-		if index+1 < len(line) {
-			width += spacing
-		}
-	}
-	return width
-}
-
-func libertyAnchorAlignment(anchor string) (float64, float64) {
-	horizontal := 0.5
-	vertical := 0.5
-	if strings.Contains(anchor, "left") {
-		horizontal = 0
-	} else if strings.Contains(anchor, "right") {
-		horizontal = 1
-	}
-	if strings.Contains(anchor, "top") {
-		vertical = 0
-	} else if strings.Contains(anchor, "bottom") {
-		vertical = 1
-	}
-	return horizontal, vertical
-}
-
-func libertyTextJustification(justify string, horizontalAlign float64) float64 {
-	switch justify {
-	case "left":
-		return 0
-	case "right":
-		return 1
-	case "center":
-		return 0.5
-	default:
-		return horizontalAlign
-	}
+	return &sdfTextLayout{glyphs: prepared.Glyphs, scale: prepared.Scale,
+		bounds: libertyCollisionBox{left: prepared.Bounds.Left, top: prepared.Bounds.Top,
+			right: prepared.Bounds.Right, bottom: prepared.Bounds.Bottom}}
 }
 
 func buildSDFAtlas(glyphs map[sdfGlyphKey]sdfGlyph) *sdfGlyphAtlas {
@@ -529,13 +331,13 @@ func sdfLayoutVertices(layout *sdfTextLayout, atlas *sdfGlyphAtlas) []float32 {
 
 func sdfLayoutQuads(layout *sdfTextLayout, atlas *sdfGlyphAtlas, emit func([4]geometry.TextVertex) error) error {
 	for _, positioned := range layout.glyphs {
-		rectangle, exists := atlas.Positions[positioned.key]
-		if !exists || len(positioned.glyph.Bitmap) == 0 {
+		rectangle, exists := atlas.Positions[positioned.Key]
+		if !exists || len(positioned.Glyph.Bitmap) == 0 {
 			continue
 		}
 		scale := layout.scale
-		x1 := (positioned.x + float64(positioned.glyph.Left) - glyphAtlasPadding) * scale
-		y1 := (positioned.y - float64(positioned.glyph.Top) - glyphAtlasPadding) * scale
+		x1 := (positioned.X + float64(positioned.Glyph.Left) - glyphAtlasPadding) * scale
+		y1 := (positioned.Y - float64(positioned.Glyph.Top) - glyphAtlasPadding) * scale
 		x2 := x1 + float64(rectangle.Width)*scale
 		y2 := y1 + float64(rectangle.Height)*scale
 		u1 := float64(rectangle.X) / float64(atlas.Width)

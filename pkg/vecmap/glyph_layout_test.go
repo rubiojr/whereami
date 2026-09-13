@@ -31,8 +31,8 @@ func TestShapeSDFTextUsesGlyphMetricsAndHalo(t *testing.T) {
 	require.NotNil(t, layout)
 	assert.Equal(t, 1.0, layout.scale)
 	assert.Len(t, layout.glyphs, 2)
-	assert.InDelta(t, -11, layout.glyphs[0].x, 0.001)
-	assert.InDelta(t, -1, layout.glyphs[1].x, 0.001)
+	assert.InDelta(t, -11, layout.glyphs[0].X, 0.001)
+	assert.InDelta(t, -1, layout.glyphs[1].X, 0.001)
 	assert.InDelta(t, -14, layout.bounds.left, 0.001)
 	assert.InDelta(t, 10, layout.bounds.right, 0.001)
 	assert.InDelta(t, -12, layout.bounds.top, 0.001)
@@ -52,7 +52,7 @@ func TestSDFAtlasPreservesGuardsAndProducesQuads(t *testing.T) {
 	assert.Equal(t, byte(90), atlas.Pixels[firstBitmapPixel])
 
 	layout := &sdfTextLayout{
-		glyphs: []sdfPositionedGlyph{{key: key, glyph: glyph, x: 0, y: 0}},
+		glyphs: []sdfPositionedGlyph{{Key: key, Glyph: glyph, X: 0, Y: 0}},
 		scale:  1,
 	}
 	vertices := sdfLayoutVertices(layout, atlas)
@@ -87,24 +87,12 @@ func TestNormalizeSDFTextUsesFetchedSeparators(t *testing.T) {
 	assert.Equal(t, "Madrid 東京\nSeoul", normalizeLibertySymbolText("Madrid\u3000東京\r\nSeoul"))
 }
 
-func TestBreakSDFLinesUsesMaximumWidth(t *testing.T) {
-	glyphs := map[uint32]sdfGlyph{
-		'A': {ID: 'A', Advance: 10},
-		'B': {ID: 'B', Advance: 10},
-		' ': {ID: ' ', Advance: 5},
-	}
-	assert.Equal(t, [][]rune{{'A'}, {'B'}}, breakSDFLines("A B", glyphs, 0, 20))
-	assert.Equal(t, [][]rune{{'A'}, {'B'}}, breakSDFLines("AB", glyphs, 0, 15))
-	assert.Equal(t, [][]rune{{'A', ' ', 'B'}}, breakSDFLines("A B", glyphs, 2, 29))
-	assert.Equal(t, [][]rune{{'A'}, {'B'}}, breakSDFLines("A B", glyphs, 2, 28))
-}
-
 func TestBuildSDFSceneRejectsLayoutsWithoutDrawableGlyphs(t *testing.T) {
 	key := libertySDFLayoutKey{tile: vectorTileID{Z: 1}, index: 2}
 	layout := &sdfTextLayout{
 		glyphs: []sdfPositionedGlyph{{
-			key:   sdfGlyphKey{FontStack: "test", ID: ' '},
-			glyph: sdfGlyph{ID: ' ', Advance: 5},
+			Key:   sdfGlyphKey{FontStack: "test", ID: ' '},
+			Glyph: sdfGlyph{ID: ' ', Advance: 5},
 		}},
 		scale: 1,
 	}
