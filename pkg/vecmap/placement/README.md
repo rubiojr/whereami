@@ -1,6 +1,7 @@
 # placement
 
-Toolkit-neutral symbol-candidate preparation extracted from vecmap. It reuses
+Toolkit-neutral symbol-candidate preparation and collision selection extracted
+from vecmap. It reuses
 existing text/token handling, style defaults, feature-anchor selection, line
 interpolation, angle and polygon-centroid algorithms, using shared MVT/style/Go
 geometry values. It builds without Qt or cgo and introduces no production dependency.
@@ -94,9 +95,56 @@ previous values. These are evaluated candidates, not collision acceptance result
 
 Vecmap's legacy renderer uses a single value adapter at the sink. It allocates no
 intermediate candidate slice and copies no maps/string payloads. Other consumers
-can retain `placement.Symbol` directly. Text eligibility/Qt fallback,
-collision/priority/optional-symbol decisions, atlas-dependent quads and scene
-compilation remain in vecmap.
+can retain `placement.Symbol` directly. Text eligibility/Qt fallback, projected
+box preparation, atlas-dependent quads and scene compilation remain in vecmap.
+
+## Collision and priority selection
+
+```go
+accepted, err := placement.SelectSymbols(references, placement.CollisionOptions{
+    Width: viewportWidth, Height: viewportHeight,
+})
+// references is consumed as scratch and sorted in place.
+// accepted maps each caller-owned key to independent Text/Icon decisions.
+```
+
+`CollisionReference[K]` takes an opaque comparable logical key, layer order, sort
+key, and `CollisionPart` values for text/icon. Each part carries its projected
+logical-pixel `Box`, presence, visibility, overlap and optional flags. Keys should
+be unique/stable. The caller owns projection, glyph/sprite readiness and visibility.
+
+Selection uses the existing stable sort: descending layer order, then ascending
+sort key. Ties retain input order. Vecmap retains its original tile/wrap/reverse-
+candidate collection order and 100,000-reference collection cap. The shared
+selector consumes that scratch slice directly and returns an owned acceptance
+map; parent aliases share the map without conversion.
+
+The 64-pixel grid, clipped/floored inclusive cell ranges and strict rectangle
+intersections are preserved. Touching edges do not collide. Overlap-enabled parts
+neither query nor occupy cells. A candidate's text/icon are queried against earlier
+accepted candidates, not against each other. Required text that is unavailable or
+colliding suppresses its icon; a colliding required icon suppresses text. An
+unavailable/offscreen icon does **not** suppress text. This asymmetry matches the
+previous renderer. Inverted rectangle ordering is not normalized.
+
+The headless boundary adds explicit limits:
+
+- At most **100,000 references**, also bounding validation and stable-sort work.
+- Finite, nonnegative viewport dimensions, at most **1,048,576 logical pixels**
+  each, keeping cell indexes safe on 386 as well as amd64.
+- Finite sort keys and visible-part rectangles. Invisible parts' unused boxes
+  need not be finite.
+- At most **1,000,000 combined cell visits and occupied-box comparisons** per job.
+  `WorkLimit` can lower this cap; zero selects the default. Cell insertion visits
+  are counted too, bounding stored box copies. Sorting and caller projection are
+  separately bounded by reference/source cardinality, not charged to this counter.
+
+Invalid input returns `ErrCollisionInput`; resource exhaustion returns
+`ErrCollisionLimit`. Both return **nil acceptance**, even after earlier references
+were processed. Scratch may already be sorted. This atomic collision-job policy
+is distinct from `PrepareSymbols`' streaming partial-result policy. Vecmap reports
+the failure and skips symbol acceptance for that job. No global cache, logger,
+native graphics resource or asynchronous work is owned by the selector.
 
 ## Verification
 
@@ -107,6 +155,8 @@ CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
   -fuzz '^FuzzLineAnchors$' -fuzztime=20s
 CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
   -fuzz '^FuzzSymbolText$' -fuzztime=20s
+CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
+  -fuzz '^FuzzCollisionSelection$' -fuzztime=20s
 ```
 
 Tests cover source-order/fallback selection, ownership, arc-length interpolation,
@@ -114,7 +164,9 @@ vertex angles, clamped fractions, reversal/upright behavior, repeated/degenerate
 points, tiny spacing, nonfinite inputs, winding and legacy centroid fallbacks.
 Candidate tests also cover complete default/custom text/icon paint, filters,
 text/token rules, font fallback, zoom spacing, caller-owned visibility, budgets,
-sink errors and partial output. Headless coverage is **100%**. See kata **zxys**,
-**0yzm** and
+sink errors and partial output. Collision tests cover stable ties, optional/overlap
+rules, clipping/cell edges, an independent brute-force text-selection comparison,
+invalid inputs, bounds and atomic work exhaustion. Headless coverage is **100%**.
+See kata **zxys**, **0yzm**, **h3nq** and
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full-capture equality and
 controlled preparation measurements.

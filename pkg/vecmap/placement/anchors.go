@@ -1,5 +1,6 @@
-// Package placement prepares toolkit-neutral symbol placement data. Source
-// features are borrowed synchronously; rendering and collision policy are external.
+// Package placement prepares toolkit-neutral symbol candidates and collision
+// decisions. Source features are borrowed synchronously; projected boxes,
+// readiness and rendering are caller-owned.
 package placement
 
 import (

@@ -7,14 +7,14 @@ import (
 	"unicode/utf8"
 
 	quick "github.com/rubiojr/whereami/internal/miqtquick"
+	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
 
 const (
-	libertyCollisionCellSize    = 64.0
 	libertyCollisionZoomStep    = 1.0 / 8.0
 	libertyCollisionBearingStep = 2.0
 	libertyCollisionPanStep     = 64.0
-	maxViewportSymbolReferences = 100_000
+	maxViewportSymbolReferences = placement.MaxCollisionReferences
 )
 
 type libertySymbolKey struct {
@@ -51,26 +51,8 @@ type libertyCollisionBox struct {
 	bottom float64
 }
 
-type libertySymbolReference struct {
-	key         libertySymbolKey
-	candidate   *libertySymbolCandidate
-	textBox     libertyCollisionBox
-	iconBox     libertyCollisionBox
-	textPresent bool
-	iconPresent bool
-	textVisible bool
-	iconVisible bool
-}
-
-type libertyAcceptedSymbol struct {
-	text bool
-	icon bool
-}
-
-type libertyCollisionCell struct {
-	x int
-	y int
-}
+type libertySymbolReference = placement.CollisionReference[libertySymbolKey]
+type libertyAcceptedSymbol = placement.Accepted
 
 func acceptedLibertySymbols(
 	camera Camera,
@@ -99,14 +81,10 @@ func acceptedLibertySymbols(
 					continue
 				}
 				references = append(references, libertySymbolReference{
-					key:         libertySymbolKey{tile: tile.id, wrap: wrap, index: index},
-					candidate:   candidate,
-					textBox:     textBox,
-					iconBox:     iconBox,
-					textPresent: textPresent,
-					iconPresent: iconPresent,
-					textVisible: textVisible,
-					iconVisible: iconVisible,
+					Key:   libertySymbolKey{tile: tile.id, wrap: wrap, index: index},
+					Order: candidate.order, SortKey: candidate.sortKey,
+					Text: coreCollisionPart(textBox, textPresent, textVisible, candidate.textAllowsOverlap, candidate.textOptional),
+					Icon: coreCollisionPart(iconBox, iconPresent, iconVisible, candidate.iconAllowsOverlap, candidate.iconOptional),
 				})
 				if len(references) >= maxViewportSymbolReferences {
 					break
@@ -120,42 +98,19 @@ func acceptedLibertySymbols(
 			break
 		}
 	}
-	sort.SliceStable(references, func(first, second int) bool {
-		if references[first].candidate.order != references[second].candidate.order {
-			return references[first].candidate.order > references[second].candidate.order
-		}
-		return references[first].candidate.sortKey < references[second].candidate.sortKey
-	})
-	accepted := make(map[libertySymbolKey]libertyAcceptedSymbol, len(references))
-	occupied := make(map[libertyCollisionCell][]libertyCollisionBox)
-	for _, reference := range references {
-		textCollision := reference.textVisible && !reference.candidate.textAllowsOverlap &&
-			libertyCollisionGridIntersects(occupied, reference.textBox, camera.Width, camera.Height)
-		iconCollision := reference.iconVisible && !reference.candidate.iconAllowsOverlap &&
-			libertyCollisionGridIntersects(occupied, reference.iconBox, camera.Width, camera.Height)
-		textAccepted := reference.textVisible && !textCollision
-		iconAccepted := reference.iconVisible && !iconCollision
-		if reference.textPresent && !reference.textVisible && !reference.candidate.textOptional {
-			iconAccepted = false
-		}
-		if reference.textPresent && textCollision && !reference.candidate.textOptional {
-			iconAccepted = false
-		}
-		if reference.iconPresent && iconCollision && !reference.candidate.iconOptional {
-			textAccepted = false
-		}
-		if !textAccepted && !iconAccepted {
-			continue
-		}
-		if textAccepted && !reference.candidate.textAllowsOverlap {
-			libertyAddCollisionBox(occupied, reference.textBox, camera.Width, camera.Height)
-		}
-		if iconAccepted && !reference.candidate.iconAllowsOverlap {
-			libertyAddCollisionBox(occupied, reference.iconBox, camera.Width, camera.Height)
-		}
-		accepted[reference.key] = libertyAcceptedSymbol{text: textAccepted, icon: iconAccepted}
+	accepted, err := placement.SelectSymbols(references, placement.CollisionOptions{Width: camera.Width, Height: camera.Height})
+	if err != nil {
+		reportVectorWarning("vecmap symbol collision preparation failed: %v", err)
+		return nil
 	}
 	return accepted
+}
+
+func coreCollisionPart(box libertyCollisionBox, present, visible, overlap, optional bool) placement.CollisionPart {
+	return placement.CollisionPart{
+		Box:     placement.Box{Left: box.left, Top: box.top, Right: box.right, Bottom: box.bottom},
+		Present: present, Visible: visible, AllowsOverlap: overlap, Optional: optional,
+	}
 }
 
 func sameLibertyAcceptedSymbols(first, second map[libertySymbolKey]libertyAcceptedSymbol) bool {
@@ -169,53 +124,6 @@ func sameLibertyAcceptedSymbols(first, second map[libertySymbolKey]libertyAccept
 		}
 	}
 	return true
-}
-
-func libertyCollisionGridIntersects(
-	occupied map[libertyCollisionCell][]libertyCollisionBox,
-	box libertyCollisionBox,
-	viewportWidth, viewportHeight float64,
-) bool {
-	collision := false
-	libertyForEachCollisionCell(box, viewportWidth, viewportHeight, func(cell libertyCollisionCell) bool {
-		for _, occupiedBox := range occupied[cell] {
-			if libertyBoxesIntersect(box, occupiedBox) {
-				collision = true
-				return false
-			}
-		}
-		return true
-	})
-	return collision
-}
-
-func libertyAddCollisionBox(
-	occupied map[libertyCollisionCell][]libertyCollisionBox,
-	box libertyCollisionBox,
-	viewportWidth, viewportHeight float64,
-) {
-	libertyForEachCollisionCell(box, viewportWidth, viewportHeight, func(cell libertyCollisionCell) bool {
-		occupied[cell] = append(occupied[cell], box)
-		return true
-	})
-}
-
-func libertyForEachCollisionCell(
-	box libertyCollisionBox,
-	viewportWidth, viewportHeight float64,
-	visit func(libertyCollisionCell) bool,
-) {
-	left := int(math.Floor(max(0, box.left) / libertyCollisionCellSize))
-	top := int(math.Floor(max(0, box.top) / libertyCollisionCellSize))
-	right := int(math.Floor(min(viewportWidth, box.right) / libertyCollisionCellSize))
-	bottom := int(math.Floor(min(viewportHeight, box.bottom) / libertyCollisionCellSize))
-	for y := top; y <= bottom; y++ {
-		for x := left; x <= right; x++ {
-			if !visit(libertyCollisionCell{x: x, y: y}) {
-				return
-			}
-		}
-	}
 }
 
 func libertyCandidateCollisionBoxes(
@@ -336,11 +244,6 @@ func libertyCollisionBoxVisible(box libertyCollisionBox, viewportWidth, viewport
 	return box.right >= 0 && box.bottom >= 0 && box.left <= viewportWidth && box.top <= viewportHeight
 }
 
-func libertyBoxesIntersect(first, second libertyCollisionBox) bool {
-	return first.left < second.right && first.right > second.left &&
-		first.top < second.bottom && first.bottom > second.top
-}
-
 func newLibertySymbolLayerTileNode(
 	item *quick.QQuickItem,
 	camera Camera,
@@ -368,7 +271,7 @@ func newLibertySymbolLayerTileNode(
 		if !keep {
 			continue
 		}
-		if placement.icon && candidate.iconName != "" {
+		if placement.Icon && candidate.iconName != "" {
 			sprite, exists := libertySprite(candidate.iconName, candidate.iconColor, candidate.iconOpacity)
 			if exists {
 				width := float64(sprite.width) / sprite.pixelRatio * candidate.iconSize
@@ -416,7 +319,7 @@ func newLibertySymbolLayerTileNode(
 				}
 			}
 		}
-		if placement.text && candidate.text != "" && candidate.textColor.Alpha > 0 {
+		if placement.Text && candidate.text != "" && candidate.textColor.Alpha > 0 {
 			var textNode *quick.QSGNode
 			usedSDF := false
 			sdfEligible := sdfTextEligible(candidate.text)

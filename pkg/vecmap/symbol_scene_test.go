@@ -1,6 +1,7 @@
 package vecmap
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -130,7 +131,7 @@ func TestLibertyLayerHasAcceptedSymbol(t *testing.T) {
 	tile := vectorTileID{X: 1, Y: 2, Z: 3}
 	candidates := []libertySymbolCandidate{{order: 4}, {order: 7}}
 	accepted := map[libertySymbolKey]libertyAcceptedSymbol{
-		{tile: tile, wrap: 1, index: 1}: {text: true},
+		{tile: tile, wrap: 1, index: 1}: {Text: true},
 	}
 
 	assert.True(t, libertyLayerHasAcceptedSymbol(tile, 1, candidates, 7, accepted))
@@ -181,6 +182,23 @@ func TestAcceptedLibertySymbolsUsesLayerPriority(t *testing.T) {
 	assert.Contains(t, acceptedIndexes, 1)
 }
 
+func TestAcceptedLibertySymbolsReportsInvalidCollisionJob(t *testing.T) {
+	previous := reportVectorWarning
+	var messages []string
+	reportVectorWarning = func(format string, args ...any) { messages = append(messages, fmt.Sprintf(format, args...)) }
+	t.Cleanup(func() { reportVectorWarning = previous })
+	camera := NewCamera(Coordinate{}, 0, 0, 256, 256)
+	tile := vectorTileID{Z: 0}
+	tiles := []loadedRoadTile{{id: tile, roads: &tileBucket{symbols: []libertySymbolCandidate{{
+		anchor: roadPoint{X: 128, Y: 128}, text: "label", textColor: mapColor{Alpha: 255}, textSize: 16, sortKey: math.NaN(),
+	}}}}}
+	layouts := map[libertySDFLayoutKey]*sdfTextLayout{{tile: tile, index: 0}: {bounds: libertyCollisionBox{left: -10, top: -10, right: 10, bottom: 10}}}
+	assert.Nil(t, acceptedLibertySymbols(camera, tiles, layouts))
+	require.Len(t, messages, 1)
+	assert.Contains(t, messages[0], "symbol collision preparation failed")
+	assert.Contains(t, messages[0], "invalid symbol collision input")
+}
+
 func TestAcceptedLibertySymbolsKeepsOptionalIcon(t *testing.T) {
 	camera := NewCamera(Coordinate{}, 0, 0, 256, 256)
 	blocker := libertySymbolCandidate{
@@ -210,8 +228,8 @@ func TestAcceptedLibertySymbolsKeepsOptionalIcon(t *testing.T) {
 			placement = candidatePlacement
 		}
 	}
-	assert.False(t, placement.text)
-	assert.True(t, placement.icon)
+	assert.False(t, placement.Text)
+	assert.True(t, placement.Icon)
 }
 
 func TestAcceptedLibertySymbolsWaitsForRequiredSDFText(t *testing.T) {

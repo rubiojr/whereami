@@ -264,7 +264,7 @@ func (b *fixtureBuilder) symbols(order int) {
 	for index := start; index < end; index++ {
 		candidate := b.fixture.bucket.symbols[index]
 		accepted := b.fixture.accepted[libertySymbolKey{tile: pinnedTile, index: index}]
-		if accepted.icon && candidate.iconName != "" {
+		if accepted.Icon && candidate.iconName != "" {
 			sprite, exists := libertySprite(candidate.iconName, candidate.iconColor, candidate.iconOpacity)
 			if exists {
 				width, height := float64(sprite.width)/sprite.pixelRatio*candidate.iconSize, float64(sprite.height)/sprite.pixelRatio*candidate.iconSize
@@ -284,7 +284,7 @@ func (b *fixtureBuilder) symbols(order int) {
 				continue
 			}
 			candidate := b.fixture.bucket.symbols[index]
-			if !b.fixture.accepted[libertySymbolKey{tile: pinnedTile, index: index}].text {
+			if !b.fixture.accepted[libertySymbolKey{tile: pinnedTile, index: index}].Text {
 				continue
 			}
 			layout := b.fixture.sdf.layouts[libertySDFLayoutKey{tile: pinnedTile, index: index}]

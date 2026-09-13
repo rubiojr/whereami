@@ -103,8 +103,8 @@ semantics can absorb an operand failure. This API is not an untrusted style-file
 ingestion policy; its caller owns style size/validation and scheduling.
 
 Glyph decoding, atlas packing and text layout now live in the headless `glyph`
-package. Evaluated symbol candidates now live in `placement`; collision decisions
-and scene compilation are still parent-bound.
+package. Evaluated symbol candidates and collision decisions now live in
+`placement`; projected box preparation and scene compilation are still parent-bound.
 No renderer/scheduler migration is involved.
 
 ## Verification and performance

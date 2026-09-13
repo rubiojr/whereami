@@ -33,7 +33,8 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   retained-atlas policy, eligibility and placement stay caller-owned.
 - `pkg/vecmap/placement`: feature-anchor selection, line interpolation/repetition,
   upright/raw angles, exterior-ring centroids and streaming evaluated text/icon
-  candidates. Collision and priority decisions remain caller-owned.
+  candidates, plus stable collision/priority/optional-symbol selection. Projected
+  boxes and glyph/sprite readiness remain caller-owned.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -54,7 +55,8 @@ resources. Older affine-only captures remain readable.
 
 The fixture producer reuses the existing compiler and the extracted headless MVT
 preparation, style compiler, glyph/atlas preparation, text layout and symbol
-candidates. Collision/priority decisions and scene compilation still live in the Qt-bound
+candidates and collision selection. Projected box preparation and scene compilation
+still live in the Qt-bound
 `pkg/vecmap` package. Extracting that remaining CPU work is
 tracked by the umbrella issue. The scene consumer already builds independently
 of that package.
@@ -931,6 +933,72 @@ retained; they establish comparable allocation cost, not a robust speedup or exa
 timing equivalence. The benchmark excludes I/O, JSON and GPU work. Collision/
 priority decisions and scene compilation are the next CPU boundaries before
 bounded live updates and matched-quality MapLibre validation.
+
+### Headless collision and priority selection
+
+Committed evaluated candidates as `4145029`, then continued with kata **h3nq**.
+`placement.SelectSymbols` consumes Go-only projected text/icon boxes and policy
+flags with opaque comparable keys. It reuses the existing stable sort, 64-pixel
+collision grid and acceptance rules. The parent still collects references in its
+original tile/wrap/reverse-candidate order and owns camera projection, text/glyph
+readiness, sprite lookup and viewport visibility. Shared reference/acceptance
+aliases avoid an extra scratch slice or acceptance-map conversion.
+
+Order remains descending style layer, then ascending sort key, preserving input
+ties. Overlap-enabled parts neither test nor occupy the grid; a candidate's own
+parts do not block each other. Required unavailable/colliding text suppresses its
+icon; required colliding icons suppress text, while unavailable icons do not.
+Strict edge intersections and the original floored cell traversal are preserved.
+
+The new boundary enforces the existing 100,000-reference ceiling and adds finite
+sort-key/visible-box validation, finite nonnegative viewport dimensions capped at
+1,048,576 logical pixels, and a 1,000,000-operation grid budget. Cell visits and
+occupied-box comparisons both count; insertion visits also bound stored box copies.
+An optional smaller budget supports callers and failure tests. Clipped/floored
+empty ranges are checked before integer conversion, preventing extreme offscreen
+coordinates from overflowing cell indexes on 386. Validation/sorting are bounded
+separately by reference count; caller-side projection is outside the grid budget.
+
+Collision errors return no partial acceptance map. The input scratch slice may
+already be sorted; the parent reports a warning and skips acceptance for that job.
+This is a new bounded failure policy for extreme jobs, distinct from the preceding
+streaming candidate compiler's partial-output policy. The production renderer and
+scheduler remain in place.
+
+Verification:
+
+- Placement remains **100% covered** headlessly, with amd64/386 tests passing.
+  Tests cover stable priority/ties, optional/overlap asymmetry, strict edges,
+  clipping, extreme coordinates, inverted-range compatibility, every exhaustion
+  path and atomic errors. Grid text selection matches an independent brute-force
+  reference. The parent regression verifies failure reporting and nil acceptance.
+- A 20-second headless collision fuzz run completed **787,808 executions** without
+  failure. Full v4 module tests, v1 vecmap/placement integration-race checks,
+  targeted staticcheck and application build pass. Gopls reports no build errors.
+- All three v1 captures remain byte-for-byte identical: 45 draws, 62 labels,
+  complete fonts and unchanged geometry/texture data. No fresh GPU timing claim is
+  made for this CPU extraction.
+- Existing generated ST1006 warnings and the GO-2026-5024 vulnerability baseline
+  remain unresolved. Complexity review retains explicit acceptance dependencies
+  and budget propagation (`accept` 20, `SelectSymbols` 13); parent collection drops
+  from the combined function's 33 to 11. Policy decomposition can be a focused
+  follow-up without changing these tested rules.
+
+Separate before/after v4 binaries used the same pinned inputs, GOMAXPROCS 16 and
+two-second direct-fixture samples in before/after/after/before order:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before collision extraction | 40.87 / 47.31 ms | 90,749,434 / 90,749,459 | 102,314 / 102,314 |
+| After collision extraction | 44.40 / 45.60 ms | 90,781,854 / 90,782,195 | 102,314 / 102,315 |
+
+The reference records now carry priority/policy values rather than a pointer to
+the parent candidate. Their larger scratch representation adds about **33 KB**
+allocated per fixture (roughly 0.04%), with the same allocation-count range and
+unchanged retained scene size. Timings vary across the controls; these measurements
+establish no speedup or precise timing equivalence. They exclude I/O/JSON/GPU work.
+Next CPU boundaries are projected collision boxes/readiness policy, atlas-dependent
+quads and scene compilation, followed by bounded live updates and parity gates.
 
 ## Flatpak integration
 
