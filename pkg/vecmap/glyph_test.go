@@ -26,15 +26,15 @@ func TestDecodeSDFGlyphRange(t *testing.T) {
 
 	decoded, err := decodeSDFGlyphRange(data, key)
 	require.NoError(t, err)
-	assert.Equal(t, key.fontStack, decoded.fontStack)
-	require.Contains(t, decoded.glyphs, uint32(65))
-	glyph := decoded.glyphs[65]
-	assert.Equal(t, uint32(2), glyph.width)
-	assert.Equal(t, uint32(3), glyph.height)
-	assert.Equal(t, int32(-2), glyph.left)
-	assert.Equal(t, int32(11), glyph.top)
-	assert.Equal(t, uint32(7), glyph.advance)
-	assert.Equal(t, bitmap, glyph.bitmap)
+	assert.Equal(t, key.fontStack, decoded.FontStack)
+	require.Contains(t, decoded.Glyphs, uint32(65))
+	glyph := decoded.Glyphs[65]
+	assert.Equal(t, uint32(2), glyph.Width)
+	assert.Equal(t, uint32(3), glyph.Height)
+	assert.Equal(t, int32(-2), glyph.Left)
+	assert.Equal(t, int32(11), glyph.Top)
+	assert.Equal(t, uint32(7), glyph.Advance)
+	assert.Equal(t, bitmap, glyph.Bitmap)
 }
 
 func TestDecodeSDFGlyphRejectsMalformedMetrics(t *testing.T) {
@@ -83,10 +83,10 @@ func TestGlyphManagerLoadsOnceAndPublishes(t *testing.T) {
 	manager := newGlyphManager(func(_ context.Context, key glyphRangeKey) (*sdfGlyphRange, error) {
 		loads <- key
 		return &sdfGlyphRange{
-			fontStack: key.fontStack,
-			rangeName: glyphRangeName(key.start),
-			glyphs: map[uint32]sdfGlyph{
-				65: {id: 65, advance: 12},
+			FontStack: key.fontStack,
+			RangeName: glyphRangeName(key.start),
+			Glyphs: map[uint32]sdfGlyph{
+				65: {ID: 65, Advance: 12},
 			},
 		}, nil
 	}, func() { updates <- struct{}{} })
@@ -101,7 +101,7 @@ func TestGlyphManagerLoadsOnceAndPublishes(t *testing.T) {
 	}
 	glyphs, ready := manager.resolve("Noto Sans Regular", "A")
 	require.True(t, ready)
-	assert.Equal(t, uint32(12), glyphs[65].advance)
+	assert.Equal(t, uint32(12), glyphs[65].Advance)
 	assert.Equal(t, uint64(1), manager.currentRevision())
 	assert.Len(t, loads, 1)
 	_, ready = manager.resolve("Noto Sans Regular", "A")

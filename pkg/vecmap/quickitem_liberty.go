@@ -226,9 +226,9 @@ func (i *Item) prepareLibertySymbols(
 		if i.sdfAtlas == nil || i.sdfAtlasGeneration != i.sdfGlyphAtlasGeneration {
 			replacement := quick.NewQSGSDFAtlas(
 				i.quickItem,
-				sdfScene.atlas.pixels,
-				sdfScene.atlas.width,
-				sdfScene.atlas.height,
+				sdfScene.atlas.Pixels,
+				sdfScene.atlas.Width,
+				sdfScene.atlas.Height,
 			)
 			if replacement != nil {
 				if i.sdfAtlas != nil && i.sdfAtlas.QSGNode() != nil {
@@ -279,7 +279,7 @@ func (i *Item) prepareLibertySymbols(
 func (i *Item) recordSDFStats(sdfScene *sdfScene, activeSDFAtlas *quick.QSGSDFAtlas) {
 	if sdfScene != nil && activeSDFAtlas != nil {
 		i.sdfLabels.Store(int64(sdfScene.renderedLabels))
-		i.sdfAtlasGlyphs.Store(int64(len(sdfScene.atlas.positions)))
+		i.sdfAtlasGlyphs.Store(int64(len(sdfScene.atlas.Positions)))
 	} else {
 		i.sdfLabels.Store(0)
 		i.sdfAtlasGlyphs.Store(0)

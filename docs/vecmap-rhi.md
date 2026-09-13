@@ -28,6 +28,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   primitive conversions, numeric/color interpolation and color parsing/opacity.
   It depends only on the standard library; pinned assets and caching remain
   caller-owned in vecmap.
+- `pkg/vecmap/glyph`: bounded SDF glyph PBF decoding, shared metrics/bitmaps and
+  deterministic atlas packing. Font I/O/cache/retry and retained-atlas policy
+  stay caller-owned; text layout and placement are still in vecmap.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -47,7 +50,8 @@ The viewer reprojects those through `Document.FrameAt` without replacing scene
 resources. Older affine-only captures remain readable.
 
 The fixture producer reuses the existing compiler and the extracted headless MVT
-preparation and style compiler. Symbol layout/placement and scene compilation
+preparation, style compiler and glyph/atlas preparation. Symbol layout/placement
+and scene compilation
 still live in the Qt-bound `pkg/vecmap`
 package. Extracting that remaining CPU work is
 tracked by the umbrella issue. The scene consumer already builds independently
@@ -706,6 +710,64 @@ cache benchmark checks full preparation and layer evaluation, not cold JSON
 compilation, I/O, GPU work or MapLibre parity. Glyph/atlas/layout/placement and
 scene compilation are the next headless boundaries; the fixture producer still
 imports the Qt-bound parent package.
+
+### Headless glyph decoding and atlas preparation
+
+Committed the preceding line/MVT/expression/document checkpoints as `c909c3c`.
+Kata **sp7z** continues with `pkg/vecmap/glyph`: `DecodeRange` returns owned glyph
+metrics/bitmaps, and `BuildAtlas` returns a single-channel image plus logical glyph
+rectangles. Parent aliases share those values without conversion maps or extra
+bitmap copies. The existing PBF reader and shelf packer are reused. Font fetching,
+retry/cancellation/cache policy, retained-atlas selection, text layout and Qt
+fallback remain caller-owned.
+
+The decoder preserves server fallback-stack naming, matching by requested range,
+required metrics, signed bearings, duplicate rejection and atomic errors. It now
+enforces the existing 2 MiB download limit directly, validates aligned BMP range
+starts before range-end arithmetic, and copies only the final validated bitmap
+field. Existing limits are eight stacks, 256 glyphs per stack, dimensions/advance
+up to 255, bearings -128 through 127 and a three-texel PBF border.
+
+Atlas packing retains descending height/width, ascending font/code-point order,
+256–2048 square sizes, one extra zero guard texel, and the deterministic prefix
+that fits at the maximum size. The shared entry point validates bitmap sizes and
+metrics and omits bitmap-free glyphs; callers check completeness before rendering
+layouts. Pixel output is bounded to 4 MiB, while input cardinality and sorting/
+temporary-map work remain caller-owned. This is not live placement/upload work.
+
+Verification on Go 1.27.1:
+
+- Headless glyph coverage **99.4%**; the only uncovered statement is the atlas
+  loop's unreachable final return. Tests cover parser/metric boundaries, repeated
+  fields, ownership, empty glyphs, deterministic packing, every bitmap/guard pixel,
+  partial atlases and invalid data. Local Regular/Bold/Italic ranges pass headless
+  decoding on amd64 and 386.
+- A 20-second headless fuzz run completed **663,217 executions** without failure.
+- Full v4 module coverage tests, v1 vecmap/glyph integration-race tests, targeted
+  staticcheck, application build and gopls diagnostics pass. Existing generated
+  ST1006 and standard-library GO-2026-5024 baseline findings remain unresolved.
+- All three v1 scene captures remain byte-for-byte identical: 45 draws, 62 labels,
+  complete fonts and unchanged geometry/texture data. No GPU algorithm or binding
+  changes are involved; this verifies CPU output rather than new GPU timings.
+- The former glyph decoder (complexity 32) is split into traversal, field decoding and
+  metric validation. Complexity review flags range/field/atlas functions at 14 and
+  metric validation at 11; the explicit validation branches are retained.
+
+Separate v4 binaries from immediately before/after extraction ran with the same
+pinned tile/glyph inputs, GOMAXPROCS 16 and two-second direct-fixture samples:
+
+| Sequence | Before time/op | After time/op | Before / after allocations |
+| --- | ---: | ---: | ---: |
+| Before/after/after/before | 51.88 / 66.18 ms | 55.90 / 60.70 ms | 102,310–102,311 / 102,313–102,316 |
+| After/before/before/after | 51.11 / 51.09 ms | 51.99 / 54.25 ms | 102,311–102,312 / 102,313–102,316 |
+
+Allocation volume remains about **90.75 MB/op** in both binaries. Samples are
+slower than earlier checkpoints in both versions, with drift and slightly slower
+after samples in the second sequence. These runs establish no speedup or precise
+timing equivalence; they show comparable allocation cost. The benchmark includes
+CPU preparation, excludes I/O/JSON/GPU work, and is not a MapLibre comparison.
+Text layout, placement/collision and scene compilation remain the next headless
+boundaries; the fixture producer still imports the Qt-bound parent.
 
 ## Flatpak integration
 

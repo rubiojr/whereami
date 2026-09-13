@@ -1,21 +1,18 @@
 package vecmap
 
 import (
-	"cmp"
 	"math"
-	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
+	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 )
 
 const (
 	sdfGlyphEmSize         = 24.0
 	sdfDefaultBaseline     = -17.0
-	minimumSDFAtlasSize    = 256
-	maximumSDFAtlasSize    = 2048
 	maximumSDFSceneLayouts = 10_000
 	sdfAtlasVertexElements = 4
 )
@@ -25,10 +22,7 @@ type libertySDFLayoutKey struct {
 	index int
 }
 
-type sdfGlyphKey struct {
-	fontStack string
-	id        uint32
-}
+type sdfGlyphKey = glyph.Key
 
 type sdfPositionedGlyph struct {
 	key   sdfGlyphKey
@@ -46,19 +40,8 @@ type sdfTextLayout struct {
 	scale           float64
 }
 
-type sdfAtlasRect struct {
-	x      int
-	y      int
-	width  int
-	height int
-}
-
-type sdfGlyphAtlas struct {
-	pixels    []byte
-	width     int
-	height    int
-	positions map[sdfGlyphKey]sdfAtlasRect
-}
+type sdfAtlasRect = glyph.Rect
+type sdfGlyphAtlas = glyph.Atlas
 
 type sdfScene struct {
 	atlas          *sdfGlyphAtlas
@@ -152,7 +135,7 @@ func sdfLayoutGlyphs(layouts map[libertySDFLayoutKey]*sdfTextLayout) map[sdfGlyp
 	glyphs := make(map[sdfGlyphKey]sdfGlyph)
 	for _, layout := range layouts {
 		for _, positioned := range layout.glyphs {
-			if len(positioned.glyph.bitmap) > 0 {
+			if len(positioned.glyph.Bitmap) > 0 {
 				glyphs[positioned.key] = positioned.glyph
 			}
 		}
@@ -188,7 +171,7 @@ func sdfAtlasNeedsRebuild(atlas *sdfGlyphAtlas, glyphs map[sdfGlyphKey]sdfGlyph)
 		return true
 	}
 	for key := range glyphs {
-		if _, exists := atlas.positions[key]; !exists {
+		if _, exists := atlas.Positions[key]; !exists {
 			return true
 		}
 	}
@@ -211,12 +194,12 @@ func buildRetainedSDFAtlas(
 		merged[key] = glyph
 	}
 	atlas := buildSDFAtlas(merged)
-	if atlas == nil || atlas.width > currentAtlas.width || sdfAtlasNeedsRebuild(atlas, current) {
+	if atlas == nil || atlas.Width > currentAtlas.Width || sdfAtlasNeedsRebuild(atlas, current) {
 		merged = current
 		atlas = currentAtlas
 	}
-	resident := make(map[sdfGlyphKey]sdfGlyph, len(atlas.positions))
-	for key := range atlas.positions {
+	resident := make(map[sdfGlyphKey]sdfGlyph, len(atlas.Positions))
+	for key := range atlas.Positions {
 		if glyph, exists := merged[key]; exists {
 			resident[key] = glyph
 		}
@@ -229,10 +212,10 @@ func sdfLayoutFitsAtlas(layout *sdfTextLayout, atlas *sdfGlyphAtlas) bool {
 		return false
 	}
 	for _, positioned := range layout.glyphs {
-		if len(positioned.glyph.bitmap) == 0 {
+		if len(positioned.glyph.Bitmap) == 0 {
 			continue
 		}
-		if _, exists := atlas.positions[positioned.key]; !exists {
+		if _, exists := atlas.Positions[positioned.key]; !exists {
 			return false
 		}
 	}
@@ -346,12 +329,12 @@ func shapeSDFText(candidate libertySymbolCandidate, glyphs map[uint32]sdfGlyph) 
 				return nil
 			}
 			positioned = append(positioned, sdfPositionedGlyph{
-				key:   sdfGlyphKey{fontStack: candidate.fontStack, id: uint32(codePoint)},
+				key:   sdfGlyphKey{FontStack: candidate.fontStack, ID: uint32(codePoint)},
 				glyph: glyph,
 				x:     x,
 				y:     y,
 			})
-			x += float64(glyph.advance)
+			x += float64(glyph.Advance)
 			if index+1 < len(line) {
 				x += spacing
 			}
@@ -398,15 +381,15 @@ func sdfPositionedGlyphBounds(glyphs []sdfPositionedGlyph, scale float64) libert
 		bottom: math.Inf(-1),
 	}
 	for _, positioned := range glyphs {
-		if positioned.glyph.width == 0 || positioned.glyph.height == 0 {
+		if positioned.glyph.Width == 0 || positioned.glyph.Height == 0 {
 			continue
 		}
-		left := (positioned.x + float64(positioned.glyph.left)) * scale
-		top := (positioned.y - float64(positioned.glyph.top)) * scale
+		left := (positioned.x + float64(positioned.glyph.Left)) * scale
+		top := (positioned.y - float64(positioned.glyph.Top)) * scale
 		bounds.left = min(bounds.left, left)
 		bounds.top = min(bounds.top, top)
-		bounds.right = max(bounds.right, left+float64(positioned.glyph.width)*scale)
-		bounds.bottom = max(bounds.bottom, top+float64(positioned.glyph.height)*scale)
+		bounds.right = max(bounds.right, left+float64(positioned.glyph.Width)*scale)
+		bounds.bottom = max(bounds.bottom, top+float64(positioned.glyph.Height)*scale)
 	}
 	return bounds
 }
@@ -435,7 +418,7 @@ func breakSDFLines(text string, glyphs map[uint32]sdfGlyph, spacing, maximumWidt
 					glyph, exists := glyphs[uint32(codePoint)]
 					glyphWidth := math.Inf(1)
 					if exists {
-						glyphWidth = float64(glyph.advance)
+						glyphWidth = float64(glyph.Advance)
 					}
 					candidateWidth := glyphWidth
 					if len(current) > 0 {
@@ -458,7 +441,7 @@ func breakSDFLines(text string, glyphs map[uint32]sdfGlyph, spacing, maximumWidt
 				if !exists {
 					candidateWidth = math.Inf(1)
 				} else {
-					candidateWidth += currentWidth + float64(space.advance) + 2*spacing
+					candidateWidth += currentWidth + float64(space.Advance) + 2*spacing
 				}
 			}
 			if maximumWidth > 0 && len(current) > 0 && candidateWidth > maximumWidth {
@@ -485,7 +468,7 @@ func measureSDFLine(line []rune, glyphs map[uint32]sdfGlyph, spacing float64) fl
 		if !exists {
 			return math.Inf(1)
 		}
-		width += float64(glyph.advance)
+		width += float64(glyph.Advance)
 		if index+1 < len(line) {
 			width += spacing
 		}
@@ -523,75 +506,10 @@ func libertyTextJustification(justify string, horizontalAlign float64) float64 {
 }
 
 func buildSDFAtlas(glyphs map[sdfGlyphKey]sdfGlyph) *sdfGlyphAtlas {
-	if len(glyphs) == 0 {
-		return nil
-	}
-	keys := make([]sdfGlyphKey, 0, len(glyphs))
-	for key := range glyphs {
-		keys = append(keys, key)
-	}
-	slices.SortFunc(keys, func(first, second sdfGlyphKey) int {
-		firstGlyph, secondGlyph := glyphs[first], glyphs[second]
-		if byHeight := cmp.Compare(secondGlyph.height, firstGlyph.height); byHeight != 0 {
-			return byHeight
-		}
-		if byWidth := cmp.Compare(secondGlyph.width, firstGlyph.width); byWidth != 0 {
-			return byWidth
-		}
-		if byStack := cmp.Compare(first.fontStack, second.fontStack); byStack != 0 {
-			return byStack
-		}
-		return cmp.Compare(first.id, second.id)
-	})
-	for size := minimumSDFAtlasSize; size <= maximumSDFAtlasSize; size *= 2 {
-		positions, fits := packSDFGlyphs(keys, glyphs, size)
-		if !fits && size < maximumSDFAtlasSize {
-			continue
-		}
-		if len(positions) == 0 {
-			return nil
-		}
-		pixels := make([]byte, size*size)
-		for key, rectangle := range positions {
-			glyph := glyphs[key]
-			bitmapWidth := int(glyph.width) + 2*glyphPBFBorder
-			bitmapHeight := int(glyph.height) + 2*glyphPBFBorder
-			for y := range bitmapHeight {
-				for x := range bitmapWidth {
-					distance := glyph.bitmap[y*bitmapWidth+x]
-					target := (rectangle.y+glyphAtlasGuard+y)*size + rectangle.x + glyphAtlasGuard + x
-					pixels[target] = distance
-				}
-			}
-		}
-		return &sdfGlyphAtlas{pixels: pixels, width: size, height: size, positions: positions}
-	}
-	return nil
-}
-
-func packSDFGlyphs(keys []sdfGlyphKey, glyphs map[sdfGlyphKey]sdfGlyph, size int) (map[sdfGlyphKey]sdfAtlasRect, bool) {
-	positions := make(map[sdfGlyphKey]sdfAtlasRect, len(keys))
-	x, y, shelfHeight := 0, 0, 0
-	for _, key := range keys {
-		glyph := glyphs[key]
-		width := int(glyph.width) + 2*glyphAtlasPadding
-		height := int(glyph.height) + 2*glyphAtlasPadding
-		if width > size || height > size {
-			return nil, false
-		}
-		if x+width > size {
-			x = 0
-			y += shelfHeight
-			shelfHeight = 0
-		}
-		if y+height > size {
-			return positions, false
-		}
-		positions[key] = sdfAtlasRect{x: x, y: y, width: width, height: height}
-		x += width
-		shelfHeight = max(shelfHeight, height)
-	}
-	return positions, true
+	// Inputs came from validated glyph ranges. Invalid data cannot produce a
+	// usable atlas; the existing caller handles nil by deferring SDF rendering.
+	atlas, _ := glyph.BuildAtlas(glyphs)
+	return atlas
 }
 
 func sdfLayoutVertices(layout *sdfTextLayout, atlas *sdfGlyphAtlas) []float32 {
@@ -611,19 +529,19 @@ func sdfLayoutVertices(layout *sdfTextLayout, atlas *sdfGlyphAtlas) []float32 {
 
 func sdfLayoutQuads(layout *sdfTextLayout, atlas *sdfGlyphAtlas, emit func([4]geometry.TextVertex) error) error {
 	for _, positioned := range layout.glyphs {
-		rectangle, exists := atlas.positions[positioned.key]
-		if !exists || len(positioned.glyph.bitmap) == 0 {
+		rectangle, exists := atlas.Positions[positioned.key]
+		if !exists || len(positioned.glyph.Bitmap) == 0 {
 			continue
 		}
 		scale := layout.scale
-		x1 := (positioned.x + float64(positioned.glyph.left) - glyphAtlasPadding) * scale
-		y1 := (positioned.y - float64(positioned.glyph.top) - glyphAtlasPadding) * scale
-		x2 := x1 + float64(rectangle.width)*scale
-		y2 := y1 + float64(rectangle.height)*scale
-		u1 := float64(rectangle.x) / float64(atlas.width)
-		v1 := float64(rectangle.y) / float64(atlas.height)
-		u2 := float64(rectangle.x+rectangle.width) / float64(atlas.width)
-		v2 := float64(rectangle.y+rectangle.height) / float64(atlas.height)
+		x1 := (positioned.x + float64(positioned.glyph.Left) - glyphAtlasPadding) * scale
+		y1 := (positioned.y - float64(positioned.glyph.Top) - glyphAtlasPadding) * scale
+		x2 := x1 + float64(rectangle.Width)*scale
+		y2 := y1 + float64(rectangle.Height)*scale
+		u1 := float64(rectangle.X) / float64(atlas.Width)
+		v1 := float64(rectangle.Y) / float64(atlas.Height)
+		u2 := float64(rectangle.X+rectangle.Width) / float64(atlas.Width)
+		v2 := float64(rectangle.Y+rectangle.Height) / float64(atlas.Height)
 		if err := emit(geometry.TextQuad(x1, y1, x2, y2, u1, v1, u2, v2)); err != nil {
 			return err
 		}

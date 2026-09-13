@@ -12,7 +12,7 @@ func TestShapeSDFTextUsesGlyphMetricsAndHalo(t *testing.T) {
 	glyphs := map[uint32]sdfGlyph{
 		'A': testSDFGlyph('A', 6, 8, 0, -8, 10, 100),
 		'B': testSDFGlyph('B', 7, 8, 1, -8, 12, 120),
-		' ': {id: ' ', advance: 5},
+		' ': {ID: ' ', Advance: 5},
 	}
 	candidate := libertySymbolCandidate{
 		text:          "AB",
@@ -41,15 +41,15 @@ func TestShapeSDFTextUsesGlyphMetricsAndHalo(t *testing.T) {
 
 func TestSDFAtlasPreservesGuardsAndProducesQuads(t *testing.T) {
 	glyph := testSDFGlyph('A', 2, 2, 0, -2, 4, 90)
-	key := sdfGlyphKey{fontStack: "Noto Sans Regular", id: 'A'}
+	key := sdfGlyphKey{FontStack: "Noto Sans Regular", ID: 'A'}
 	atlas := buildSDFAtlas(map[sdfGlyphKey]sdfGlyph{key: glyph})
 	require.NotNil(t, atlas)
-	rectangle := atlas.positions[key]
-	assert.Equal(t, 10, rectangle.width)
-	assert.Equal(t, 10, rectangle.height)
-	assert.Equal(t, byte(0), atlas.pixels[rectangle.y*atlas.width+rectangle.x])
-	firstBitmapPixel := (rectangle.y+1)*atlas.width + rectangle.x + 1
-	assert.Equal(t, byte(90), atlas.pixels[firstBitmapPixel])
+	rectangle := atlas.Positions[key]
+	assert.Equal(t, 10, rectangle.Width)
+	assert.Equal(t, 10, rectangle.Height)
+	assert.Equal(t, byte(0), atlas.Pixels[rectangle.Y*atlas.Width+rectangle.X])
+	firstBitmapPixel := (rectangle.Y+1)*atlas.Width + rectangle.X + 1
+	assert.Equal(t, byte(90), atlas.Pixels[firstBitmapPixel])
 
 	layout := &sdfTextLayout{
 		glyphs: []sdfPositionedGlyph{{key: key, glyph: glyph, x: 0, y: 0}},
@@ -89,9 +89,9 @@ func TestNormalizeSDFTextUsesFetchedSeparators(t *testing.T) {
 
 func TestBreakSDFLinesUsesMaximumWidth(t *testing.T) {
 	glyphs := map[uint32]sdfGlyph{
-		'A': {id: 'A', advance: 10},
-		'B': {id: 'B', advance: 10},
-		' ': {id: ' ', advance: 5},
+		'A': {ID: 'A', Advance: 10},
+		'B': {ID: 'B', Advance: 10},
+		' ': {ID: ' ', Advance: 5},
 	}
 	assert.Equal(t, [][]rune{{'A'}, {'B'}}, breakSDFLines("A B", glyphs, 0, 20))
 	assert.Equal(t, [][]rune{{'A'}, {'B'}}, breakSDFLines("AB", glyphs, 0, 15))
@@ -99,56 +99,40 @@ func TestBreakSDFLinesUsesMaximumWidth(t *testing.T) {
 	assert.Equal(t, [][]rune{{'A'}, {'B'}}, breakSDFLines("A B", glyphs, 2, 28))
 }
 
-func TestPackSDFGlyphsReturnsDeterministicPartialAtlas(t *testing.T) {
-	glyphs := make(map[sdfGlyphKey]sdfGlyph)
-	keys := make([]sdfGlyphKey, 100)
-	for index := range keys {
-		key := sdfGlyphKey{fontStack: "test", id: uint32(index)}
-		keys[index] = key
-		glyphs[key] = sdfGlyph{width: maximumGlyphDimension, height: maximumGlyphDimension}
-	}
-
-	positions, fits := packSDFGlyphs(keys, glyphs, maximumSDFAtlasSize)
-	assert.False(t, fits)
-	assert.Len(t, positions, 49)
-	assert.Contains(t, positions, keys[0])
-	assert.NotContains(t, positions, keys[len(keys)-1])
-}
-
 func TestBuildSDFSceneRejectsLayoutsWithoutDrawableGlyphs(t *testing.T) {
 	key := libertySDFLayoutKey{tile: vectorTileID{Z: 1}, index: 2}
 	layout := &sdfTextLayout{
 		glyphs: []sdfPositionedGlyph{{
-			key:   sdfGlyphKey{fontStack: "test", id: ' '},
-			glyph: sdfGlyph{id: ' ', advance: 5},
+			key:   sdfGlyphKey{FontStack: "test", ID: ' '},
+			glyph: sdfGlyph{ID: ' ', Advance: 5},
 		}},
 		scale: 1,
 	}
-	atlas := &sdfGlyphAtlas{width: 256, height: 256, positions: make(map[sdfGlyphKey]sdfAtlasRect)}
+	atlas := &sdfGlyphAtlas{Width: 256, Height: 256, Positions: make(map[sdfGlyphKey]sdfAtlasRect)}
 	assert.Nil(t, buildSDFScene(map[libertySDFLayoutKey]*sdfTextLayout{key: layout}, atlas))
 }
 
 func TestSDFAtlasCacheMatchesGlyphSets(t *testing.T) {
-	first := sdfGlyphKey{fontStack: "test", id: 'A'}
-	second := sdfGlyphKey{fontStack: "test", id: 'B'}
+	first := sdfGlyphKey{FontStack: "test", ID: 'A'}
+	second := sdfGlyphKey{FontStack: "test", ID: 'B'}
 	glyphs := map[sdfGlyphKey]sdfGlyph{first: {}, second: {}}
 	keys := sdfGlyphKeySet(glyphs)
 
 	assert.True(t, sameSDFGlyphKeys(keys, map[sdfGlyphKey]struct{}{second: {}, first: {}}))
 	assert.False(t, sameSDFGlyphKeys(keys, map[sdfGlyphKey]struct{}{first: {}}))
 	assert.False(t, sdfAtlasNeedsRebuild(
-		&sdfGlyphAtlas{positions: map[sdfGlyphKey]sdfAtlasRect{first: {}, second: {}}},
+		&sdfGlyphAtlas{Positions: map[sdfGlyphKey]sdfAtlasRect{first: {}, second: {}}},
 		glyphs,
 	))
 	assert.True(t, sdfAtlasNeedsRebuild(
-		&sdfGlyphAtlas{positions: map[sdfGlyphKey]sdfAtlasRect{first: {}}},
+		&sdfGlyphAtlas{Positions: map[sdfGlyphKey]sdfAtlasRect{first: {}}},
 		glyphs,
 	))
 }
 
 func TestBuildRetainedSDFAtlasKeepsPriorGlyphsWhenTheyFit(t *testing.T) {
-	firstKey := sdfGlyphKey{fontStack: "test", id: 'A'}
-	secondKey := sdfGlyphKey{fontStack: "test", id: 'B'}
+	firstKey := sdfGlyphKey{FontStack: "test", ID: 'A'}
+	secondKey := sdfGlyphKey{FontStack: "test", ID: 'B'}
 	first := testSDFGlyph('A', 2, 2, 0, -2, 4, 90)
 	second := testSDFGlyph('B', 2, 2, 0, -2, 4, 100)
 
@@ -157,8 +141,8 @@ func TestBuildRetainedSDFAtlasKeepsPriorGlyphsWhenTheyFit(t *testing.T) {
 		map[sdfGlyphKey]sdfGlyph{firstKey: first},
 	)
 	require.NotNil(t, atlas)
-	assert.Contains(t, atlas.positions, firstKey)
-	assert.Contains(t, atlas.positions, secondKey)
+	assert.Contains(t, atlas.Positions, firstKey)
+	assert.Contains(t, atlas.Positions, secondKey)
 	assert.Contains(t, retained, firstKey)
 	assert.Contains(t, retained, secondKey)
 }
@@ -169,12 +153,12 @@ func testSDFGlyph(id rune, width, height uint32, left, top int32, advance uint32
 		bitmap[index] = distance
 	}
 	return sdfGlyph{
-		id:      uint32(id),
-		bitmap:  bitmap,
-		width:   width,
-		height:  height,
-		left:    left,
-		top:     top,
-		advance: advance,
+		ID:      uint32(id),
+		Bitmap:  bitmap,
+		Width:   width,
+		Height:  height,
+		Left:    left,
+		Top:     top,
+		Advance: advance,
 	}
 }

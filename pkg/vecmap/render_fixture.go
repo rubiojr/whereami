@@ -85,11 +85,11 @@ func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, option
 	builder := fixtureBuilder{fixture: fixture, textures: make(map[string]uint64), indexed: options.DirectIndexed,
 		mesh: geometry.NewBuilder[scene.Vertex](options.DirectIndexed, maxTileRenderedTriangles*3+maximumSDFSceneLayouts*maximumSymbolTextRunes*12+maxTileSymbols*6)}
 	if fixture.sdf != nil {
-		pixels := make([]byte, len(atlas.pixels)*4)
-		for index, value := range atlas.pixels {
+		pixels := make([]byte, len(atlas.Pixels)*4)
+		for index, value := range atlas.Pixels {
 			pixels[index*4], pixels[index*4+1], pixels[index*4+2], pixels[index*4+3] = value, value, value, 255
 		}
-		builder.atlas = builder.texture("glyph-atlas", atlas.width, atlas.height, pixels)
+		builder.atlas = builder.texture("glyph-atlas", atlas.Width, atlas.Height, pixels)
 	}
 	layers, err := compiledLibertyLayers()
 	if err != nil {
@@ -149,7 +149,7 @@ func decodeFixtureGlyphs(ranges map[string][]byte) (map[string]map[uint32]sdfGly
 		if err != nil {
 			return nil, fmt.Errorf("font %q: %w", font, err)
 		}
-		glyphs[font] = rangeData.glyphs
+		glyphs[font] = rangeData.Glyphs
 	}
 	return glyphs, nil
 }

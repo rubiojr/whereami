@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -15,41 +14,22 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/rubiojr/whereami/pkg/vecmap/internal/pbf"
+	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 )
 
 const (
 	openFreeMapGlyphURL      = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf"
-	glyphRangeSize           = uint32(256)
-	maximumGlyphCodePoint    = uint32(0xffff)
-	maximumGlyphRangeStacks  = 8
-	maximumGlyphsPerRange    = 256
-	maximumGlyphDimension    = 255
-	maximumGlyphMetric       = 127
-	minimumGlyphMetric       = -128
+	glyphRangeSize           = glyph.RangeSize
+	maximumGlyphCodePoint    = glyph.MaxCodePoint
 	glyphRangeRetryInterval  = 30 * time.Second
 	maximumConcurrentGlyphs  = 4
-	glyphPBFBorder           = 3
-	glyphAtlasGuard          = 1
-	glyphAtlasPadding        = glyphPBFBorder + glyphAtlasGuard
+	glyphPBFBorder           = glyph.PBFBorder
+	glyphAtlasPadding        = glyph.AtlasPadding
 	openFreeMapGlyphCacheDir = "openfreemap-fonts"
 )
 
-type sdfGlyph struct {
-	id      uint32
-	bitmap  []byte
-	width   uint32
-	height  uint32
-	left    int32
-	top     int32
-	advance uint32
-}
-
-type sdfGlyphRange struct {
-	fontStack string
-	rangeName string
-	glyphs    map[uint32]sdfGlyph
-}
+type sdfGlyph = glyph.Glyph
+type sdfGlyphRange = glyph.Range
 
 type glyphRangeKey struct {
 	fontStack string
@@ -198,11 +178,11 @@ func (m *glyphManager) finishRange(key glyphRangeKey, rangeData *sdfGlyphRange, 
 	if err == nil && rangeData != nil {
 		entry.rangeData = rangeData
 		entry.failedAt = time.Time{}
-		fontGlyphs := make(map[uint32]sdfGlyph, len(m.glyphs[key.fontStack])+len(rangeData.glyphs))
+		fontGlyphs := make(map[uint32]sdfGlyph, len(m.glyphs[key.fontStack])+len(rangeData.Glyphs))
 		for id, glyph := range m.glyphs[key.fontStack] {
 			fontGlyphs[id] = glyph
 		}
-		for id, glyph := range rangeData.glyphs {
+		for id, glyph := range rangeData.Glyphs {
 			fontGlyphs[id] = glyph
 		}
 		m.glyphs[key.fontStack] = fontGlyphs
@@ -293,176 +273,9 @@ func loadOpenFreeMapGlyphRange(
 }
 
 func glyphRangeName(start uint32) string {
-	return fmt.Sprintf("%d-%d", start, start+glyphRangeSize-1)
+	return glyph.RangeName(start)
 }
 
 func decodeSDFGlyphRange(data []byte, key glyphRangeKey) (*sdfGlyphRange, error) {
-	reader := pbf.NewReader(data)
-	var matched *sdfGlyphRange
-	stackCount := 0
-	for reader.More() {
-		field, wire, err := reader.Field()
-		if err != nil {
-			return nil, fmt.Errorf("decode glyph range: %w", err)
-		}
-		if field != 1 {
-			if err := reader.Skip(wire); err != nil {
-				return nil, fmt.Errorf("decode glyph range: %w", err)
-			}
-			continue
-		}
-		payload, err := reader.Bytes(wire)
-		if err != nil {
-			return nil, fmt.Errorf("decode glyph range stack: %w", err)
-		}
-		stackCount++
-		if stackCount > maximumGlyphRangeStacks {
-			return nil, errors.New("glyph range exceeds font stack limit")
-		}
-		stack, err := decodeSDFGlyphStack(payload, key.start)
-		if err != nil {
-			return nil, err
-		}
-		if stack.rangeName == glyphRangeName(key.start) {
-			if matched != nil {
-				return nil, errors.New("glyph range contains duplicate matching stacks")
-			}
-			matched = stack
-		}
-	}
-	if matched == nil {
-		return nil, fmt.Errorf("glyph range %s for %q is missing", glyphRangeName(key.start), key.fontStack)
-	}
-	matched.fontStack = key.fontStack
-	return matched, nil
-}
-
-func decodeSDFGlyphStack(data []byte, rangeStart uint32) (*sdfGlyphRange, error) {
-	reader := pbf.NewReader(data)
-	stack := &sdfGlyphRange{glyphs: make(map[uint32]sdfGlyph)}
-	for reader.More() {
-		field, wire, err := reader.Field()
-		if err != nil {
-			return nil, fmt.Errorf("decode glyph stack: %w", err)
-		}
-		switch field {
-		case 1:
-			value, err := reader.Bytes(wire)
-			if err != nil {
-				return nil, fmt.Errorf("decode glyph stack name: %w", err)
-			}
-			stack.fontStack = string(value)
-		case 2:
-			value, err := reader.Bytes(wire)
-			if err != nil {
-				return nil, fmt.Errorf("decode glyph stack range: %w", err)
-			}
-			stack.rangeName = string(value)
-		case 3:
-			if len(stack.glyphs) >= maximumGlyphsPerRange {
-				return nil, errors.New("glyph range exceeds glyph count limit")
-			}
-			payload, err := reader.Bytes(wire)
-			if err != nil {
-				return nil, fmt.Errorf("decode glyph: %w", err)
-			}
-			glyph, err := decodeSDFGlyph(payload, rangeStart)
-			if err != nil {
-				return nil, err
-			}
-			if _, exists := stack.glyphs[glyph.id]; exists {
-				return nil, fmt.Errorf("glyph range contains duplicate glyph %d", glyph.id)
-			}
-			stack.glyphs[glyph.id] = glyph
-		default:
-			if err := reader.Skip(wire); err != nil {
-				return nil, fmt.Errorf("decode glyph stack: %w", err)
-			}
-		}
-	}
-	if stack.fontStack == "" || stack.rangeName == "" {
-		return nil, errors.New("glyph stack is missing name or range")
-	}
-	return stack, nil
-}
-
-func decodeSDFGlyph(data []byte, rangeStart uint32) (sdfGlyph, error) {
-	reader := pbf.NewReader(data)
-	glyph := sdfGlyph{}
-	var required uint8
-	for reader.More() {
-		field, wire, err := reader.Field()
-		if err != nil {
-			return sdfGlyph{}, fmt.Errorf("decode glyph: %w", err)
-		}
-		switch field {
-		case 1:
-			value, err := reader.Varint(wire)
-			if err != nil || value > math.MaxUint32 {
-				return sdfGlyph{}, errors.New("glyph id is invalid")
-			}
-			glyph.id = uint32(value)
-			required |= 1 << 0
-		case 2:
-			value, err := reader.Bytes(wire)
-			if err != nil {
-				return sdfGlyph{}, fmt.Errorf("decode glyph bitmap: %w", err)
-			}
-			glyph.bitmap = append([]byte(nil), value...)
-		case 3, 4, 7:
-			value, err := reader.Varint(wire)
-			if err != nil || value > math.MaxUint32 {
-				return sdfGlyph{}, errors.New("glyph unsigned metric is invalid")
-			}
-			switch field {
-			case 3:
-				glyph.width = uint32(value)
-				required |= 1 << 1
-			case 4:
-				glyph.height = uint32(value)
-				required |= 1 << 2
-			case 7:
-				glyph.advance = uint32(value)
-				required |= 1 << 5
-			}
-		case 5, 6:
-			value, err := reader.Varint(wire)
-			if err != nil || value > math.MaxUint32 {
-				return sdfGlyph{}, errors.New("glyph signed metric is invalid")
-			}
-			metric := int32(decodeZigZag(uint32(value)))
-			if field == 5 {
-				glyph.left = metric
-				required |= 1 << 3
-			} else {
-				glyph.top = metric
-				required |= 1 << 4
-			}
-		default:
-			if err := reader.Skip(wire); err != nil {
-				return sdfGlyph{}, fmt.Errorf("decode glyph: %w", err)
-			}
-		}
-	}
-	if required != 0b11_1111 {
-		return sdfGlyph{}, errors.New("glyph is missing required metrics")
-	}
-	if glyph.id < rangeStart || glyph.id >= rangeStart+glyphRangeSize {
-		return sdfGlyph{}, fmt.Errorf("glyph %d is outside requested range", glyph.id)
-	}
-	if glyph.width > maximumGlyphDimension || glyph.height > maximumGlyphDimension || glyph.advance > maximumGlyphDimension {
-		return sdfGlyph{}, errors.New("glyph dimensions exceed metric limit")
-	}
-	if glyph.left < minimumGlyphMetric || glyph.left > maximumGlyphMetric ||
-		glyph.top < minimumGlyphMetric || glyph.top > maximumGlyphMetric {
-		return sdfGlyph{}, errors.New("glyph bearing exceeds metric limit")
-	}
-	expectedBitmapBytes := 0
-	if glyph.width > 0 && glyph.height > 0 {
-		expectedBitmapBytes = int(glyph.width+2*glyphPBFBorder) * int(glyph.height+2*glyphPBFBorder)
-	}
-	if len(glyph.bitmap) != expectedBitmapBytes {
-		return sdfGlyph{}, fmt.Errorf("glyph %d bitmap has %d bytes, want %d", glyph.id, len(glyph.bitmap), expectedBitmapBytes)
-	}
-	return glyph, nil
+	return glyph.DecodeRange(data, key.fontStack, key.start)
 }
