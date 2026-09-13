@@ -28,9 +28,9 @@ func TestExpandLibertyTokensRejectsOversizedRemoteText(t *testing.T) {
 func TestLibertyLineAnchorRetainsRawDirection(t *testing.T) {
 	anchor, ok := libertyLineAnchor([]roadPoint{{X: 10}, {X: 0}}, 0.5)
 	require.True(t, ok)
-	assert.InDelta(t, math.Pi, anchor.rawAngle, 1e-12)
-	assert.InDelta(t, 0, math.Sin(anchor.angle), 1e-12)
-	assert.Greater(t, math.Cos(anchor.angle), 0.0)
+	assert.InDelta(t, math.Pi, anchor.RawAngle, 1e-12)
+	assert.InDelta(t, 0, math.Sin(anchor.Angle), 1e-12)
+	assert.Greater(t, math.Cos(anchor.Angle), 0.0)
 }
 
 func TestLibertyViewportAlignedSymbolIgnoresLineAngle(t *testing.T) {

@@ -79,9 +79,10 @@ rings and only groups winding-ordered exteriors and holes.
 Vecmap uses aliases of the shared feature/property/polygon types, avoiding
 conversion slices/maps. Its legacy fallback work and reporting remain interleaved
 with layer preparation as before. Document/layer preparation and expression
-evaluation now live in the headless `style` package. Symbol layout/placement and
-scene compilation remain in the Qt-bound parent package. The offline fixture
-command is therefore still Qt-bound.
+evaluation now live in the headless `style` package. The `glyph` package owns
+text layout and atlas preparation; `placement` owns feature-anchor preparation.
+Symbol paint compilation, collision and scene compilation remain in the Qt-bound
+parent package. The offline fixture command is therefore still Qt-bound.
 
 ## Verification
 

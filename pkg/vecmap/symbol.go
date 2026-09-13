@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
+	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
 
 const (
@@ -92,9 +93,9 @@ func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, z
 			candidate := libertySymbolCandidate{
 				order:               layer.Order,
 				layerID:             layer.ID,
-				anchor:              anchor.point,
-				lineAngle:           anchor.angle,
-				iconLineAngle:       anchor.rawAngle,
+				anchor:              anchor.Point,
+				lineAngle:           anchor.Angle,
+				iconLineAngle:       anchor.RawAngle,
 				viewportAligned:     placement == "point",
 				iconViewportAligned: placement == "point",
 				sortKey:             libertyEvaluatedNumber(layer, "symbol-sort-key", evaluation, 0),
@@ -123,10 +124,10 @@ func compileLibertySymbolLayer(bucket *tileBucket, layer compiledLibertyLayer, z
 				iconRotate:          libertyEvaluatedNumber(layer, "icon-rotate", evaluation, 0) * math.Pi / 180,
 			}
 			if !libertyEvaluatedBool(layer, "text-keep-upright", evaluation, true) {
-				candidate.lineAngle = anchor.rawAngle
+				candidate.lineAngle = anchor.RawAngle
 			}
 			if libertyEvaluatedBool(layer, "icon-keep-upright", evaluation, false) {
-				candidate.iconLineAngle = anchor.angle
+				candidate.iconLineAngle = anchor.Angle
 			}
 			candidate.textColor, _ = libertyEvaluatedColor(layer, "text-color", evaluation, mapColor{Alpha: 255})
 			candidate.textColor = libertyColorWithOpacity(
@@ -157,131 +158,14 @@ func libertySymbolSpacing(screenPixels float64, tileZoom uint32, styleZoom float
 	return screenPixels * math.Exp2(float64(tileZoom)-styleZoom)
 }
 
-type libertySymbolAnchor struct {
-	point    roadPoint
-	angle    float64
-	rawAngle float64
-}
+type libertySymbolAnchor = placement.Anchor
 
-func libertyFeatureAnchors(feature vectorFeature, placement string, spacing float64) []libertySymbolAnchor {
-	if placement == "line" || placement == "line-center" {
-		anchors := make([]libertySymbolAnchor, 0, len(feature.Lines))
-		for _, line := range feature.Lines {
-			if placement == "line-center" {
-				if anchor, ok := libertyLineAnchor(line, 0.5); ok {
-					anchors = append(anchors, anchor)
-				}
-				continue
-			}
-			anchors = append(anchors, libertyRepeatedLineAnchors(line, spacing)...)
-		}
-		return anchors
-	}
-	anchors := make([]libertySymbolAnchor, 0, len(feature.Points)+len(feature.Polygons))
-	for _, point := range feature.Points {
-		anchors = append(anchors, libertySymbolAnchor{point: point})
-	}
-	for _, polygon := range feature.Polygons {
-		anchors = append(anchors, libertySymbolAnchor{point: libertyPolygonCentroid(polygon.Exterior)})
-	}
-	if len(anchors) == 0 {
-		for _, line := range feature.Lines {
-			if anchor, ok := libertyLineAnchor(line, 0.5); ok {
-				anchors = append(anchors, anchor)
-			}
-		}
-	}
-	return anchors
-}
-
-func libertyRepeatedLineAnchors(line []roadPoint, spacing float64) []libertySymbolAnchor {
-	length := libertyLineLength(line)
-	if length <= polygonEpsilon {
-		return nil
-	}
-	if spacing <= 0 || length < spacing {
-		anchor, ok := libertyLineAnchor(line, 0.5)
-		if !ok {
-			return nil
-		}
-		return []libertySymbolAnchor{anchor}
-	}
-	count := min(16, max(1, int(math.Floor(length/spacing))))
-	anchors := make([]libertySymbolAnchor, 0, count)
-	for index := range count {
-		fraction := (float64(index) + 0.5) / float64(count)
-		if anchor, ok := libertyLineAnchor(line, fraction); ok {
-			anchors = append(anchors, anchor)
-		}
-	}
-	return anchors
+func libertyFeatureAnchors(feature vectorFeature, mode string, spacing float64) []libertySymbolAnchor {
+	return placement.FeatureAnchors(feature, mode, spacing)
 }
 
 func libertyLineAnchor(line []roadPoint, fraction float64) (libertySymbolAnchor, bool) {
-	total := libertyLineLength(line)
-	if total <= polygonEpsilon {
-		return libertySymbolAnchor{}, false
-	}
-	target := max(0, min(1, fraction)) * total
-	traversed := 0.0
-	for index := 1; index < len(line); index++ {
-		first := line[index-1]
-		second := line[index]
-		length := math.Hypot(second.X-first.X, second.Y-first.Y)
-		if length <= polygonEpsilon {
-			continue
-		}
-		if traversed+length >= target {
-			factor := (target - traversed) / length
-			rawAngle := math.Atan2(second.Y-first.Y, second.X-first.X)
-			angle := rawAngle
-			if angle > math.Pi/2 || angle < -math.Pi/2 {
-				angle += math.Pi
-			}
-			return libertySymbolAnchor{
-				point:    roadPoint{X: first.X + (second.X-first.X)*factor, Y: first.Y + (second.Y-first.Y)*factor},
-				angle:    angle,
-				rawAngle: rawAngle,
-			}, true
-		}
-		traversed += length
-	}
-	return libertySymbolAnchor{}, false
-}
-
-func libertyLineLength(line []roadPoint) float64 {
-	length := 0.0
-	for index := 1; index < len(line); index++ {
-		length += math.Hypot(line[index].X-line[index-1].X, line[index].Y-line[index-1].Y)
-	}
-	return length
-}
-
-func libertyPolygonCentroid(ring []roadPoint) roadPoint {
-	if len(ring) == 0 {
-		return roadPoint{}
-	}
-	area := 0.0
-	centroid := roadPoint{}
-	for index, first := range ring {
-		second := ring[(index+1)%len(ring)]
-		cross := first.X*second.Y - second.X*first.Y
-		area += cross
-		centroid.X += (first.X + second.X) * cross
-		centroid.Y += (first.Y + second.Y) * cross
-	}
-	if math.Abs(area) <= polygonEpsilon {
-		for _, point := range ring {
-			centroid.X += point.X
-			centroid.Y += point.Y
-		}
-		centroid.X /= float64(len(ring))
-		centroid.Y /= float64(len(ring))
-		return centroid
-	}
-	centroid.X /= 3 * area
-	centroid.Y /= 3 * area
-	return centroid
+	return placement.LineAnchor(line, fraction)
 }
 
 func expandLibertyTokens(text string, properties featureProperties) string {

@@ -31,6 +31,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
 - `pkg/vecmap/glyph`: bounded SDF glyph PBF decoding, shared metrics/bitmaps and
   deterministic atlas packing and glyph-metric text layout. Font I/O/cache/retry,
   retained-atlas policy, eligibility and placement stay caller-owned.
+- `pkg/vecmap/placement`: feature-anchor selection, line interpolation/repetition,
+  upright/raw angles and exterior-ring centroids. Symbol paint, collision and
+  priority decisions remain caller-owned.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -819,6 +822,57 @@ support comparable allocation cost but do not establish a speedup or precise
 timing equivalence. They measure CPU preparation, excluding I/O/JSON/GPU work;
 MapLibre-quality and live-presentation gates remain open. Next extraction targets
 are symbol candidate preparation, placement/collision and scene compilation.
+
+### Headless feature-anchor preparation
+
+Committed the text-layout checkpoint as `026e54d`, then continued with kata
+**zxys**. `placement.FeatureAnchors` now selects point, polygon-centroid, line-center
+and repeated-line anchors from shared MVT features. `LineAnchor`,
+`RepeatedLineAnchors` and `PolygonCentroid` expose the existing geometry helpers;
+the parent aliases `Anchor` so no result conversion slices are needed.
+
+The source ordering, fallback selection, incoming-segment vertex direction,
+unnormalized upright/raw angles, epsilon behavior and centroid arithmetic are
+preserved. The centroid remains an exterior-ring calculation, not an interior
+label-point solver. Its near-zero-area fallback retains the original residual
+numerator behavior. Text/icon paint, keep-upright choices, collision and overall
+tile candidate budgets remain caller-owned.
+
+A correctness fix clamps repeated-anchor counts to 16 before converting to `int`.
+The old conversion could overflow for very small positive spacing and collapse
+the count to one, including on 386. NaN spacing/fractions and nonfinite line lengths
+now reject cleanly. Total input/output work remains bounded by caller-owned MVT
+source cardinality, with the existing per-line cap; this is not live scheduling.
+
+Verification:
+
+- Headless amd64/386 tests pass with **100% placement coverage**. Regressions cover
+  source selection/order, ownership, clamped fractions, midpoint/vertex directions,
+  upright angles, degenerate/tiny segments, tiny spacing and centroid fallbacks.
+- A 20-second headless fuzz run completed **853,014 executions** without failure.
+- Full v4 module coverage tests, v1 vecmap/placement integration-race checks,
+  targeted staticcheck and application build pass; gopls reports no build errors.
+  Existing generated ST1006 and standard-library GO-2026-5024 baseline findings
+  remain unresolved. Complexity review retains the original selection dispatcher
+  (11); other new production functions are at most 10.
+- All three v1 captures remain byte-for-byte identical: 45 draws, 62 labels,
+  complete fonts and unchanged geometry/texture data. GPU algorithms and generated
+  adapters are unaffected by this CPU extraction.
+
+Separate v4 test binaries from immediately before/after extraction ran in
+before/after/after/before order, with identical pinned tile/glyph inputs,
+GOMAXPROCS 16 and two-second direct-fixture samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before anchors | 61.70 / 46.63 ms | 90,751,305 / 90,749,038 | 102,319 / 102,312 |
+| After anchors | 52.74 / 54.01 ms | 90,750,613 / 90,750,023 | 102,316 / 102,315 |
+
+Both allocate about **90.75 MB/op**. Timing varied substantially across the control
+runs; no speedup or precise timing equivalence is established. These are CPU
+preparation measurements, excluding I/O/JSON/GPU work, rather than full-map parity
+evidence. The next boundaries are evaluated symbol candidate preparation,
+collision/priority decisions and scene compilation.
 
 ## Flatpak integration
 
