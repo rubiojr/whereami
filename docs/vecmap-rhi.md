@@ -33,8 +33,8 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   retained-atlas policy, eligibility and placement stay caller-owned.
 - `pkg/vecmap/placement`: feature-anchor selection, line interpolation/repetition,
   upright/raw angles, exterior-ring centroids and streaming evaluated text/icon
-  candidates, plus stable collision/priority/optional-symbol selection. Projected
-  boxes and glyph/sprite readiness remain caller-owned.
+  candidates, projected boxes and stable collision/priority/optional-symbol
+  selection. Glyph/sprite readiness and fallback policy remain caller-owned.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -55,7 +55,7 @@ resources. Older affine-only captures remain readable.
 
 The fixture producer reuses the existing compiler and the extracted headless MVT
 preparation, style compiler, glyph/atlas preparation, text layout and symbol
-candidates and collision selection. Projected box preparation and scene compilation
+candidates, projected boxes and collision selection. Resource readiness policy and scene compilation
 still live in the Qt-bound
 `pkg/vecmap` package. Extracting that remaining CPU work is
 tracked by the umbrella issue. The scene consumer already builds independently
@@ -999,6 +999,60 @@ unchanged retained scene size. Timings vary across the controls; these measureme
 establish no speedup or precise timing equivalence. They exclude I/O/JSON/GPU work.
 Next CPU boundaries are projected collision boxes/readiness policy, atlas-dependent
 quads and scene compilation, followed by bounded live updates and parity gates.
+
+### Headless projected symbol boxes
+
+Committed collision selection as `1fa1e48`, then continued with kata **madt**.
+`placement.ProjectSymbol` now prepares projected glyph/fallback text and icon boxes
+from shared Symbol values, `view.Affine`, explicit text readiness/bounds and optional
+sprite metrics. It returns ready-to-select `CollisionPart` values, retaining no
+input pointers or native resources. The parent supplies its existing Qt fallback
+eligibility, SDF bounds and pinned sprite availability through value adapters.
+
+The extraction preserves logical-pixel sizes and offsets during camera scaling,
+map/viewport alignment, affine screen angles, halo handling, signed padding,
+inclusive visibility, anchor substrings and signed-zero arithmetic. Supplied text
+bounds already include the glyph halo, while fallback text uses the prior
+character/line estimate. Sprite presence still follows name/metric availability
+and positive pixel ratio, independently of icon opacity or color alpha.
+
+Fallback line count now stays floating point instead of converting a potentially
+huge wrap ratio to `int`. Tiny positive maximum widths therefore avoid the previous
+architecture-dependent overflow/collapse. Normal estimates and the pinned fixture
+remain unchanged. This remains a fallback estimate, not a new shaping engine;
+callers provide bounded evaluated symbols and readiness snapshots, and the selector
+retains finite visible-box/work validation.
+
+Verification:
+
+- Headless placement coverage remains **100%**, with amd64/386 tests passing.
+  New cases cover explicit readiness, supplied glyph bounds, fallback wrapping,
+  pixel ratios/offsets, map/viewport alignment, raw icon presence, pointer ownership,
+  signed padding/zeros, viewport edges and large fallback estimates.
+- A 20-second projection-to-selection fuzz run completed **1,113,520 executions**
+  without failure. Full v4 module tests, v1 vecmap/placement integration-race checks,
+  targeted staticcheck and application build pass; gopls reports no build errors.
+- Expanded, direct-indexed and post-indexed v1 captures are each byte-for-byte
+  identical to their references: 45 draws, 62 labels, complete fonts and unchanged
+  geometry/texture data. GPU algorithms and generated adapters are unaffected.
+- All new production projection functions are below the complexity threshold of
+  11. Existing generated ST1006 and GO-2026-5024 baseline findings remain unresolved.
+
+Separate v4 binaries from before/after extraction ran in before/after/after/before
+order, using identical pinned inputs, GOMAXPROCS 16 and two-second direct-fixture
+samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before projection extraction | 33.54 / 32.97 ms | 90,781,183 / 90,780,938 | 102,313 / 102,312 |
+| After projection extraction | 32.97 / 32.99 ms | 90,781,688 / 90,780,921 | 102,315 / 102,312 |
+
+Both remain about **90.78 MB/op**, with the same allocation-count range and similar
+preparation times. This supports preserving cost rather than a speedup claim.
+The benchmark excludes I/O, JSON and GPU work and does not establish rendering
+parity. The remaining CPU boundaries include text eligibility/fallback policy,
+atlas-dependent quads, asset preparation and scene compilation, followed by
+bounded live updates and matched-quality MapLibre validation.
 
 ## Flatpak integration
 

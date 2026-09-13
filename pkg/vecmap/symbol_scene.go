@@ -4,10 +4,10 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	quick "github.com/rubiojr/whereami/internal/miqtquick"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
+	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
 
 const (
@@ -70,21 +70,15 @@ func acceptedLibertySymbols(
 			for index := len(tile.roads.symbols) - 1; index >= 0; index-- {
 				candidate := &tile.roads.symbols[index]
 				layout := sdfLayouts[libertySDFLayoutKey{tile: tile.id, index: index}]
-				textBox, textPresent, textVisible, iconBox, iconPresent, iconVisible := libertyCandidateCollisionBoxes(
-					transform,
-					*candidate,
-					layout,
-					camera.Width,
-					camera.Height,
-				)
-				if !textVisible && !iconVisible {
+				projected := projectLibertySymbol(transform, candidate, layout, camera.Width, camera.Height)
+				if !projected.Text.Visible && !projected.Icon.Visible {
 					continue
 				}
 				references = append(references, libertySymbolReference{
 					Key:   libertySymbolKey{tile: tile.id, wrap: wrap, index: index},
 					Order: candidate.order, SortKey: candidate.sortKey,
-					Text: coreCollisionPart(textBox, textPresent, textVisible, candidate.textAllowsOverlap, candidate.textOptional),
-					Icon: coreCollisionPart(iconBox, iconPresent, iconVisible, candidate.iconAllowsOverlap, candidate.iconOptional),
+					Text: projected.Text,
+					Icon: projected.Icon,
 				})
 				if len(references) >= maxViewportSymbolReferences {
 					break
@@ -106,13 +100,6 @@ func acceptedLibertySymbols(
 	return accepted
 }
 
-func coreCollisionPart(box libertyCollisionBox, present, visible, overlap, optional bool) placement.CollisionPart {
-	return placement.CollisionPart{
-		Box:     placement.Box{Left: box.left, Top: box.top, Right: box.right, Bottom: box.bottom},
-		Present: present, Visible: visible, AllowsOverlap: overlap, Optional: optional,
-	}
-}
-
 func sameLibertyAcceptedSymbols(first, second map[libertySymbolKey]libertyAcceptedSymbol) bool {
 	if len(first) != len(second) {
 		return false
@@ -132,116 +119,34 @@ func libertyCandidateCollisionBoxes(
 	sdfLayout *sdfTextLayout,
 	viewportWidth, viewportHeight float64,
 ) (libertyCollisionBox, bool, bool, libertyCollisionBox, bool, bool) {
-	anchor := transform.mapPoint(candidate.anchor)
-	textBox := libertyCollisionBox{}
-	textPresent := candidate.text != "" && candidate.textColor.Alpha > 0
-	textVisible := false
-	if textPresent && libertyTextRenderable(candidate.text, sdfLayout) {
-		offsetX := candidate.textOffset.X * candidate.textSize
-		offsetY := candidate.textOffset.Y * candidate.textSize
-		if sdfLayout != nil {
-			textBox = libertyRotatedCollisionBox(
-				roadPoint{X: anchor.X + offsetX, Y: anchor.Y + offsetY},
-				sdfLayout.bounds,
-				libertyScreenSymbolAngle(transform, candidate.lineAngle, candidate.textRotate, candidate.viewportAligned),
-				candidate.textPadding,
-			)
-		} else {
-			lineCount := max(1, strings.Count(candidate.text, "\n")+1)
-			characterCount := max(1, utf8.RuneCountInString(candidate.text))
-			textWidth := float64(characterCount) * candidate.textSize * (0.58 + candidate.letterSpacing)
-			maximumWidth := candidate.maximumWidth * candidate.textSize
-			if maximumWidth > 0 && textWidth > maximumWidth {
-				lineCount = max(lineCount, int(math.Ceil(textWidth/maximumWidth)))
-				textWidth = maximumWidth
-			}
-			haloExtent := candidate.haloWidth + candidate.haloBlur
-			textWidth += 2 * haloExtent
-			textHeight := float64(lineCount)*candidate.textSize*candidate.lineHeight + 2*haloExtent
-			x, y := libertyAnchoredOrigin(candidate.textAnchor, textWidth, textHeight)
-			textBox = libertyRotatedCollisionBox(
-				roadPoint{X: anchor.X + offsetX, Y: anchor.Y + offsetY},
-				libertyCollisionBox{left: x, top: y, right: x + textWidth, bottom: y + textHeight},
-				libertyScreenSymbolAngle(transform, candidate.lineAngle, candidate.textRotate, candidate.viewportAligned),
-				candidate.textPadding,
-			)
-		}
-		textVisible = libertyCollisionBoxVisible(textBox, viewportWidth, viewportHeight)
+	projected := projectLibertySymbol(transform, &candidate, sdfLayout, viewportWidth, viewportHeight)
+	return legacyCollisionBox(projected.Text.Box), projected.Text.Present, projected.Text.Visible,
+		legacyCollisionBox(projected.Icon.Box), projected.Icon.Present, projected.Icon.Visible
+}
+
+func projectLibertySymbol(transform affineTransform, candidate *libertySymbolCandidate, sdfLayout *sdfTextLayout, width, height float64) placement.ProjectedSymbol {
+	context := placement.ProjectionContext{Transform: view.Affine(transform), Width: width, Height: height,
+		TextReady: candidate.text != "" && candidate.textColor.Alpha > 0 && libertyTextRenderable(candidate.text, sdfLayout)}
+	var bounds placement.Box
+	if sdfLayout != nil {
+		bounds = placement.Box{Left: sdfLayout.bounds.left, Top: sdfLayout.bounds.top, Right: sdfLayout.bounds.right, Bottom: sdfLayout.bounds.bottom}
+		context.TextBounds = &bounds
 	}
-	iconBox := libertyCollisionBox{}
-	iconPresent := false
-	iconVisible := false
+	var sprite placement.SpriteMetrics
 	if candidate.iconName != "" {
 		if err := loadLibertySprites(); err == nil {
 			if entry, exists := libertySpriteIndex[candidate.iconName]; exists && entry.PixelRatio > 0 {
-				iconPresent = true
-				iconWidth := float64(entry.Width) / entry.PixelRatio * candidate.iconSize
-				iconHeight := float64(entry.Height) / entry.PixelRatio * candidate.iconSize
-				x, y := libertyAnchoredOrigin(candidate.iconAnchor, iconWidth, iconHeight)
-				offsetX := candidate.iconOffset.X * candidate.iconSize
-				offsetY := candidate.iconOffset.Y * candidate.iconSize
-				iconBox = libertyRotatedCollisionBox(
-					roadPoint{
-						X: anchor.X + offsetX,
-						Y: anchor.Y + offsetY,
-					},
-					libertyCollisionBox{left: x, top: y, right: x + iconWidth, bottom: y + iconHeight},
-					libertyScreenSymbolAngle(transform, candidate.iconLineAngle, candidate.iconRotate, candidate.iconViewportAligned),
-					candidate.iconPadding,
-				)
-				iconVisible = libertyCollisionBoxVisible(iconBox, viewportWidth, viewportHeight)
+				sprite = placement.SpriteMetrics{Width: entry.Width, Height: entry.Height, PixelRatio: entry.PixelRatio}
+				context.Sprite = &sprite
 			}
 		}
 	}
-	return textBox, textPresent, textVisible, iconBox, iconPresent, iconVisible
+	symbol := projectionSymbol(candidate)
+	return placement.ProjectSymbol(&symbol, context)
 }
 
-func libertyScreenSymbolAngle(transform affineTransform, lineAngle, rotate float64, viewportAligned bool) float64 {
-	localAngle := libertyRenderedSymbolAngle(lineAngle, rotate, viewportAligned)
-	if viewportAligned {
-		return localAngle
-	}
-	directionX := transform.M11*math.Cos(localAngle) + transform.M12*math.Sin(localAngle)
-	directionY := transform.M21*math.Cos(localAngle) + transform.M22*math.Sin(localAngle)
-	return math.Atan2(directionY, directionX)
-}
-
-func libertyRotatedCollisionBox(origin roadPoint, box libertyCollisionBox, angle, padding float64) libertyCollisionBox {
-	cosAngle := math.Cos(angle)
-	sinAngle := math.Sin(angle)
-	result := libertyCollisionBox{
-		left:   math.Inf(1),
-		top:    math.Inf(1),
-		right:  math.Inf(-1),
-		bottom: math.Inf(-1),
-	}
-	for _, point := range [...]roadPoint{
-		{X: box.left, Y: box.top},
-		{X: box.right, Y: box.top},
-		{X: box.right, Y: box.bottom},
-		{X: box.left, Y: box.bottom},
-	} {
-		x := origin.X + point.X*cosAngle - point.Y*sinAngle
-		y := origin.Y + point.X*sinAngle + point.Y*cosAngle
-		result.left = min(result.left, x)
-		result.top = min(result.top, y)
-		result.right = max(result.right, x)
-		result.bottom = max(result.bottom, y)
-	}
-	return libertyPaddedCollisionBox(result.left, result.top, result.right, result.bottom, padding)
-}
-
-func libertyPaddedCollisionBox(left, top, right, bottom, padding float64) libertyCollisionBox {
-	return libertyCollisionBox{
-		left:   left - padding,
-		top:    top - padding,
-		right:  right + padding,
-		bottom: bottom + padding,
-	}
-}
-
-func libertyCollisionBoxVisible(box libertyCollisionBox, viewportWidth, viewportHeight float64) bool {
-	return box.right >= 0 && box.bottom >= 0 && box.left <= viewportWidth && box.top <= viewportHeight
+func legacyCollisionBox(box placement.Box) libertyCollisionBox {
+	return libertyCollisionBox{left: box.Left, top: box.Top, right: box.Right, bottom: box.Bottom}
 }
 
 func newLibertySymbolLayerTileNode(
@@ -439,10 +344,7 @@ func newLibertyCounterTransform(
 }
 
 func libertyRenderedSymbolAngle(lineAngle, rotate float64, viewportAlign bool) float64 {
-	if viewportAlign {
-		return rotate
-	}
-	return lineAngle + rotate
+	return placement.RenderedSymbolAngle(lineAngle, rotate, viewportAlign)
 }
 
 func setLibertyCounterTransform(
@@ -484,19 +386,7 @@ func setLibertyCounterTransform(
 }
 
 func libertyAnchoredOrigin(anchor string, width, height float64) (float64, float64) {
-	x := -width / 2
-	y := -height / 2
-	if strings.Contains(anchor, "left") {
-		x = 0
-	} else if strings.Contains(anchor, "right") {
-		x = -width
-	}
-	if strings.Contains(anchor, "top") {
-		y = 0
-	} else if strings.Contains(anchor, "bottom") {
-		y = -height
-	}
-	return x, y
+	return placement.AnchoredOrigin(anchor, width, height)
 }
 
 func libertyTextAnchors(anchor string) (quick.TextAnchor, quick.TextAnchor) {

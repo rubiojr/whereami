@@ -88,6 +88,24 @@ func legacySymbol(s placement.Symbol) libertySymbolCandidate {
 	}
 }
 
+// Project only the fields needed by the shared box preparer. This value adapter
+// copies no backing data and can disappear when retained scenes use Symbol directly.
+func projectionSymbol(c *libertySymbolCandidate) placement.Symbol {
+	return placement.Symbol{
+		Anchor: c.anchor, LineAngle: c.lineAngle, IconLineAngle: c.iconLineAngle,
+		ViewportAligned: c.viewportAligned, IconViewportAligned: c.iconViewportAligned,
+		TextAllowsOverlap: c.textAllowsOverlap, IconAllowsOverlap: c.iconAllowsOverlap,
+		TextOptional: c.textOptional, IconOptional: c.iconOptional,
+		TextPadding: c.textPadding, IconPadding: c.iconPadding,
+		Text: c.text, TextSize: c.textSize, TextColor: c.textColor,
+		HaloWidth: c.haloWidth, HaloBlur: c.haloBlur, LetterSpacing: c.letterSpacing,
+		LineHeight: c.lineHeight, MaximumWidth: c.maximumWidth, TextAnchor: c.textAnchor,
+		TextOffset: c.textOffset, TextRotate: c.textRotate,
+		IconName: c.iconName, IconSize: c.iconSize, IconAnchor: c.iconAnchor,
+		IconOffset: c.iconOffset, IconRotate: c.iconRotate,
+	}
+}
+
 func libertySymbolSpacing(screenPixels float64, tileZoom uint32, styleZoom float64) float64 {
 	return placement.SymbolSpacing(screenPixels, tileZoom, styleZoom)
 }

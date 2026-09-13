@@ -1,6 +1,6 @@
 # placement
 
-Toolkit-neutral symbol-candidate preparation and collision selection extracted
+Toolkit-neutral symbol-candidate preparation, projected boxes and collision selection extracted
 from vecmap. It reuses
 existing text/token handling, style defaults, feature-anchor selection, line
 interpolation, angle and polygon-centroid algorithms, using shared MVT/style/Go
@@ -95,8 +95,52 @@ previous values. These are evaluated candidates, not collision acceptance result
 
 Vecmap's legacy renderer uses a single value adapter at the sink. It allocates no
 intermediate candidate slice and copies no maps/string payloads. Other consumers
-can retain `placement.Symbol` directly. Text eligibility/Qt fallback, projected
-box preparation, atlas-dependent quads and scene compilation remain in vecmap.
+can retain `placement.Symbol` directly. Text eligibility/Qt fallback, sprite
+loading, atlas-dependent quads and scene compilation remain in vecmap.
+
+## Projected text and icon boxes
+
+```go
+projected := placement.ProjectSymbol(&candidate, placement.ProjectionContext{
+    Transform: tileTransform, Width: viewportWidth, Height: viewportHeight,
+    TextReady: textReady, TextBounds: textBounds,
+    Sprite: spriteMetrics,
+})
+// Use projected.Text and projected.Icon in a CollisionReference.
+```
+
+`ProjectSymbol` takes the shared `view.Affine`, an evaluated `Symbol`, explicit text
+readiness and optional metric snapshots. It returns `CollisionPart` values,
+including policy flags, presence, projected boxes and viewport visibility. It
+retains no pointers or string data and performs no loading, shaping or native work.
+
+- Text is present when nonempty with positive color alpha. `TextReady` is explicit
+  caller policy: a bounds pointer alone does not imply readiness. Ready text with
+  bounds uses them directly in logical pixels, including their existing halo.
+  Ready text without bounds uses the previous fallback character/line estimate.
+- Sprite readiness comes from an optional `SpriteMetrics` value (pixel dimensions
+  and pixel ratio). Missing metrics or nonpositive/NaN pixel ratios make the icon
+  absent. Positive ratios retain the original dimension arithmetic, including zero
+  dimensions. Icon collision presence still ignores icon opacity/color alpha.
+- Anchors follow the map transform, while text/icon sizes and offsets remain
+  logical-pixel values. Map-aligned angles use the affine direction transform;
+  viewport alignment ignores the line direction and map rotation. Rotation uses
+  all four box corners before applying signed padding. Edge visibility is inclusive.
+- `RenderedSymbolAngle`, `ScreenSymbolAngle`, `AnchoredOrigin`, `RotatedBox` and
+  `Box.Visible` expose the same pure math for adapters. Anchor substring rules and
+  signed-zero center/edge arithmetic remain unchanged.
+
+The fallback estimate now keeps its wrapped line count in floating point instead
+of converting an arbitrarily large ratio to `int`. This fixes architecture-dependent
+overflow for tiny positive maximum widths without changing normal estimates.
+It remains an estimate, not OpenType shaping or a text-layout validator. Inputs
+are bounded/evaluated symbols and caller-owned transform/metric snapshots;
+`SelectSymbols` supplies finite visible-box and work validation. The projector
+preserves the existing raw arithmetic for unusual paint/metric values.
+
+Vecmap's adapter resolves Qt text eligibility, available SDF bounds and pinned
+sprite metadata, then passes value snapshots to the headless projector. No native
+objects, resource loaders or cache handles enter the shared API.
 
 ## Collision and priority selection
 
@@ -111,7 +155,8 @@ accepted, err := placement.SelectSymbols(references, placement.CollisionOptions{
 `CollisionReference[K]` takes an opaque comparable logical key, layer order, sort
 key, and `CollisionPart` values for text/icon. Each part carries its projected
 logical-pixel `Box`, presence, visibility, overlap and optional flags. Keys should
-be unique/stable. The caller owns projection, glyph/sprite readiness and visibility.
+be unique/stable. The caller supplies projected parts, normally through
+`ProjectSymbol`, and owns glyph/sprite readiness.
 
 Selection uses the existing stable sort: descending layer order, then ascending
 sort key. Ties retain input order. Vecmap retains its original tile/wrap/reverse-
@@ -157,6 +202,8 @@ CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
   -fuzz '^FuzzSymbolText$' -fuzztime=20s
 CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
   -fuzz '^FuzzCollisionSelection$' -fuzztime=20s
+CGO_ENABLED=0 go test ./pkg/vecmap/placement -run '^$' \
+  -fuzz '^FuzzProjectSymbol$' -fuzztime=20s
 ```
 
 Tests cover source-order/fallback selection, ownership, arc-length interpolation,
@@ -166,7 +213,9 @@ Candidate tests also cover complete default/custom text/icon paint, filters,
 text/token rules, font fallback, zoom spacing, caller-owned visibility, budgets,
 sink errors and partial output. Collision tests cover stable ties, optional/overlap
 rules, clipping/cell edges, an independent brute-force text-selection comparison,
-invalid inputs, bounds and atomic work exhaustion. Headless coverage is **100%**.
-See kata **zxys**, **0yzm**, **h3nq** and
+invalid inputs, bounds and atomic work exhaustion. Projection tests cover readiness,
+glyph/fallback bounds, pixel-ratio/offset arithmetic, map/viewport alignment,
+ownership, signed padding/zeros and 32-bit fallback estimates. Headless coverage
+is **100%**. See kata **zxys**, **0yzm**, **h3nq**, **madt** and
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full-capture equality and
 controlled preparation measurements.

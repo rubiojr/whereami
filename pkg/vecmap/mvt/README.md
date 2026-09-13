@@ -81,9 +81,9 @@ conversion slices/maps. Its legacy fallback work and reporting remain interleave
 with layer preparation as before. Document/layer preparation and expression
 evaluation now live in the headless `style` package. The `glyph` package owns
 text layout and atlas preparation; `placement` owns anchors and evaluated symbol
-candidates plus collision/priority decisions. Projected box preparation and scene
-compilation remain in the Qt-bound parent package. The offline fixture command is
-therefore still Qt-bound.
+candidates, projected boxes and collision/priority decisions. Resource readiness
+policy and scene compilation remain in the Qt-bound parent package. The offline
+fixture command is therefore still Qt-bound.
 
 ## Verification
 
