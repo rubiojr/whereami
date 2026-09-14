@@ -147,46 +147,16 @@ func sameSDFGlyphKeys(first, second map[sdfGlyphKey]struct{}) bool {
 }
 
 func sdfAtlasNeedsRebuild(atlas *sdfGlyphAtlas, glyphs map[sdfGlyphKey]sdfGlyph) bool {
-	if len(glyphs) == 0 {
-		return false
-	}
-	if atlas == nil {
-		return true
-	}
-	for key := range glyphs {
-		if _, exists := atlas.Positions[key]; !exists {
-			return true
-		}
-	}
-	return false
+	return glyph.AtlasNeedsRebuild(atlas, glyphs)
 }
 
 func buildRetainedSDFAtlas(
 	current map[sdfGlyphKey]sdfGlyph,
 	retained map[sdfGlyphKey]sdfGlyph,
 ) (*sdfGlyphAtlas, map[sdfGlyphKey]sdfGlyph) {
-	currentAtlas := buildSDFAtlas(current)
-	if currentAtlas == nil {
-		return nil, nil
-	}
-	merged := make(map[sdfGlyphKey]sdfGlyph, len(current)+len(retained))
-	for key, glyph := range retained {
-		merged[key] = glyph
-	}
-	for key, glyph := range current {
-		merged[key] = glyph
-	}
-	atlas := buildSDFAtlas(merged)
-	if atlas == nil || atlas.Width > currentAtlas.Width || sdfAtlasNeedsRebuild(atlas, current) {
-		merged = current
-		atlas = currentAtlas
-	}
-	resident := make(map[sdfGlyphKey]sdfGlyph, len(atlas.Positions))
-	for key := range atlas.Positions {
-		if glyph, exists := merged[key]; exists {
-			resident[key] = glyph
-		}
-	}
+	// Validated font ranges are normal inputs. Preserve the adapter's nil-atlas
+	// degradation on invalid current data; headless callers can inspect the error.
+	atlas, resident, _ := glyph.BuildRetainedAtlas(current, retained)
 	return atlas, resident
 }
 

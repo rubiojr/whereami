@@ -69,9 +69,44 @@ and logical font/glyph keys, not native graphics resources.
 
 Vecmap aliases the shared glyph/range/key/rectangle/atlas data without conversion
 maps or bitmap copies. Its manager still owns loading, cancellation, retries,
-cache paths, immutable merged font snapshots and retained-atlas policy. Qt fallback
+cache paths, immutable merged font snapshots and retained-state scheduling. Qt fallback
 and scene compilation remain caller-owned; collision/placement use the shared
 `placement` package. No new shaping engine is introduced.
+
+## Retained atlas selection
+
+`BuildRetainedAtlas(current, retained)` exposes the existing selection policy as
+an explicit, stateless operation. It first builds the current-only atlas, then
+packs a merge where current glyphs override old values with the same key. The
+merged result is used only if it fits at the current-only size and covers every
+current key. Otherwise it returns current-only packing. Optional old glyphs never
+cause atlas growth. Scheduling and stored retained state remain caller-owned.
+
+The returned resident map contains exactly the selected atlas's positions. The
+map and atlas buffers are owned; glyph metrics are copied, while immutable glyph
+bitmaps are borrowed. Inputs are not mutated or retained as maps. The existing
+two packing passes remain; this extraction adds no bitmap copies or dependencies.
+Input cardinality, map merging and sorting work remain caller-bounded, as with
+`BuildAtlas`; atlas pixels retain the 2048-square ceiling.
+
+Invalid current data returns nil outputs and an error. Empty/bitmap-free current
+data returns nil outputs without inspecting optional retained data. Invalid old
+data in the merged candidate causes current-only fallback, preserving the previous
+degradation policy. A current-only atlas may itself be partial: this function does
+not guarantee complete labels. Continue using `FitsAtlas` before mesh publication.
+
+`AtlasNeedsRebuild` checks key coverage only, not changed metrics or pixels. Empty
+requirements return false even for a nil atlas. Every supplied key is checked,
+including bitmap-free entries; callers normally pass drawable layout glyphs.
+Bitmap-free current entries therefore force current-only fallback when mixed with
+drawable entries. This preserves the original behavior rather than silently
+changing the completeness test.
+
+Headless retained-atlas tests cover current-wins merging, owned maps/pixels versus
+borrowed bitmaps, optional growth, same-size displacement at the maximum atlas,
+partial current-only output, empty inputs and invalid-current/optional-old behavior.
+New functions have 100% coverage; overall glyph coverage is now **99.8%**, with
+the same unreachable atlas-loop return uncovered. Tracked by kata **d22h**.
 
 ## Text layout
 

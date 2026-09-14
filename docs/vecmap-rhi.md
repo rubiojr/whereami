@@ -1291,6 +1291,53 @@ work and do not establish MapLibre parity. Next boundaries are shared symbol/lay
 orchestration and final scene packing toward a headless fixture producer, followed
 by bounded live updates and matched-quality rendering/presentation gates.
 
+### Headless retained glyph atlas selection
+
+Committed tile orchestration as `8eabfae`, then continued with kata **d22h**.
+`glyph.BuildRetainedAtlas` now implements the current-only versus merged-retained
+selection policy; `AtlasNeedsRebuild` exposes the existing key coverage check.
+Current glyphs override old values. Optional prior glyphs are kept only if the
+merged atlas does not grow and retains every current key. Otherwise preparation
+falls back to the current-only atlas, including its deterministic partial-prefix
+behavior at maximum size. Complete label coverage still requires `FitsAtlas`.
+
+Inputs and bitmap data are not copied unnecessarily. The atlas and resident map
+are owned; resident metrics are value copies and bitmap slices are immutable
+borrows. Invalid current input returns an error with nil outputs; invalid optional
+retained input causes current-only fallback. Empty/bitmap-free current input
+returns nil without examining retained data. The parent preserves nil-atlas
+degradation for invalid current data and still owns scheduling/retained state.
+The two original packing passes, caller-bounded input/merge/sort work and 2048-square
+pixel bound remain. Key coverage is not a metric/pixel revision check.
+
+Verification:
+
+- New functions have **100% coverage**, overall glyph coverage **99.8%**. Tests
+  cover current-wins merging, ownership/borrowing, empty/invalid inputs, optional
+  growth, same-size displacement, partial current output and bitmap-free keys.
+  Headless amd64/386 tests pass.
+- Full v4 module coverage tests, v1 parent/glyph integration-race checks, targeted
+  staticcheck and application build pass; gopls reports no build errors. New
+  functions are at most 10 in complexity review. Existing generated ST1006 and
+  the recorded GO-2026-5024 baseline remain unresolved.
+- All three v1 fixture captures remain byte-identical: 45 draws, 62 labels,
+  complete fonts and unchanged geometry/textures. This is CPU compatibility
+  evidence, not a new GPU or live-presentation measurement.
+
+Separate v4 binaries ran before/after/after/before with identical pinned inputs,
+GOMAXPROCS 16 and two-second direct-fixture preparation samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before retained atlas extraction | 29.08 / 29.27 ms | 90,780,980 / 90,780,962 | 102,313 / 102,313 |
+| After retained atlas extraction | 29.42 / 29.87 ms | 90,782,120 / 90,781,926 | 102,315 / 102,315 |
+
+Allocation volume remains about **90.78 MB/op**. The slightly slower after samples
+are retained; no speedup is established. Measurements exclude I/O, JSON and GPU
+work. Shared layout-map orchestration and scene packing remain the next boundaries
+toward a headless fixture producer; live scheduling and MapLibre parity gates stay
+open.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and
