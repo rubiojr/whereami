@@ -39,6 +39,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
 - `pkg/vecmap/sprite`: bounded sprite JSON/PNG decoding, straight-alpha atlas
   conversion and crop/tint/opacity preparation. Embedded assets, once/cache policy
   and native uploads remain caller-owned.
+- `pkg/vecmap/compiler`: evaluated fill/extrusion/pattern/outline and line/gap
+  batching and geometry preparation, using shared MVT/style data and geometry.
+  Tile-wide publication, symbol orchestration and scene packing remain in vecmap.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -59,7 +62,8 @@ resources. Older affine-only captures remain readable.
 
 The fixture producer reuses the existing compiler and the extracted headless MVT
 preparation, style compiler, glyph/sprite atlas preparation, text layout and symbol
-candidates, projected boxes and collision selection. Resource readiness policy and scene compilation
+candidates, projected boxes, collision selection and fill/line layer compilation.
+Resource readiness policy and scene compilation
 still live in the Qt-bound
 `pkg/vecmap` package. Extracting that remaining CPU work is
 tracked by the umbrella issue. The scene consumer already builds independently
@@ -1173,6 +1177,60 @@ policy pays this at initial loading, not each tile preparation. All timing sampl
 are retained; neither benchmark measures GPU work, presentation or MapLibre parity.
 Scene compilation and asset/layout orchestration remain the next CPU boundary
 before a fully headless fixture producer and bounded live updates.
+
+### Headless fill and line layer compilation
+
+Committed glyph meshes and sprites as `8b797b1`, then continued with kata **zfjf**.
+`compiler.CompileFill` and `CompileLine` now evaluate paint and batch shared MVT
+features before calling the existing topology builder and line tessellator.
+The parent passes source slices directly and attaches layer identity in synchronous
+sinks, without conversion slices/maps or another preparation pass.
+
+Solid/pattern/outline ordering, first-seen batch order, extrusion-as-flat-fill,
+outline opacity, gap offsets, screen-to-tile scale, ring closure and triangle order
+are preserved. Line keys keep their nine-digit width/offset precision and full
+dash strings. The dash-array helper intentionally rejects negative components,
+unlike the general style number-array helper. Layer visibility/source selection,
+tile-wide triangle accounting and atomic primitive publication stay caller-owned.
+
+The shared options reject invalid derived scales, out-of-range triangle limits and
+nil sinks. A caller can lower the existing 2,000,000-triangle **per-batch** bound;
+zero selects that default. Aggregate work/memory still relies on bounded MVT data,
+application-owned styles and the caller's tile budget. Earlier successful sink
+calls remain accepted on a later error, including an outline failure after valid
+fills. Geometry errors retain the existing MVT feature-resource identity.
+
+Verification:
+
+- Headless compiler coverage is **100%**, with amd64/386 tests passing. Tests cover
+  paint/defaults, ordering, patterns, outlines/holes, extrusion, gaps/dashes, key
+  precision, ownership, lowered limits and streaming errors. Pinned-tile tests
+  compare every expanded/indexed coordinate bit at zooms **10 and 10.5**.
+- A twenty-second headless fuzz run completed **1,109,914 executions** without
+  failure. Full v4 module coverage tests, v1 parent/compiler integration-race tests,
+  targeted staticcheck, application build and gopls build diagnostics pass.
+- All three regenerated v1 captures are byte-for-byte identical to the original
+  references: 45 draws, 62 labels, complete fonts and unchanged geometry/textures.
+  GPU algorithms and generated bindings are unaffected.
+- Complexity review retains the existing explicit fill grouping loop (24, down
+  from 26) and line grouping (13, down from 16); helpers are at most 10. Splitting
+  fill accumulation by batch kind is a possible focused follow-up. Unused legacy
+  paint fields and value adapters exposed by extraction were removed. The generated
+  ST1006 warnings and earlier GO-2026-5024 vulnerability baseline remain unresolved.
+
+Separate before/after v4 binaries ran with identical pinned inputs, GOMAXPROCS 16
+and two-second direct-fixture samples in before/after/after/before order:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before layer compiler extraction | 30.51 / 28.93 ms | 90,781,657 / 90,780,584 | 102,315 / 102,312 |
+| After layer compiler extraction | 29.47 / 29.96 ms | 90,780,495 / 90,782,236 | 102,311 / 102,317 |
+
+Both allocate about **90.78 MB/op**, with overlapping preparation times. This
+supports comparable cost, not a speedup or MapLibre parity claim. The benchmark
+excludes I/O, JSON and GPU work. Tile-wide compilation/retained primitive data,
+asset/layout orchestration and final scene packing remain the next headless
+boundaries before live scheduler/upload work and matched-quality rendering gates.
 
 ## Flatpak integration
 

@@ -104,8 +104,9 @@ ingestion policy; its caller owns style size/validation and scheduling.
 
 Glyph decoding, atlas packing, SDF eligibility, text layout and meshes now live in the headless `glyph`
 package. Evaluated symbol candidates and collision decisions now live in
-`placement`, including projected boxes. Resource readiness policy and scene
-compilation are still parent-bound.
+`placement`, including projected boxes. Fill/line evaluation and geometry batching
+live in `compiler`. Resource readiness policy, tile orchestration and scene packing
+are still parent-bound.
 No renderer/scheduler migration is involved.
 
 ## Verification and performance

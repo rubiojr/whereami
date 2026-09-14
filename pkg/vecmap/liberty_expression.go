@@ -17,5 +17,3 @@ func evaluateLibertyExpression(expression any, evaluation libertyEvaluation) (an
 func (e libertyEvaluation) context() style.Context {
 	return style.Context{Zoom: e.zoom, GeometryType: e.geometryID, Properties: e.properties}
 }
-
-func libertyNumber(value any) (float64, bool) { return style.Number(value) }
