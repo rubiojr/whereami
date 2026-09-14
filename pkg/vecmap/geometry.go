@@ -1,6 +1,7 @@
 package vecmap
 
 import (
+	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
@@ -72,10 +73,7 @@ func segmentPoints(segments []roadSegment) []roadPoint {
 }
 
 func backgroundTriangles() []roadPoint {
-	return []roadPoint{
-		{X: 0, Y: 0}, {X: tileSize, Y: 0}, {X: tileSize, Y: tileSize},
-		{X: 0, Y: 0}, {X: tileSize, Y: tileSize}, {X: 0, Y: tileSize},
-	}
+	return compiler.BackgroundGeometry(false).Vertices
 }
 
 func libertyWorldWraps(camera Camera) []int {

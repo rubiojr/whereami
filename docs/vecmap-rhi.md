@@ -40,8 +40,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   conversion and crop/tint/opacity preparation. Embedded assets, once/cache policy
   and native uploads remain caller-owned.
 - `pkg/vecmap/compiler`: evaluated fill/extrusion/pattern/outline and line/gap
-  batching and geometry preparation, using shared MVT/style data and geometry.
-  Tile-wide publication, symbol orchestration and scene packing remain in vecmap.
+  batching and geometry preparation, visible tile-layer traversal, background
+  meshes, shared primitive values and aggregate triangle accounting. Symbol
+  storage, atomic publication and scene packing remain caller-owned.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -1231,6 +1232,64 @@ supports comparable cost, not a speedup or MapLibre parity claim. The benchmark
 excludes I/O, JSON and GPU work. Tile-wide compilation/retained primitive data,
 asset/layout orchestration and final scene packing remain the next headless
 boundaries before live scheduler/upload work and matched-quality rendering gates.
+
+### Headless tile geometry orchestration
+
+Committed layer compilation as `8f7ece7`, then continued with kata **fzr1**.
+`compiler.CompileTile` now owns visible-layer traversal, background paint/geometry,
+shared `Primitive` values and aggregate rendered-triangle accounting. It calls the
+existing headless fill/line compilers and dispatches visible symbol layers through
+an optional synchronous callback in their original position. The parent retains
+symbol storage/budgets and stages its primitive slice until the whole call succeeds.
+
+A value adapter shares mesh slices and immutable names directly, without another
+primitive slice or geometry pass. Shared consumers can retain `Primitive` directly;
+the legacy renderer still uses its own small record. `BackgroundGeometry` serves
+both the tile compiler and existing fallback background with the same 256-unit
+rectangle, diagonal and expanded/indexed triangle order.
+
+The existing 2,000,000-triangle tile cap now lives in the shared compiler. A lower
+`TriangleLimit` applies both per batch and across emitted tile geometry. Empty
+meshes, zero-alpha solids and missing-name/nonpositive-opacity patterns are filtered
+before counting. Indexed output counts indices, expanded output counts vertices;
+symbol meshes remain separately budgeted. This is an emitted-geometry bound, not
+a total scratch-memory/expression-work budget. MVT/style/caller input contracts
+remain required. Invalid options reject before traversal, including empty jobs.
+
+Callbacks retain earlier successful effects on later errors. The parent keeps its
+existing atomic primitive publication and partial-symbol behavior; a new regression
+checks that malformed later geometry publishes neither old primitives nor an
+earlier valid background. Error text is compiler-neutral while the resource-error
+identity is preserved. Renderer/scheduler and generated bindings are unaffected.
+
+Verification:
+
+- Headless compiler coverage remains **100%**, including every new assembly and
+  background function. amd64/386 tests cover mixed-layer ordering/visibility,
+  background paint/topology/ownership, budgets across batch kinds and layers,
+  filtering, malformed triangles, nil callbacks and streaming failures.
+- Full v4 module coverage tests, v1 parent/compiler integration-race checks,
+  targeted staticcheck and application build pass; gopls reports no new build
+  errors. Repository-wide staticcheck retains the generated ST1006 baseline;
+  the previously recorded GO-2026-5024 finding remains unresolved.
+- All three regenerated v1 captures are byte-identical to the original references:
+  45 draws, 62 labels, complete fonts and unchanged geometry/texture bytes.
+- New production functions are all at most 10 in complexity review. This is CPU
+  output verification, not a new GPU or presentation measurement.
+
+Separate v4 before/after test binaries used identical pinned tile/glyph inputs,
+GOMAXPROCS 16 and two-second direct-fixture samples, before/after/after/before:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before tile assembly extraction | 29.30 / 30.70 ms | 90,780,937 / 90,781,787 | 102,313 / 102,315 |
+| After tile assembly extraction | 30.35 / 30.40 ms | 90,782,025 / 90,781,602 | 102,316 / 102,315 |
+
+Allocation volume remains about **90.78 MB/op** and timing ranges overlap; no
+speedup is established. All samples are retained. These exclude I/O, JSON and GPU
+work and do not establish MapLibre parity. Next boundaries are shared symbol/layout
+orchestration and final scene packing toward a headless fixture producer, followed
+by bounded live updates and matched-quality rendering/presentation gates.
 
 ## Flatpak integration
 

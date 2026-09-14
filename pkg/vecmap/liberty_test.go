@@ -229,6 +229,22 @@ func TestCompileLibertyPatternFill(t *testing.T) {
 	assert.True(t, found)
 }
 
+func TestCompileLibertyTileDoesNotPublishFailedGeometry(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		bucket := &tileBucket{
+			tile: vectorTileID{Z: 12}, compiled: true,
+			liberty: []libertyRenderPrimitive{{layerID: "old"}},
+			sourceLayers: map[string][]vectorFeature{"landcover": {{
+				GeometryType: mvtPolygonType, Properties: featureProperties{"class": "wetland"},
+				Polygons: []vectorPolygon{{Vertices: []roadPoint{{}, {}, {}}, Indices: []uint32{0, 1, 3}}},
+			}}},
+		}
+		assert.ErrorIs(t, compileLibertyTileGeometry(bucket, 12, indexed), errFeatureResourceLimit)
+		assert.False(t, bucket.compiled)
+		assert.Nil(t, bucket.liberty, "earlier background geometry must not be published")
+	}
+}
+
 func TestValidateNaturalEarthRaster(t *testing.T) {
 	imageData := image.NewRGBA(image.Rect(0, 0, int(tileSize), int(tileSize)))
 	imageData.SetRGBA(0, 0, color.RGBA{R: 1, G: 2, B: 3, A: 255})
