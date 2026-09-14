@@ -1,8 +1,11 @@
 package vecmap
 
 import (
+	"math"
 	"strings"
 	"testing"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,6 +66,21 @@ func TestSDFAtlasPreservesGuardsAndProducesQuads(t *testing.T) {
 	assert.Equal(t, float32(-2), vertices[5])
 }
 
+func TestBuildSDFSceneRejectsInvalidQuadGeometry(t *testing.T) {
+	g := testSDFGlyph('A', 2, 2, 0, -2, 4, 90)
+	key := sdfGlyphKey{FontStack: "test", ID: 'A'}
+	atlas := buildSDFAtlas(map[sdfGlyphKey]sdfGlyph{key: g})
+	layout := &sdfTextLayout{glyphs: []sdfPositionedGlyph{{Key: key, Glyph: g, X: math.MaxFloat64}}, scale: 1}
+	for _, indexed := range []bool{false, true} {
+		scene, err := buildSDFSceneGeometry(map[libertySDFLayoutKey]*sdfTextLayout{{}: layout}, atlas, indexed)
+		assert.ErrorIs(t, err, glyph.ErrLayoutGeometry)
+		assert.Nil(t, scene)
+		assert.Nil(t, layout.vertices)
+		assert.Nil(t, layout.indexedVertices)
+		assert.Nil(t, layout.indices)
+	}
+}
+
 func TestSDFTextEligibilityRejectsComplexShaping(t *testing.T) {
 	assert.True(t, sdfTextEligible("Madrid 東京"))
 	assert.False(t, sdfTextEligible("مرحبا"))
@@ -74,6 +92,7 @@ func TestSDFTextEligibilityRejectsComplexShaping(t *testing.T) {
 func TestQtTextFallbackRejectsUnsupportedThaana(t *testing.T) {
 	assert.True(t, qtTextFallbackEligible("مرحبا"))
 	assert.False(t, qtTextFallbackEligible("ދިވެހި"))
+	assert.False(t, qtTextFallbackEligible("\xff"))
 }
 
 func TestSDFTextWaitsForItsLayoutInsteadOfUsingQtFallback(t *testing.T) {
@@ -81,6 +100,7 @@ func TestSDFTextWaitsForItsLayoutInsteadOfUsingQtFallback(t *testing.T) {
 	assert.True(t, libertyTextRenderable("Madrid", &sdfTextLayout{}))
 	assert.True(t, libertyTextRenderable("مرحبا", nil))
 	assert.False(t, libertyTextRenderable("ދިވެހި", nil))
+	assert.False(t, libertyTextRenderable("\xff", nil))
 }
 
 func TestNormalizeSDFTextUsesFetchedSeparators(t *testing.T) {

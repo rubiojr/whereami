@@ -1,15 +1,12 @@
 package vecmap
 
 import (
-	"bytes"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"image"
-	"image/draw"
-	"image/png"
-	"math"
 	"sync"
+
+	"github.com/rubiojr/whereami/pkg/vecmap/sprite"
 )
 
 //go:embed liberty_sprite.json
@@ -23,14 +20,7 @@ const (
 	libertySpritePNGSHA256  = "8996a519d218dc5f98015267709dae272a77bb74ef0ecc5a0992dcf276c1be4c"
 )
 
-type libertySpriteEntry struct {
-	X          int     `json:"x"`
-	Y          int     `json:"y"`
-	Width      int     `json:"width"`
-	Height     int     `json:"height"`
-	PixelRatio float64 `json:"pixelRatio"`
-	SDF        bool    `json:"sdf"`
-}
+type libertySpriteEntry = sprite.Entry
 
 type libertySpriteImage struct {
 	pixels     []byte
@@ -83,18 +73,13 @@ var (
 
 func loadLibertySprites() error {
 	libertySpritesOnce.Do(func() {
-		if err := json.Unmarshal(libertySpriteJSON, &libertySpriteIndex); err != nil {
-			libertySpritesError = fmt.Errorf("decode Liberty sprite index: %w", err)
-			return
-		}
-		decoded, err := png.Decode(bytes.NewReader(libertySpritePNG))
+		atlas, err := sprite.Decode(libertySpriteJSON, libertySpritePNG)
 		if err != nil {
-			libertySpritesError = fmt.Errorf("decode Liberty sprite atlas: %w", err)
+			libertySpritesError = fmt.Errorf("load Liberty sprites: %w", err)
 			return
 		}
-		bounds := decoded.Bounds()
-		libertySpriteAtlas = image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
-		draw.Draw(libertySpriteAtlas, libertySpriteAtlas.Bounds(), decoded, bounds.Min, draw.Src)
+		libertySpriteAtlas = atlas.Pixels
+		libertySpriteIndex = atlas.Entries
 	})
 	return libertySpritesError
 }
@@ -111,34 +96,15 @@ func libertySprite(name string, color mapColor, opacity float64) (libertySpriteI
 	if cached, exists := libertySpriteCache.get(key); exists {
 		return cached, true
 	}
-	atlasWidth := int64(libertySpriteAtlas.Bounds().Dx())
-	atlasHeight := int64(libertySpriteAtlas.Bounds().Dy())
-	if entry.X < 0 || entry.Y < 0 || int64(entry.X)+int64(entry.Width) > atlasWidth ||
-		int64(entry.Y)+int64(entry.Height) > atlasHeight {
+	prepared, ok := sprite.Prepare(libertySpriteAtlas, entry, color, opacity)
+	if !ok {
 		return libertySpriteImage{}, false
 	}
-	pixels := make([]byte, entry.Width*entry.Height*4)
-	alphaScale := max(0, min(1, opacity))
-	for y := range entry.Height {
-		for x := range entry.Width {
-			sourceOffset := (entry.Y+y)*libertySpriteAtlas.Stride + (entry.X+x)*4
-			targetOffset := (y*entry.Width + x) * 4
-			if entry.SDF {
-				pixels[targetOffset] = byte(color.Red)
-				pixels[targetOffset+1] = byte(color.Green)
-				pixels[targetOffset+2] = byte(color.Blue)
-				pixels[targetOffset+3] = byte(math.Round(float64(libertySpriteAtlas.Pix[sourceOffset+3]) * alphaScale * float64(color.Alpha) / 255))
-				continue
-			}
-			copy(pixels[targetOffset:targetOffset+3], libertySpriteAtlas.Pix[sourceOffset:sourceOffset+3])
-			pixels[targetOffset+3] = byte(math.Round(float64(libertySpriteAtlas.Pix[sourceOffset+3]) * alphaScale))
-		}
-	}
 	result := libertySpriteImage{
-		pixels:     pixels,
-		width:      entry.Width,
-		height:     entry.Height,
-		pixelRatio: entry.PixelRatio,
+		pixels:     prepared.Pixels,
+		width:      prepared.Width,
+		height:     prepared.Height,
+		pixelRatio: prepared.PixelRatio,
 	}
 	libertySpriteCache.put(key, result)
 	return result, true

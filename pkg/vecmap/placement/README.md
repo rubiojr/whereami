@@ -95,8 +95,9 @@ previous values. These are evaluated candidates, not collision acceptance result
 
 Vecmap's legacy renderer uses a single value adapter at the sink. It allocates no
 intermediate candidate slice and copies no maps/string payloads. Other consumers
-can retain `placement.Symbol` directly. Text eligibility/Qt fallback, sprite
-loading, atlas-dependent quads and scene compilation remain in vecmap.
+can retain `placement.Symbol` directly. SDF eligibility and atlas-dependent quads
+live in `glyph`; sprite decoding and pixel preparation live in `sprite`. Qt fallback,
+asset loading/cache policy and scene compilation remain in vecmap.
 
 ## Projected text and icon boxes
 

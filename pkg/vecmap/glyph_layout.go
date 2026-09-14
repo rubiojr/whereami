@@ -9,10 +9,7 @@ import (
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
 
-const (
-	maximumSDFSceneLayouts = 10_000
-	sdfAtlasVertexElements = 4
-)
+const maximumSDFSceneLayouts = 10_000
 
 type libertySDFLayoutKey struct {
 	tile  vectorTileID
@@ -96,18 +93,12 @@ func buildSDFSceneGeometry(layouts map[libertySDFLayoutKey]*sdfTextLayout, atlas
 		if !sdfLayoutFitsAtlas(layout, atlas) {
 			continue
 		}
-		layout.vertices, layout.indexedVertices, layout.indices = nil, nil, nil
-		if indexed {
-			mesh := geometry.NewBuilder[geometry.TextVertex](true, len(layout.glyphs)*6)
-			if err := sdfLayoutQuads(layout, atlas, func(quad [4]geometry.TextVertex) error {
-				return mesh.Quad(quad[0], quad[1], quad[2], quad[3])
-			}); err != nil {
-				return nil, err
-			}
-			layout.indexedVertices, layout.indices = mesh.Vertices, mesh.Indices
-		} else {
-			layout.vertices = sdfLayoutVertices(layout, atlas)
+		prepared := glyph.TextLayout{Glyphs: layout.glyphs, Scale: layout.scale}
+		mesh, err := glyph.BuildLayoutMesh(&prepared, atlas, indexed)
+		if err != nil {
+			return nil, err
 		}
+		layout.vertices, layout.indexedVertices, layout.indices = mesh.Expanded, mesh.Vertices, mesh.Indices
 		if len(layout.vertices) == 0 && len(layout.indices) == 0 {
 			continue
 		}
@@ -200,57 +191,19 @@ func buildRetainedSDFAtlas(
 }
 
 func sdfLayoutFitsAtlas(layout *sdfTextLayout, atlas *sdfGlyphAtlas) bool {
-	if layout == nil || atlas == nil {
+	if layout == nil {
 		return false
 	}
-	for _, positioned := range layout.glyphs {
-		if len(positioned.Glyph.Bitmap) == 0 {
-			continue
-		}
-		if _, exists := atlas.Positions[positioned.Key]; !exists {
-			return false
-		}
-	}
-	return true
+	prepared := glyph.TextLayout{Glyphs: layout.glyphs, Scale: layout.scale}
+	return glyph.FitsAtlas(&prepared, atlas)
 }
 
 func sdfTextEligible(text string) bool {
-	if text == "" {
-		return false
-	}
-	runeCount := 0
-	for _, codePoint := range text {
-		runeCount++
-		if runeCount > maximumSymbolTextRunes {
-			return false
-		}
-		if codePoint > rune(maximumGlyphCodePoint) || unicode.Is(unicode.M, codePoint) {
-			return false
-		}
-		if codePoint == '\n' || codePoint == '\r' || unicode.IsSpace(codePoint) || unicode.Is(unicode.Common, codePoint) {
-			continue
-		}
-		if !unicode.In(
-			codePoint,
-			unicode.Latin,
-			unicode.Greek,
-			unicode.Cyrillic,
-			unicode.Armenian,
-			unicode.Georgian,
-			unicode.Han,
-			unicode.Hiragana,
-			unicode.Katakana,
-			unicode.Hangul,
-			unicode.Bopomofo,
-		) {
-			return false
-		}
-	}
-	return true
+	return glyph.TextEligible(text)
 }
 
 func qtTextFallbackEligible(text string) bool {
-	if text == "" || utf8.RuneCountInString(text) > maximumSymbolTextRunes {
+	if text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > maximumSymbolTextRunes {
 		return false
 	}
 	for _, codePoint := range text {
@@ -297,38 +250,10 @@ func buildSDFAtlas(glyphs map[sdfGlyphKey]sdfGlyph) *sdfGlyphAtlas {
 }
 
 func sdfLayoutVertices(layout *sdfTextLayout, atlas *sdfGlyphAtlas) []float32 {
-	if layout == nil || atlas == nil {
+	if layout == nil {
 		return nil
 	}
-	vertices := make([]float32, 0, len(layout.glyphs)*6*sdfAtlasVertexElements)
-	_ = sdfLayoutQuads(layout, atlas, func(quad [4]geometry.TextVertex) error {
-		for _, index := range [...]int{0, 1, 2, 0, 2, 3} {
-			vertex := quad[index]
-			vertices = append(vertices, vertex.X, vertex.Y, vertex.U, vertex.V)
-		}
-		return nil
-	})
-	return vertices
-}
-
-func sdfLayoutQuads(layout *sdfTextLayout, atlas *sdfGlyphAtlas, emit func([4]geometry.TextVertex) error) error {
-	for _, positioned := range layout.glyphs {
-		rectangle, exists := atlas.Positions[positioned.Key]
-		if !exists || len(positioned.Glyph.Bitmap) == 0 {
-			continue
-		}
-		scale := layout.scale
-		x1 := (positioned.X + float64(positioned.Glyph.Left) - glyphAtlasPadding) * scale
-		y1 := (positioned.Y - float64(positioned.Glyph.Top) - glyphAtlasPadding) * scale
-		x2 := x1 + float64(rectangle.Width)*scale
-		y2 := y1 + float64(rectangle.Height)*scale
-		u1 := float64(rectangle.X) / float64(atlas.Width)
-		v1 := float64(rectangle.Y) / float64(atlas.Height)
-		u2 := float64(rectangle.X+rectangle.Width) / float64(atlas.Width)
-		v2 := float64(rectangle.Y+rectangle.Height) / float64(atlas.Height)
-		if err := emit(geometry.TextQuad(x1, y1, x2, y2, u1, v1, u2, v2)); err != nil {
-			return err
-		}
-	}
-	return nil
+	prepared := glyph.TextLayout{Glyphs: layout.glyphs, Scale: layout.scale}
+	mesh, _ := glyph.BuildLayoutMesh(&prepared, atlas, false)
+	return mesh.Expanded
 }

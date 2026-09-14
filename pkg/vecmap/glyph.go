@@ -24,7 +24,6 @@ const (
 	glyphRangeRetryInterval  = 30 * time.Second
 	maximumConcurrentGlyphs  = 4
 	glyphPBFBorder           = glyph.PBFBorder
-	glyphAtlasPadding        = glyph.AtlasPadding
 	openFreeMapGlyphCacheDir = "openfreemap-fonts"
 )
 

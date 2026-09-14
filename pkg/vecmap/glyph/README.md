@@ -1,6 +1,6 @@
 # glyph
 
-Toolkit-neutral SDF glyph-range decoding, atlas preparation and text layout,
+Toolkit-neutral SDF glyph-range decoding, atlas preparation, text layout and meshes,
 extracted from vecmap. It reuses the existing protobuf reader, deterministic shelf
 packer and glyph-metric layout algorithm, adds no production dependency, and
 builds without Qt or cgo.
@@ -69,9 +69,9 @@ and logical font/glyph keys, not native graphics resources.
 
 Vecmap aliases the shared glyph/range/key/rectangle/atlas data without conversion
 maps or bitmap copies. Its manager still owns loading, cancellation, retries,
-cache paths, immutable merged font snapshots and retained-atlas policy. Text
-eligibility and Qt fallback, collision/placement and scene compilation remain
-caller-owned. No new shaping engine is introduced.
+cache paths, immutable merged font snapshots and retained-atlas policy. Qt fallback
+and scene compilation remain caller-owned; collision/placement use the shared
+`placement` package. No new shaping engine is introduced.
 
 ## Text layout
 
@@ -112,8 +112,48 @@ strings are application-owned.
 The returned positioned slice is owned. Metrics are value copies; immutable
 bitmaps are borrowed. The input glyph map is not retained or modified. The parent
 adapter aliases `PositionedGlyph`, shares its slice directly and copies only the
-small bounds value into its collision type. Atlas-dependent quads, packed scene
-vertices and collision decisions remain caller-owned.
+small bounds value into its collision type. Scene packing remains caller-owned.
+
+## Eligibility and atlas-dependent geometry
+
+`TextEligible` exposes the existing SDF script subset: Latin, Greek, Cyrillic,
+Armenian, Georgian, Han, Hiragana, Katakana, Hangul and Bopomofo, plus the existing
+whitespace/Common characters. Combining marks and code points beyond the BMP are
+excluded. It rejects empty/invalid UTF-8 and oversized text. This is a capability
+filter for the metric layout, not a font-availability or OpenType-shaping guarantee.
+The Qt adapter retains its own fallback policy and also rejects invalid UTF-8,
+so invalid bytes cannot switch from SDF rejection into native fallback rendering.
+
+```go
+if !glyph.FitsAtlas(&layout, atlas) {
+    // Wait for complete drawable-glyph coverage before rendering this label.
+    return
+}
+mesh, err := glyph.BuildLayoutMesh(&layout, atlas, true)
+// Handle err. mesh.Vertices and mesh.Indices are owned direct-indexed geometry.
+```
+
+`BuildLayoutMesh` reuses the existing `geometry.TextQuad` and topology builder,
+retaining four-texel padding, normalized UVs, signed zeros and the original
+`0,1,2,0,2,3` triangle order. Indexed mode populates `Vertices` and `Indices`;
+expanded mode populates `Expanded` with packed XYUV float32 triangle vertices.
+Only one representation is populated, avoiding a legacy conversion buffer.
+
+The low-level mesh/emitter APIs skip missing atlas entries and bitmap-free glyphs,
+as before. `FitsAtlas` is the caller's whole-label coverage gate; it checks key
+membership rather than validating geometry. `EmitLayoutQuads` supports custom
+sinks and preserves earlier emissions on a later sink/validation error. In
+contrast, `BuildLayoutMesh` returns an empty mesh on any error. Nil layout/atlas
+inputs produce no geometry. Inputs and callbacks are not retained or mutated;
+returned buffers are owned and immutable after publication.
+
+Validation caps a layout at **256 positioned glyphs** before allocation arithmetic
+(`geometry.ErrGeometryLimit`). Nonempty layouts require a finite nonnegative scale
+and positive atlas dimensions at most **2048** each. Drawable rectangles must fit
+the atlas; origins and remaining extents are checked before integer addition.
+Nonfinite float32 quad output is rejected (`ErrLayoutGeometry`). Rectangle/scale
+validation is independent of atlas pixel buffers, which this code does not read.
+An empty layout needs no usable atlas metadata.
 
 ## Verification
 
@@ -125,6 +165,8 @@ CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
   -fuzz '^FuzzDecodeRange$' -fuzztime=20s
 CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
   -fuzz '^FuzzLayoutText$' -fuzztime=20s
+CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
+  -fuzz '^FuzzLayoutMesh$' -fuzztime=20s
 ```
 
 Tests cover parser limits and exact boundaries, malformed fields, failure after
@@ -133,8 +175,10 @@ signed bearings, deterministic ordering, complete bitmap borders/guards, atlas
 growth, partial packing and 32-bit validation. Local font ranges are optional
 headless fixtures. Layout regressions cover anchors/justification, spacing,
 wrapping, missing/bitmap-free glyphs, bounds/halo arithmetic, ownership, UTF-8,
-limits and nonfinite/overflow rejection. Coverage is **99.7%**, with the new layout
-functions at **100%**; only the atlas growth loop's unreachable final return is
-uncovered. See kata **sp7z**, **hk7t** and
+limits and nonfinite/overflow rejection. Eligibility/mesh regressions cover scripts,
+exact packed/indexed reconstruction, ownership, missing/bitmap-free glyphs, limits,
+atlas coordinates, signed zeros and atomic/streaming failures. Coverage is **99.7%**,
+with layout, eligibility and mesh functions at **100%**; only the atlas growth loop's
+unreachable final return is uncovered. See kata **sp7z**, **hk7t**, **gpwj** and
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full-capture equality and
 controlled before/after preparation measurements.

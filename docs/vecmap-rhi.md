@@ -29,12 +29,16 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   It depends only on the standard library; pinned assets and caching remain
   caller-owned in vecmap.
 - `pkg/vecmap/glyph`: bounded SDF glyph PBF decoding, shared metrics/bitmaps and
-  deterministic atlas packing and glyph-metric text layout. Font I/O/cache/retry,
-  retained-atlas policy, eligibility and placement stay caller-owned.
+  deterministic atlas packing, SDF eligibility, glyph-metric text layout and
+  expanded/direct-indexed glyph meshes. Font I/O/cache/retry, retained-atlas policy
+  and toolkit fallback stay caller-owned.
 - `pkg/vecmap/placement`: feature-anchor selection, line interpolation/repetition,
   upright/raw angles, exterior-ring centroids and streaming evaluated text/icon
   candidates, projected boxes and stable collision/priority/optional-symbol
   selection. Glyph/sprite readiness and fallback policy remain caller-owned.
+- `pkg/vecmap/sprite`: bounded sprite JSON/PNG decoding, straight-alpha atlas
+  conversion and crop/tint/opacity preparation. Embedded assets, once/cache policy
+  and native uploads remain caller-owned.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -54,7 +58,7 @@ The viewer reprojects those through `Document.FrameAt` without replacing scene
 resources. Older affine-only captures remain readable.
 
 The fixture producer reuses the existing compiler and the extracted headless MVT
-preparation, style compiler, glyph/atlas preparation, text layout and symbol
+preparation, style compiler, glyph/sprite atlas preparation, text layout and symbol
 candidates, projected boxes and collision selection. Resource readiness policy and scene compilation
 still live in the Qt-bound
 `pkg/vecmap` package. Extracting that remaining CPU work is
@@ -1053,6 +1057,122 @@ The benchmark excludes I/O, JSON and GPU work and does not establish rendering
 parity. The remaining CPU boundaries include text eligibility/fallback policy,
 atlas-dependent quads, asset preparation and scene compilation, followed by
 bounded live updates and matched-quality MapLibre validation.
+
+### Headless SDF eligibility and glyph meshes
+
+Committed projected boxes as `59d24c0`, then continued with kata **gpwj**.
+`glyph.TextEligible`, `FitsAtlas`, `BuildLayoutMesh` and `EmitLayoutQuads` now own
+the existing SDF script filter, drawable-glyph atlas coverage, quad arithmetic and
+expanded/direct-indexed assembly. They reuse `geometry.TextQuad` and `Builder`;
+the parent passes shared positioned slices and retains scene orchestration and
+Qt-specific fallback policy.
+
+The original padding, normalized UVs, signed zeros and triangle order are preserved.
+`LayoutMesh` carries either packed expanded XYUV floats or direct vertices/indices,
+avoiding another conversion buffer. Missing entries and bitmap-free glyphs are
+skipped by low-level geometry preparation; callers use `FitsAtlas` to require
+complete labels. Mesh errors publish no partial output, while streaming sinks
+retain earlier successful emissions. Parent scene preparation now propagates
+invalid mesh errors before attaching new geometry.
+
+The shared entry point caps positioned glyphs at 256 before capacity arithmetic,
+checks scale/atlas dimensions, validates rectangle extents before integer addition,
+and rejects nonfinite float32 vertices. Atlas pixel bytes are not read. Eligibility
+preserves the existing script/BMP/mark rules and now explicitly rejects invalid
+UTF-8; the Qt fallback adapter also rejects invalid bytes so they cannot bypass
+SDF rejection. This adds no new shaping engine or renderer migration.
+
+Verification:
+
+- Glyph coverage remains **99.7%**, with new eligibility/mesh functions at **100%**.
+  Headless amd64/386 tests cover script selection, packed/indexed bit reconstruction,
+  ownership, missing/bitmap-free glyphs, nil inputs, exact limits, invalid atlas
+  coordinates, float overflow, signed zeros and atomic/streaming failure behavior.
+- A 20-second headless mesh fuzz run completed **1,235,603 executions** without
+  failure. Full v4 module tests, v1 vecmap/glyph integration-race checks, targeted
+  staticcheck and application build pass; gopls reports no build errors.
+- All three v1 captures remain byte-for-byte identical: 45 draws, 62 labels,
+  complete fonts and unchanged geometry/texture data. GPU code and generated
+  adapters are unchanged.
+- Complexity review retains the explicit script filter (13 including new input
+  guards) and quad emission/validation (11); other new production functions are
+  at most 10. Existing generated ST1006 and GO-2026-5024 baseline findings persist.
+
+Separate v4 test binaries ran before/after/after/before with identical pinned
+tile/glyph inputs, GOMAXPROCS 16 and two-second direct-fixture samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before glyph mesh extraction | 32.69 / 32.91 ms | 90,780,770 / 90,780,934 | 102,311 / 102,312 |
+| After glyph mesh extraction | 32.88 / 34.63 ms | 90,780,330 / 90,782,233 | 102,311 / 102,316 |
+
+Allocation volume remains about **90.78 MB/op**, with the same allocation-count
+range. Timing samples, including the slower after sample, are retained without a
+speedup claim. This measures CPU preparation, excluding I/O/JSON/GPU work, rather
+than full-map parity. Asset preparation and scene compilation are the next CPU
+boundaries; toolkit-specific font fallback remains an adapter concern.
+
+### Headless sprite asset preparation
+
+Kata **m5dy** continues after the verified, still-uncommitted **gpwj** checkpoint.
+`sprite.Decode` and `sprite.Prepare` now own JSON/PNG decoding, NRGBA conversion,
+entry validation and crop/tint/opacity arithmetic. The parent aliases entry metadata
+and shares decoded maps and prepared pixel slices directly. Embedding, `sync.Once`,
+the mutex-protected 512-entry FIFO cache and its four-decimal opacity key remain
+parent-owned. This uses standard-library image/JSON code and shared `style.Color`,
+with no module or generated binding changes.
+
+The decoder caps JSON at 2 MiB, PNG at 16 MiB and entry occurrences at 4096,
+including duplicate names. Header dimensions are checked before PNG pixel decoding:
+at most 4096 per axis and 4,194,304 pixels total (16 MiB normalized RGBA storage).
+Final metadata requires finite positive ratios and positive rectangles within the
+atlas. Crop preparation validates zero-origin NRGBA stride/storage and rectangle
+arithmetic without 32-bit overflow. Decode errors return nil; crop failures return
+a zero image. Invalid metadata now fails the whole decode and NaN opacity rejects;
+valid RGB/SDF alpha rounding, tint byte conversion and clamped opacity are retained.
+
+Verification on Go 1.27.1:
+
+- Headless sprite coverage is **100%**; amd64/386 tests cover all 264 pinned sprites,
+  color-model conversion, crop/stride arithmetic, RGB/SDF alpha rounding, ownership,
+  malformed input/storage, byte/count/dimension bounds and atomic failures.
+- Twenty-second fuzz runs completed **1,046,011 decoder executions** and
+  **1,738,238 crop executions**, with no failures.
+- Full v4 module coverage tests, v1 vecmap/sprite integration-race checks and the
+  application build pass. Gopls reports no new build errors. Repository-wide
+  staticcheck still reports only existing generated MIQT ST1006 warnings; the
+  pre-edit scan still reports standard-library GO-2026-5024. New production
+  functions are all at most 10 in complexity review.
+- Expanded/direct/post-indexed v1 captures remain byte-for-byte identical to the
+  original references: 45 draws, 62 labels, complete fonts and unchanged geometry
+  and textures. This verifies CPU output, not fresh GPU/presentation performance.
+
+Separate v4 binaries built immediately before/after this extraction ran the direct
+fixture benchmark in before/after/after/before order, with identical pinned inputs,
+GOMAXPROCS 16 and two-second samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before sprite extraction | 28.83 / 27.81 ms | 90,781,199 / 90,780,706 | 102,314 / 102,312 |
+| After sprite extraction | 28.28 / 27.98 ms | 90,781,616 / 90,781,321 | 102,315 / 102,314 |
+
+Allocation cost remains about **90.78 MB/op**. These overlapping samples do not
+establish a speedup. The fixture benchmark uses warm sprite caches, so a separate
+headless benchmark compares cold decoding of the pinned index/PNG against the
+former `json.Unmarshal` + PNG decode + NRGBA conversion. Same v4/GOMAXPROCS setting,
+two two-second samples, excluding file I/O:
+
+| Cold decode | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Former decoder | 1.223 / 1.231 ms | 1,222,421 / 1,222,365 | 291 / 291 |
+| Bounded decoder | 1.285 / 1.279 ms | 1,249,070 / 1,249,079 | 912 / 912 |
+
+Header validation and streaming entry bounds add about **27 KB and 621 allocations**
+per cold asset load (roughly 0.05–0.06 ms in these samples). The existing once/cache
+policy pays this at initial loading, not each tile preparation. All timing samples
+are retained; neither benchmark measures GPU work, presentation or MapLibre parity.
+Scene compilation and asset/layout orchestration remain the next CPU boundary
+before a fully headless fixture producer and bounded live updates.
 
 ## Flatpak integration
 

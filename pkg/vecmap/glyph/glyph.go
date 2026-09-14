@@ -1,5 +1,5 @@
-// Package glyph prepares Go-owned SDF glyph ranges, atlas images and metric text
-// layouts without Qt or cgo. Font loading, caching, shaping and placement belong
+// Package glyph prepares Go-owned SDF glyph ranges, atlas images, metric text
+// layouts and glyph meshes without Qt or cgo. Font loading, caching, shaping and placement belong
 // to callers.
 package glyph
 
