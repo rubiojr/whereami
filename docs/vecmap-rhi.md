@@ -46,6 +46,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   scene packing, materials and ordered icon/halo/fill passes.
 - `pkg/vecmap/fixture`: top-level pinned offline orchestration using the shared
   engine and Liberty assets. The fixture producer builds with `CGO_ENABLED=0`.
+- `pkg/vecmap/retained`: bounded atomic fragment replacement/removal, stable
+  store-wide resource IDs/revisions and explicit ordered snapshot composition.
+  This contract is not yet wired to live loading or a backend upload planner.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -1668,6 +1671,72 @@ updates and GPU uploads with explicit logical resource identities, ordering,
 clipping, fallback coverage and world-wrap contracts. Shader-driven zoom styling,
 multi-map validation, matched-quality MapLibre comparisons and real presentation
 measurements remain open acceptance gates under **ngrb**.
+
+### Bounded retained fragment updates
+
+The headless fixture/assets work was committed as **93aba3e**. Continued with kata
+**0ex5**, following the requested toolkit-neutral retained update layer first.
+`pkg/vecmap/retained` introduces a single-owner `Store`, atomic `Apply([]Change)`
+and `Snapshot([]Range)` over existing prepared scenes. Reusable scene validation
+and Go maps/slices are sufficient; no new library or native dependency was needed.
+
+Fragment-local mesh/texture IDs are remapped into a store-wide namespace. An
+unchanged fragment retains IDs/revisions; replacement preserves surviving local
+slots' IDs and increments every resource revision conservatively. Input revisions
+are ignored. Removal/re-addition gets fresh IDs, including resources removed from
+a still-present fragment. ID/revision overflow rejects atomically. This prevents
+tile-local ID collisions and stale uploads when a packer's first-use slots change
+meaning. It does not yet deduplicate shared atlases or track per-resource dirtiness.
+
+Snapshots take explicit contiguous draw-record ranges and instance transform slots.
+They preserve supplied order, material values and clips, sharing resources across
+repeated instances. They do not guess style layers, tile/fallback coverage, symbol
+visibility or pattern wrap phases. Metadata is owned; validated geometry/indices/
+pixels are immutable borrows. Existing snapshots survive later updates, and
+camera-only frames can keep the same snapshot pointer.
+
+Default ceilings (lowerable) are 128 fragments, 4,096 meshes, 4,096 textures, 65,536
+draws and 512 MiB of logical payload. Keys are capped at 256 bytes and copied.
+Batches permit twice the fragment count in changes to replace a full cover
+atomically. Incoming new scenes and the final retained state each obey aggregate
+bounds; all removals are accounted before final insertion totals. Length/byte
+preflight precedes deep input validation and remap allocation. Failed batches do
+not change state or consume IDs. Old/incoming payload and caller-retained snapshots
+have explicitly separate lifetime/memory obligations, documented in the package.
+
+Verification:
+
+- New package has **100% headless coverage**, including rollback, resource identity
+  exhaustion, revision/eviction lifecycle, metadata isolation, old snapshot lifetime,
+  full-capacity replacement, input/output limits and independent snapshot readers.
+- Pinned fixture composition interleaves two copies of the 45-draw scene into 90
+  ordered draws with independent IDs and shared buffers. It verifies material/clip
+  preservation and that replacing one fragment leaves the other's revisions intact.
+  This is a CPU composition test, not real multi-tile label-placement validation.
+- Headless amd64/386, v1 race checks, full v4 module coverage and application build
+  pass. Targeted staticcheck is clean; repository-wide staticcheck still reports
+  only generated ST1006. Gopls reports no diagnostics. The vulnerability baseline
+  remains **GO-2026-5024**.
+- Complexity review retains Snapshot16 and preflight11: the scores reflect explicit
+  bounded selection checks and transactional accounting; other new functions <=10.
+  The validation-before-publication phases remain visible rather than obscured to
+  lower a metric. No existing rendering algorithm or generated bindings changed.
+
+New snapshot microbenchmark, v4/GOMAXPROCS16, two seconds per sample, two fragments
+with 350,000 vertices each and three selected ranges/output draws:
+
+| ns/op | bytes/op | allocs/op |
+| ---: | ---: | ---: |
+| 316.2 / 299.4 / 288.7 | 768 / 768 / 768 | 6 / 6 / 6 |
+
+This measures metadata-only composition, excluding deep validation, tile/style
+preparation, JSON and GPU work. There is no prior implementation speedup or frame
+performance claim. Production and the QRhi viewer do not use the store yet.
+
+Next is a bounded upload/admission planner over these stable identities, including
+successful-upload acknowledgement and old-scene retention until replacement
+resources are ready. Live tile/placement selection, coverage/clip/wrap policy and
+matched-quality presentation comparisons remain separate acceptance gates.
 
 ## Flatpak integration
 
