@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	quick "github.com/rubiojr/whereami/internal/miqtquick"
+	"github.com/rubiojr/whereami/pkg/vecmap/liberty"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
@@ -134,11 +135,9 @@ func projectLibertySymbol(transform affineTransform, candidate *libertySymbolCan
 	}
 	var sprite placement.SpriteMetrics
 	if candidate.iconName != "" {
-		if err := loadLibertySprites(); err == nil {
-			if entry, exists := libertySpriteIndex[candidate.iconName]; exists && entry.PixelRatio > 0 {
-				sprite = placement.SpriteMetrics{Width: entry.Width, Height: entry.Height, PixelRatio: entry.PixelRatio}
-				context.Sprite = &sprite
-			}
+		if entry, exists := liberty.SpriteEntry(candidate.iconName); exists && entry.PixelRatio > 0 {
+			sprite = placement.SpriteMetrics{Width: entry.Width, Height: entry.Height, PixelRatio: entry.PixelRatio}
+			context.Sprite = &sprite
 		}
 	}
 	symbol := projectionSymbol(candidate)

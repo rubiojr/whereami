@@ -155,7 +155,8 @@ fixture's **SDF-only** policy:
 The parent iterator yields value requests using original tile/candidate keys. The
 fixture still calls its loader once, after tile compilation, then invokes these
 shared helpers. Single-pass preparation and local file/cache policy are preserved.
-Final scene packing and overall fixture orchestration remain parent-bound.
+Final scene packing uses `SceneBuilder`; headless `fixture` owns overall offline
+orchestration and uses shared candidates directly.
 
 All new text helpers have **100% coverage**, including exact identity/discovery,
 original-text coverage, missing-font versus invalid-layout results, duplicate keys,
@@ -210,9 +211,9 @@ publication; general texture pixel bytes remain immutable borrows.
 Mesh ID and all revisions are one; texture IDs are scene-local. Combining multiple
 packed scenes or publishing incremental resource updates requires caller-owned ID
 and revision remapping. This is offline retained packing, not a GPU upload queue.
-The parent still selects accepted symbols and layer order. Material and symbol
-pass assembly use the shared methods below. Top-level fixture orchestration is
-the remaining boundary before the producer can build without Qt.
+Callers select accepted symbols and layer order. Material and symbol pass assembly
+use the shared methods below. The headless `fixture` package now owns top-level
+offline orchestration; its command builds without Qt or cgo.
 
 Packing is **100% covered** headlessly, including topology reconstruction, owned
 geometry versus borrowed images, glyph conversion, first-key texture identity,

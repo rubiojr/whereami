@@ -56,12 +56,12 @@ an undefined float-to-byte conversion. Invalid index entries now fail the whole
 decode rather than surviving until a later crop fails. Valid pinned output is
 unchanged. This is the existing SDF sprite tint behavior, not a new SDF shader.
 
-Vecmap keeps embedded pinned assets, `sync.Once`, lookup policy, error reporting
-and its mutex-protected **512-entry FIFO** image cache. The cache key still includes
-color channels and opacity formatted to four decimal places. Entry aliases share
-the decoded map; the small legacy image adapter shares the prepared pixel slice
-without conversion buffers. The fixture producer still imports Qt-bound vecmap
-for scene compilation and orchestration.
+The headless `liberty` package owns embedded pinned assets, `sync.Once`, lookup
+policy and the mutex-protected **512-entry FIFO** image cache. The cache key still includes
+color channels and opacity formatted to four decimal places. Metadata lookups return
+value snapshots; the small legacy image adapter shares the prepared pixel slice
+without conversion buffers. The fixture producer now uses headless `fixture`
+orchestration and the same Liberty cache.
 
 ## Verification
 

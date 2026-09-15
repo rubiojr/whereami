@@ -161,9 +161,9 @@ func TestPrepareRejectsInvalidStorageAndMetadata(t *testing.T) {
 }
 
 func TestPinnedSpritesHeadless(t *testing.T) {
-	index, err := os.ReadFile("../liberty_sprite.json")
+	index, err := os.ReadFile("../liberty/liberty_sprite.json")
 	require.NoError(t, err)
-	data, err := os.ReadFile("../liberty_sprite.png")
+	data, err := os.ReadFile("../liberty/liberty_sprite.png")
 	require.NoError(t, err)
 	atlas, err := Decode(index, data)
 	require.NoError(t, err)
@@ -217,9 +217,9 @@ func FuzzPrepare(f *testing.F) {
 }
 
 func BenchmarkPinnedSpriteDecode(b *testing.B) {
-	index, err := os.ReadFile("../liberty_sprite.json")
+	index, err := os.ReadFile("../liberty/liberty_sprite.json")
 	require.NoError(b, err)
-	data, err := os.ReadFile("../liberty_sprite.png")
+	data, err := os.ReadFile("../liberty/liberty_sprite.png")
 	require.NoError(b, err)
 	for _, mode := range []string{"legacy", "bounded"} {
 		b.Run(mode, func(b *testing.B) {

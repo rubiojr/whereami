@@ -63,11 +63,15 @@ func TestDirectRenderFixture(t *testing.T) {
 	require.NoError(t, err)
 	requireMeshExpansion(t, expanded.Scene.Meshes[0], post)
 	assert.Less(t, direct.Scene.Meshes[0].BufferBytes(), expanded.Scene.Meshes[0].BufferBytes())
-	for _, layout := range direct.sdf.layouts {
+	legacy, err := legacyCompileRenderFixtureWithOptions(data, glyphs, RenderFixtureOptions{DirectIndexed: true})
+	require.NoError(t, err)
+	assert.Equal(t, legacy.Scene, direct.Scene)
+	assert.Equal(t, legacy.Frame(legacy.Camera), direct.Frame(direct.Camera))
+	for _, layout := range legacy.sdf.layouts {
 		assert.Empty(t, layout.Expanded, "direct glyph construction must not expand quads")
 		assert.NotEmpty(t, layout.Indices)
 	}
-	for _, features := range direct.bucket.sourceLayers {
+	for _, features := range legacy.bucket.sourceLayers {
 		for _, feature := range features {
 			for _, polygon := range feature.Polygons {
 				if len(polygon.Vertices) != 0 {

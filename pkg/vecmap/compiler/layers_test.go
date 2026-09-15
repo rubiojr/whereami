@@ -218,7 +218,7 @@ func TestPinnedLayersHeadless(t *testing.T) {
 	}
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	styleData, err := os.ReadFile("../liberty_style.json")
+	styleData, err := os.ReadFile("../liberty/liberty_style.json")
 	require.NoError(t, err)
 	layers, err := style.Parse(styleData)
 	require.NoError(t, err)

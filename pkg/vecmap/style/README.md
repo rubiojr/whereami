@@ -47,8 +47,8 @@ are ignored. This does not add support for further MapLibre style features.
   owns decoded paint/layout maps and expressions, and copies zoom values. Keep
   published layers and all reachable expression data immutable.
 
-The pinned asset and `sync.Once` cache stay caller-owned in vecmap. Its compiled
-layer alias shares the output slice/maps without conversions. The package owns
+The pinned asset and `sync.Once` cache live in the headless `liberty` package. The
+parent's compiled layer alias shares its output slice/maps without conversions. This package owns
 no filesystem/network access, scheduling, global style cache or input-size policy.
 
 Typed layer helpers reuse the original paint defaults: `NumberValue` rejects
@@ -105,8 +105,8 @@ ingestion policy; its caller owns style size/validation and scheduling.
 Glyph decoding, atlas packing, SDF eligibility, text layout and meshes now live in the headless `glyph`
 package. Evaluated symbol candidates and collision decisions now live in
 `placement`, including projected boxes. Fill/line evaluation and geometry batching
-live in `compiler`. Resource readiness policy, tile orchestration and scene packing
-are still parent-bound.
+live in `compiler`, together with scene packing. Headless `fixture` owns offline
+orchestration; live resource readiness and scheduling remain parent-bound.
 No renderer/scheduler migration is involved.
 
 ## Verification and performance

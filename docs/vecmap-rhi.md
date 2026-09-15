@@ -26,8 +26,8 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   or cgo. `pkg/vecmap/internal/pbf` shares the existing reader with glyph parsing.
 - `pkg/vecmap/style`: document/layer preparation, the existing expression subset,
   primitive conversions, numeric/color interpolation and color parsing/opacity.
-  It depends only on the standard library; pinned assets and caching remain
-  caller-owned in vecmap.
+  It depends only on the standard library; pinned assets and caching live in
+  the headless `pkg/vecmap/liberty` package.
 - `pkg/vecmap/glyph`: bounded SDF glyph PBF decoding, shared metrics/bitmaps and
   deterministic atlas packing, SDF eligibility, glyph-metric text layout and
   expanded/direct-indexed glyph meshes. Font I/O/cache/retry, retained-atlas policy
@@ -37,12 +37,15 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   candidates, projected boxes and stable collision/priority/optional-symbol
   selection. Glyph/sprite readiness and fallback policy remain caller-owned.
 - `pkg/vecmap/sprite`: bounded sprite JSON/PNG decoding, straight-alpha atlas
-  conversion and crop/tint/opacity preparation. Embedded assets, once/cache policy
-  and native uploads remain caller-owned.
+  conversion and crop/tint/opacity preparation. Native uploads remain caller-owned.
+- `pkg/vecmap/liberty`: single-copy pinned style/sprite embedding, once-only
+  decoding, immutable layer/metric/pixel sharing and the 512-entry FIFO image cache.
 - `pkg/vecmap/compiler`: evaluated fill/extrusion/pattern/outline and line/gap
   batching and geometry preparation, visible tile-layer traversal, background
-  meshes, shared primitive values and aggregate triangle accounting. Symbol
-  storage, atomic publication and scene packing remain caller-owned.
+  meshes, shared primitive values, aggregate triangle accounting, text preparation,
+  scene packing, materials and ordered icon/halo/fill passes.
+- `pkg/vecmap/fixture`: top-level pinned offline orchestration using the shared
+  engine and Liberty assets. The fixture producer builds with `CGO_ENABLED=0`.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -61,14 +64,11 @@ Geographic fixture captures carry a `view.Camera` and tile-space descriptions.
 The viewer reprojects those through `Document.FrameAt` without replacing scene
 resources. Older affine-only captures remain readable.
 
-The fixture producer reuses the existing compiler and the extracted headless MVT
-preparation, style compiler, glyph/sprite atlas preparation, text layout and symbol
-candidates, projected boxes, collision selection and fill/line layer compilation.
-Resource readiness policy and scene compilation
-still live in the Qt-bound
-`pkg/vecmap` package. Extracting that remaining CPU work is
-tracked by the umbrella issue. The scene consumer already builds independently
-of that package.
+The fixture producer uses `pkg/vecmap/fixture` and the extracted headless MVT,
+style, glyph/sprite, text layout, symbol/collision, geometry and scene packing
+packages. Its dependency graph has no Qt, cgo or parent `pkg/vecmap` import.
+Parent fixture APIs are compatibility wrappers. Live resource readiness and
+scheduling remain in the production renderer; this does not migrate production.
 
 The native bindings and Go renderer are separate packages. Editing rendering
 logic rebuilds the Go backend without recompiling the binding package's C++.
@@ -83,7 +83,7 @@ and Qt base private development headers.
 make rhi-build
 
 # Uses the existing compiler and verifies the pinned PBF checksum.
-go run ./cmd/vecmap-fixture \
+CGO_ENABLED=0 go run ./cmd/vecmap-fixture \
   -tile /path/to/openfreemap-20260823-z9-250-193.pbf \
   -glyph-dir /path/to/glyphs \
   -out /tmp/madrid-scene.json
@@ -1556,6 +1556,118 @@ Every sample, including the initial regression, is retained. Variable timings do
 not establish a speedup. These exclude I/O/JSON/GPU work and are not MapLibre parity
 evidence. Top-level fixture orchestration and asset wiring remain the next boundary
 to finish the Qt-free producer; live update/upload and presentation gates remain.
+
+### Headless pinned Liberty assets and caches
+
+Committed material/pass assembly as `6907f14`, then continued with kata **4vqr**.
+The three pinned assets now live in `pkg/vecmap/liberty`, with exactly one embedded
+copy each and unchanged SHA-256 checksums. The package exposes immutable compiled
+layers, value sprite metrics and cached crop/tint images without importing Qt.
+Parent style, image and collision-readiness adapters use the same shared cache.
+No style map or pixel conversion copy is added. The existing fetcher now runs from
+`go generate ./pkg/vecmap/liberty`; its checksums and download limits are unchanged.
+
+Style/sprite decoding retain separate `sync.Once` gates and cached failures.
+The mutex-protected 512-entry FIFO preserves four-decimal opacity keys, replacement
+without promotion, concurrent duplicate-miss preparation and borrowed pixel
+lifetime after eviction. Parsing and pixel algorithms remain in their existing
+shared packages; there is no new dependency or native adapter change.
+
+Verification:
+
+- New package has **100% headless coverage**: pins, layer/pixel sharing, metadata,
+  missing sprites, cached failures, invalid opacity, quantized keys, FIFO behavior,
+  borrow lifetime and concurrent cold loading/cache pressure. Headless 386 tests
+  also pass for liberty, style, sprite and compiler.
+- Full v4 module coverage suite, v1 parent integration/liberty race tests,
+  targeted staticcheck and application build pass. Gopls has no errors; all new
+  functions are below the complexity threshold of 11. Repository staticcheck still
+  reports only generated `internal/miqtquick` ST1006 findings. The vulnerability
+  scan still reports the recorded standard-library **GO-2026-5024** baseline.
+- Expanded, direct-indexed and post-indexed v1 captures are byte-identical to their
+  original references: **45 draws, 62 labels, complete fonts**, unchanged buffers
+  and textures. No GPU/presentation timings are inferred from this CPU extraction.
+- Regeneration command wiring was checked with `go generate -n`; offline checksum
+  tests verify the moved assets. No network refetch was needed.
+
+Controlled direct-fixture samples used separate before/after v4 binaries, pinned
+inputs, GOMAXPROCS 16 and two seconds per sample, in before/after/after/before order:
+
+| Version | ms/op | bytes/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Before | 34.43 / 31.67 | 90,782,063 / 90,781,623 | 102,321 / 102,321 |
+| After | 31.24 / 31.21 | 90,781,586 / 90,779,894 | 102,321 / 102,319 |
+
+Allocation counts/volume remain in the prior range. Variable timings do not
+establish a speedup; these exclude file I/O, JSON and GPU work. Assets/caches are
+now headless, but `cmd/vecmap-fixture` still imports the parent for top-level
+orchestration and legacy bucket/candidate/collision-readiness wiring. That is the
+next checkpoint toward a command that builds with `CGO_ENABLED=0`.
+
+### Top-level headless fixture orchestration
+
+Continued with kata **2d12**, preserving the verified, uncommitted **4vqr** asset
+checkpoint. `pkg/vecmap/fixture` now owns pinned input validation, source decoding,
+tile/candidate compilation, one font-loader invocation, text/atlas preparation,
+collision and scene publication. The CLI imports this package directly and builds
+with **CGO_ENABLED=0**. `go list -deps` confirms no Qt, cgo or parent vecmap import.
+Public parent APIs are thin wrappers/type aliases; the former orchestrator remains
+only as a test oracle using the legacy renderer's bucket/candidate adapters.
+
+Shared primitives and symbols are retained directly, without conversion slices.
+Maps use source candidate indexes for this one fixed tile/wrap. Layer ordering,
+reverse-candidate collision collection, stable ties and icon/halo/fill order are
+preserved. Collision still uses metric layouts before atlas filtering. The old
+native fallback eligibility predicate is now `glyph.LegacyFallbackEligible`, shared
+with the parent: fallback-eligible unsupported text can reserve collision space
+without being rendered by this offline SDF-only path. This deliberately preserves
+the previous fixture policy rather than changing label acceptance during extraction.
+
+The result retains packed geometry, glyph RGBA, shared sprite pixels and metadata,
+not source features/candidates/layouts. Raw tile bytes are capped before checksum
+work. Atlas/collision errors now propagate atomically instead of being ignored;
+these guards do not change valid pinned output. Per-feature MVT resource summaries
+are returned in `Result.Limits` rather than logged by shared preparation. No new
+module dependency, native binding or GPU rendering algorithm is introduced.
+
+Verification:
+
+- Headless fixture coverage **94.6%**; assembly, request iteration, packing,
+  projection and collision functions **100%**. Remaining guards are error returns
+  behind pinned/validated inputs plus finish-level collision propagation. Shared
+  lower-level packages cover their corresponding failures. Shared fallback predicate
+  coverage is 100%; total glyph coverage remains 99.8%.
+- Pinned headless amd64/386 tests cover topology, loader count/errors, font absence,
+  budgets, atomic failure, fallback readiness, reverse priority and camera-only
+  frames. The command's serialized output is validated headlessly too.
+- Legacy/new fixture comparisons pass with full, partial and missing fonts in
+  both topology modes. All three final headless v1 captures are byte-identical to
+  original references: **45 draws, 62 labels, complete fonts**, unchanged geometry
+  and textures. Captures are `/tmp/opencode/vecmap-{expanded,direct,post}-headless-scene.json`.
+- Full v4 coverage suite, v1 parent/fixture/glyph/command integration-race checks,
+  targeted staticcheck and application build pass. Gopls reports no diagnostics.
+  All new production functions are at most 10 in the complexity review; the
+  test-only old orchestrator is 11. Generated ST1006 and the recorded GO-2026-5024
+  vulnerability baseline remain. No new GPU/presentation timing claim is made.
+
+Controlled v4 direct-fixture samples used the previous asset checkpoint binary
+(`vecmap-assets-after.test`) and the new `vecmap-headless-after.test`, identical
+pinned inputs, GOMAXPROCS16 and two seconds, in before/after/after/before order:
+
+| Version | ms/op | bytes/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Before | 30.84 / 31.53 | 90,781,323 / 90,781,313 | 102,319 / 102,319 |
+| After | 30.23 / 30.00 | 90,714,392 / 90,713,641 | 102,318 / 102,318 |
+
+Smaller single-tile keys reduce allocation volume by about 67 KB per fixture;
+allocation counts remain essentially unchanged. Variable timings do not establish
+a speedup. These samples exclude I/O/JSON/GPU work and are not MapLibre parity.
+
+The offline CPU extraction is now complete. Next is bounded live tile/placement
+updates and GPU uploads with explicit logical resource identities, ordering,
+clipping, fallback coverage and world-wrap contracts. Shader-driven zoom styling,
+multi-map validation, matched-quality MapLibre comparisons and real presentation
+measurements remain open acceptance gates under **ngrb**.
 
 ## Flatpak integration
 

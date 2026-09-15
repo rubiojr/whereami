@@ -72,11 +72,11 @@ The existing production decoder still prepares its fallback buckets and compiles
 at source zoom. Styled feature limits remain enforced independently of the
 fallback-only limits. Migrating the live scheduler is a separate step.
 
-The fixture CLI uses `vecmap.CompileRenderFixtureWithGlyphLoader` to load the
+The fixture CLI uses headless `fixture.CompileWithGlyphLoader` to load the
 requested font ranges after tile/style preparation, before layout and scene
 packing. It no longer compiles a throwaway scene for font discovery. The loader
-uses only Go values; file/cache access stays with its caller. The parent fixture
-producer is still Qt-bound, unlike this geometry package.
+uses only Go values; file/cache access stays with its caller. The command builds
+with `CGO_ENABLED=0`; parent fixture APIs are compatibility wrappers.
 
 ```sh
 CGO_ENABLED=0 go test -cover ./pkg/vecmap/geometry

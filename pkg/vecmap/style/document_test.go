@@ -132,7 +132,7 @@ func TestLayerEvaluationPrecedence(t *testing.T) {
 
 func TestPinnedDocumentHeadless(t *testing.T) {
 	// Reuse the caller's pinned asset without embedding a second production copy.
-	data, err := os.ReadFile("../liberty_style.json")
+	data, err := os.ReadFile("../liberty/liberty_style.json")
 	require.NoError(t, err)
 	layers, err := Parse(data)
 	require.NoError(t, err)

@@ -157,8 +157,11 @@ Armenian, Georgian, Han, Hiragana, Katakana, Hangul and Bopomofo, plus the exist
 whitespace/Common characters. Combining marks and code points beyond the BMP are
 excluded. It rejects empty/invalid UTF-8 and oversized text. This is a capability
 filter for the metric layout, not a font-availability or OpenType-shaping guarantee.
-The Qt adapter retains its own fallback policy and also rejects invalid UTF-8,
-so invalid bytes cannot switch from SDF rejection into native fallback rendering.
+`LegacyFallbackEligible` shares the old native fallback predicate with the Qt
+adapter and offline fixture collision policy. It rejects empty/invalid UTF-8,
+more than 256 runes and Thaana (which stalled the legacy Qt font search). This is
+a compatibility gate, not a shaping capability guarantee or a new fallback renderer.
+The fixture can reserve collision space for eligible fallback text without drawing it.
 
 ```go
 if !glyph.FitsAtlas(&layout, atlas) {
@@ -224,9 +227,10 @@ glyphs. Repeated keys must have identical glyph values; conflicting values follo
 unspecified traversal order, as before. Collection input cardinality/work remains
 caller-bounded; it does not impose the mesh-set ceiling itself.
 
-Qt fallback, font resolution and candidate selection still belong to adapters.
-The parent `sdfScene` retains rendering counters and native readiness policy; final
-scene vertex/material packing is still a separate extraction boundary.
+Native fallback rendering, font resolution and live candidate selection belong to
+adapters. The parent `sdfScene` retains rendering counters and native readiness
+policy. Shared `compiler` packing and headless `fixture` orchestration use the
+same layout data without that native scene wrapper.
 
 ## Verification
 

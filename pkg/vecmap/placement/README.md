@@ -97,7 +97,8 @@ Vecmap's legacy renderer uses a single value adapter at the sink. It allocates n
 intermediate candidate slice and copies no maps/string payloads. Other consumers
 can retain `placement.Symbol` directly. SDF eligibility and atlas-dependent quads
 live in `glyph`; sprite decoding and pixel preparation live in `sprite`. Qt fallback,
-asset loading/cache policy and scene compilation remain in vecmap.
+live asset loading/cache policy remain in vecmap. Headless `fixture` owns offline
+scene orchestration and uses `liberty` for pinned sprites.
 
 ## Projected text and icon boxes
 

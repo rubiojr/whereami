@@ -2,44 +2,43 @@ package vecmap
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
 	"math"
+	"os"
 	"sort"
-	"strconv"
 	"testing"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/liberty"
+	"github.com/rubiojr/whereami/pkg/vecmap/style"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestEmbeddedLibertyStyleIsPinned(t *testing.T) {
-	checksum := sha256.Sum256(libertyStyleJSON)
-	assert.Equal(t, libertyStyleSHA256, hex.EncodeToString(checksum[:]))
-
+func TestLibertyStyleAdapterSharesLayers(t *testing.T) {
 	layers, err := compiledLibertyLayers()
 	require.NoError(t, err)
 	require.Len(t, layers, 111)
 	assert.Equal(t, "background", layers[0].ID)
 	assert.Equal(t, "background", layers[0].Kind)
 	assert.Equal(t, "label_country_1", layers[len(layers)-1].ID)
+	shared, err := liberty.Layers()
+	require.NoError(t, err)
+	assert.Same(t, &shared[0], &layers[0])
 }
 
-func TestEmbeddedLibertySpritesArePinned(t *testing.T) {
-	jsonChecksum := sha256.Sum256(libertySpriteJSON)
-	pngChecksum := sha256.Sum256(libertySpritePNG)
-	assert.Equal(t, libertySpriteJSONSHA256, hex.EncodeToString(jsonChecksum[:]))
-	assert.Equal(t, libertySpritePNGSHA256, hex.EncodeToString(pngChecksum[:]))
-	require.NoError(t, loadLibertySprites())
-	assert.Len(t, libertySpriteIndex, 264)
-
+func TestLibertySpriteAdapterSharesPixels(t *testing.T) {
 	sprite, ok := libertySprite("airport", mapColor{Red: 1, Green: 2, Blue: 3, Alpha: 255}, 1)
 	assert.True(t, ok)
 	assert.NotEmpty(t, sprite.pixels)
+	shared, ok := liberty.Sprite("airport", mapColor{Red: 1, Green: 2, Blue: 3, Alpha: 255}, 1)
+	require.True(t, ok)
+	assert.Same(t, &shared.Pixels[0], &sprite.pixels[0])
+	assert.Equal(t, shared.Width, sprite.width)
+	assert.Equal(t, shared.Height, sprite.height)
+	assert.Equal(t, shared.PixelRatio, sprite.pixelRatio)
 }
 
 func TestTessellateLibertyLinesProducesWidthAndDashes(t *testing.T) {
@@ -93,18 +92,11 @@ func TestAppendLibertyDiskProducesClosedOctagon(t *testing.T) {
 	assert.InDelta(t, 8*math.Sqrt2, triangleMeshArea(triangles), 1e-12)
 }
 
-func TestLibertySpriteCacheIsBounded(t *testing.T) {
-	cache := libertySpriteImageCache{}
-	for index := range maxLibertySpriteCacheEntries + 100 {
-		cache.put(strconv.Itoa(index), libertySpriteImage{pixels: []byte{byte(index)}})
-	}
-	assert.Len(t, cache.entries, maxLibertySpriteCacheEntries)
-	assert.Len(t, cache.order, maxLibertySpriteCacheEntries)
-}
-
 func TestLibertyExpressionsAreSupported(t *testing.T) {
-	var document libertyStyleDocument
-	require.NoError(t, json.Unmarshal(libertyStyleJSON, &document))
+	data, err := os.ReadFile("liberty/liberty_style.json")
+	require.NoError(t, err)
+	var document style.Document
+	require.NoError(t, json.Unmarshal(data, &document))
 
 	operators := make(map[string]struct{})
 	for _, layer := range document.Layers {

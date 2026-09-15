@@ -75,6 +75,11 @@ func TestFixtureGlyphLoader(t *testing.T) {
 			assert.Equal(t, want.Camera, got.Camera)
 			assert.Equal(t, want.Labels, got.Labels)
 			assert.Equal(t, want.MissingFonts, got.MissingFonts)
+			legacy, err := legacyCompileRenderFixtureWithOptions(data, ranges, options)
+			require.NoError(t, err)
+			assert.Equal(t, legacy.Scene, got.Scene)
+			assert.Equal(t, legacy.Labels, got.Labels)
+			assert.Equal(t, legacy.MissingFonts, got.MissingFonts)
 		}
 	}
 	none, err := CompileRenderFixtureWithGlyphLoader(data, nil, RenderFixtureOptions{})

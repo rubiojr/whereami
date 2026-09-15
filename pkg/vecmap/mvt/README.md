@@ -82,8 +82,8 @@ with layer preparation as before. Document/layer preparation and expression
 evaluation now live in the headless `style` package. The `glyph` package owns
 text layout and atlas preparation; `placement` owns anchors and evaluated symbol
 candidates, projected boxes and collision/priority decisions. Resource readiness
-policy and scene compilation remain in the Qt-bound parent package. The offline
-fixture command is therefore still Qt-bound.
+policy for live maps remains in the Qt-bound parent package. Offline scene
+orchestration now lives in `fixture`, so its command builds without Qt or cgo.
 
 ## Verification
 

@@ -1,9 +1,6 @@
 package vecmap
 
 import (
-	"unicode"
-	"unicode/utf8"
-
 	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
@@ -135,17 +132,7 @@ func sdfTextEligible(text string) bool {
 }
 
 func qtTextFallbackEligible(text string) bool {
-	if text == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > maximumSymbolTextRunes {
-		return false
-	}
-	for _, codePoint := range text {
-		// Qt repeatedly searches every installed font when no font provides
-		// OpenType shaping for Thaana, stalling scene rebuilds.
-		if unicode.Is(unicode.Thaana, codePoint) {
-			return false
-		}
-	}
-	return true
+	return glyph.LegacyFallbackEligible(text)
 }
 
 func libertyTextRenderable(text string, sdfLayout *sdfTextLayout) bool {

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/rubiojr/whereami/pkg/vecmap"
+	"github.com/rubiojr/whereami/pkg/vecmap/fixture"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
@@ -33,16 +33,16 @@ func run(path, glyphDir, output string, indexed, directIndexed bool) error {
 	if indexed && directIndexed {
 		return fmt.Errorf("-indexed and -direct-indexed are mutually exclusive")
 	}
-	options := vecmap.RenderFixtureOptions{DirectIndexed: directIndexed}
+	options := fixture.Options{DirectIndexed: directIndexed}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	var load vecmap.FixtureGlyphLoader
+	var load fixture.GlyphLoader
 	if glyphDir != "" {
 		load = func(fonts []string) (map[string][]byte, error) { return loadFixtureGlyphs(glyphDir, fonts) }
 	}
-	fixture, err := vecmap.CompileRenderFixtureWithGlyphLoader(data, load, options)
+	fixture, err := fixture.CompileWithGlyphLoader(data, load, options)
 	if err != nil {
 		return err
 	}
