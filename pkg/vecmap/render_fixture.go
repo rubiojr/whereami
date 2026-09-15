@@ -6,7 +6,9 @@ import (
 
 	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
+	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
+	"github.com/rubiojr/whereami/pkg/vecmap/sprite"
 )
 
 // RenderFixture is an offline, fixed-style scene for comparing GPU backends.
@@ -84,7 +86,7 @@ func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, option
 		return nil, err
 	}
 	fixture.accepted = acceptedLibertySymbols(fixture.Camera, []loadedRoadTile{{id: pinnedTile, roads: bucket}}, layouts)
-	builder := fixtureBuilder{fixture: fixture, indexed: options.DirectIndexed,
+	builder := fixtureBuilder{fixture: fixture,
 		packing: compiler.NewSceneBuilder(options.DirectIndexed, 0)}
 	if fixture.sdf != nil {
 		builder.atlas = builder.packing.GlyphAtlas(atlas)
@@ -154,73 +156,41 @@ func (f *RenderFixture) Frame(camera Camera) scene.Frame {
 type fixtureBuilder struct {
 	fixture *RenderFixture
 	packing *compiler.SceneBuilder
-	indexed bool
 	atlas   uint64
 }
 
 func (b *fixtureBuilder) primitive(primitive libertyRenderPrimitive) {
-	material := scene.Material{Color: compiler.PackedColor(primitive.color)}
-	if primitive.patternName != "" {
-		sprite, exists := libertySprite(primitive.patternName, mapColor{255, 255, 255, 255}, 1)
-		if !exists {
-			return
-		}
-		width, height := float64(sprite.width)/sprite.pixelRatio*primitive.patternScale, float64(sprite.height)/sprite.pixelRatio*primitive.patternScale
-		x, y := libertyPatternPhase(pinnedTile, 0, width, height)
-		material = scene.Material{Kind: scene.Pattern, Texture: b.packing.Texture("pattern/"+primitive.patternName, sprite.width, sprite.height, sprite.pixels), Color: [4]float32{1, 1, 1, float32(primitive.opacity)}, PatternSize: [2]float32{float32(width), float32(height)}, PatternPhase: [2]float32{float32(x), float32(y)}}
-	}
-	b.packing.Geometry(geometry.Mesh{Vertices: primitive.triangles, Indices: primitive.indices}, material, [4]float32{0, 0, tileSize, tileSize})
+	b.packing.Primitive(pinnedTile, 0, compiler.Primitive{
+		Order: primitive.order, LayerID: primitive.layerID,
+		Mesh:  geometry.Mesh{Vertices: primitive.triangles, Indices: primitive.indices},
+		Color: primitive.color, PatternName: primitive.patternName, PatternScale: primitive.patternScale, Opacity: primitive.opacity,
+	}, fixtureSprite)
 }
 
 func (b *fixtureBuilder) symbols(order int) {
 	start, end := libertySymbolRangeAtOrder(b.fixture.bucket.symbols, order)
-	for index := start; index < end; index++ {
-		candidate := b.fixture.bucket.symbols[index]
-		accepted := b.fixture.accepted[libertySymbolKey{tile: pinnedTile, index: index}]
-		if accepted.Icon && candidate.iconName != "" {
-			sprite, exists := libertySprite(candidate.iconName, candidate.iconColor, candidate.iconOpacity)
-			if exists {
-				width, height := float64(sprite.width)/sprite.pixelRatio*candidate.iconSize, float64(sprite.height)/sprite.pixelRatio*candidate.iconSize
-				x, y := libertyAnchoredOrigin(candidate.iconAnchor, width, height)
-				quad := geometry.TextQuad(x, y, x+width, y+height, 0, 0, 1, 1)
-				key := fmt.Sprintf("icon/%s/%v/%g", candidate.iconName, candidate.iconColor, candidate.iconOpacity)
-				material := scene.Material{Kind: scene.Image, Texture: b.packing.Texture(key, sprite.width, sprite.height, sprite.pixels), Color: [4]float32{1, 1, 1, 1}, MapAligned: !candidate.iconViewportAligned}
-				b.packing.IndexedText(candidate.anchor, quad[:], []uint32{0, 1, 2, 0, 2, 3}, roadPoint{X: candidate.iconOffset.X * candidate.iconSize, Y: candidate.iconOffset.Y * candidate.iconSize}, libertyRenderedSymbolAngle(candidate.iconLineAngle, candidate.iconRotate, candidate.iconViewportAligned), material)
-			}
+	symbolAt := func(offset int) compiler.RenderSymbol {
+		index := start + offset
+		var layout *sdfTextLayout
+		if b.fixture.sdf != nil {
+			layout = b.fixture.sdf.layouts[libertySDFLayoutKey{tile: pinnedTile, index: index}]
 		}
+		return compiler.RenderSymbol{Symbol: fixturePaintSymbol(&b.fixture.bucket.symbols[index]),
+			Accepted: b.fixture.accepted[libertySymbolKey{tile: pinnedTile, index: index}], Layout: layout}
 	}
-	// A layer's halo pass precedes its fill pass. This keeps label geometry
-	// batchable without letting a later glyph halo cover an earlier glyph fill.
-	for _, kind := range []scene.Kind{scene.SDFHalo, scene.SDFFill} {
-		for index := start; index < end; index++ {
-			if b.fixture.sdf == nil {
-				continue
-			}
-			candidate := b.fixture.bucket.symbols[index]
-			if !b.fixture.accepted[libertySymbolKey{tile: pinnedTile, index: index}].Text {
-				continue
-			}
-			layout := b.fixture.sdf.layouts[libertySDFLayoutKey{tile: pinnedTile, index: index}]
-			if layout == nil {
-				continue
-			}
-			color := candidate.textColor
-			if kind == scene.SDFHalo {
-				if candidate.haloWidth <= 0 || candidate.haloColor.Alpha == 0 {
-					continue
-				}
-				color = candidate.haloColor
-			} else {
-				b.fixture.Labels++
-			}
-			offset := roadPoint{X: candidate.textOffset.X * candidate.textSize, Y: candidate.textOffset.Y * candidate.textSize}
-			angle := libertyRenderedSymbolAngle(candidate.lineAngle, candidate.textRotate, candidate.viewportAligned)
-			material := scene.Material{Kind: kind, Texture: b.atlas, Color: compiler.PackedColor(color), FontScale: float32(layout.Scale), HaloWidth: float32(candidate.haloWidth), HaloBlur: float32(candidate.haloBlur), MapAligned: !candidate.viewportAligned}
-			if b.indexed {
-				b.packing.IndexedText(candidate.anchor, layout.Vertices, layout.Indices, offset, angle, material)
-			} else {
-				b.packing.ExpandedText(candidate.anchor, layout.Expanded, offset, angle, material)
-			}
-		}
-	}
+	b.fixture.Labels += b.packing.SymbolLayer(end-start, symbolAt, b.atlas, fixtureSprite)
+}
+
+func fixtureSprite(name string, color mapColor, opacity float64) (sprite.Image, bool) {
+	image, ok := libertySprite(name, color, opacity)
+	return sprite.Image{Pixels: image.pixels, Width: image.width, Height: image.height, PixelRatio: image.pixelRatio}, ok
+}
+
+func fixturePaintSymbol(c *libertySymbolCandidate) placement.Symbol {
+	return placement.Symbol{Anchor: c.anchor, LineAngle: c.lineAngle, IconLineAngle: c.iconLineAngle,
+		ViewportAligned: c.viewportAligned, IconViewportAligned: c.iconViewportAligned,
+		TextSize: c.textSize, TextColor: c.textColor, HaloColor: c.haloColor, HaloWidth: c.haloWidth, HaloBlur: c.haloBlur,
+		TextOffset: c.textOffset, TextRotate: c.textRotate,
+		IconName: c.iconName, IconSize: c.iconSize, IconColor: c.iconColor, IconOpacity: c.iconOpacity,
+		IconAnchor: c.iconAnchor, IconOffset: c.iconOffset, IconRotate: c.iconRotate}
 }

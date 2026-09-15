@@ -1505,6 +1505,58 @@ not establish MapLibre parity. Layer/material/pass selection and top-level fixtu
 orchestration remain parent-bound; extracting them will make the command headless.
 Live update, upload scheduling and matched-quality presentation gates remain open.
 
+### Headless material and symbol pass assembly
+
+Committed scene packing as `3f30909`, then continued with kata **jyqg**.
+`SceneBuilder.Primitive` now prepares solid/pattern materials, pattern phase and
+tile clips. `SymbolLayer` emits accepted icons, then all text halos, then all text
+fills using shared Symbol/PreparedLayout values. Sprite readiness/caching is a
+synchronous caller resolver. The parent supplies small value adapters, selected
+layer ranges and acceptance/layout pointers; there is no conversion slice.
+
+Pattern scales, white/full-opacity sprite lookup, evaluated material opacity,
+icon anchor/quads, texture key identity, angle/offset arithmetic and label counts
+are preserved. Sprite ratios must be finite positive values; invalid metadata
+latches a packing error. Missing sprites are skipped. Text layouts must be
+atlas-complete and match the output mode, as before. The shared pass assembler
+retains SceneBuilder's error latching and sealed publication.
+
+An initial replayable-iterator API caused roughly 275 extra allocations per fixture.
+The final API uses a bounded count plus indexed accessor, returning the same
+immutable one-layer sequence on each of three passes. Counts above 10,000 reject
+before accessor calls; negative counts and absent required accessors reject too.
+This removes the iterator-frame allocation regression without a candidate slice.
+Accessor/resolver work and resource state remain caller-owned.
+
+Verification:
+
+- Compiler remains **100% covered** headlessly. amd64/386 tests cover pattern
+  phases/world wraps, pass/texture order, paint, transforms, label counts, missing
+  assets/layouts, nil accessors, limits, error propagation and both topology modes.
+- Full v4 module coverage tests, final v1 parent/compiler integration-race checks,
+  targeted staticcheck and application build pass. An initial concurrent full-suite
+  run hit the unrelated geodata install test's one-second Eventually timeout; the
+  suite passed on rerun without parallel agent checks. No geodata code changed.
+- All three final v1 captures are byte-identical to original references: 45 draws,
+  62 labels, complete fonts and unchanged geometry/texture data.
+- Complexity review retains the explicit three-pass loop (16 including input/stop
+  guards); other new production functions are at most 10. Gopls reports no errors.
+  Generated ST1006 and recorded GO-2026-5024 baseline findings remain unresolved.
+
+Separate v4 binaries used identical pinned inputs, GOMAXPROCS 16 and two-second
+direct-fixture samples, each sequence before/after/after/before:
+
+| Implementation | Before ms/op | After ms/op | Before bytes/op | After bytes/op | Before / after allocs/op |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Initial iterator passes | 32.20 / 33.96 | 34.06 / 34.00 | 90,781,351 / 90,782,246 | 90,790,409 / 90,789,962 | 102,319 / 102,322 vs 102,597 / 102,596 |
+| Final indexed accessor | 32.27 / 29.62 | 31.57 / 30.33 | 90,781,366 / 90,781,335 | 90,781,855 / 90,781,598 | 102,320 / 102,320 vs 102,321 / 102,320 |
+
+Final allocation volume/count is back to the prior range, about **90.78 MB/op**.
+Every sample, including the initial regression, is retained. Variable timings do
+not establish a speedup. These exclude I/O/JSON/GPU work and are not MapLibre parity
+evidence. Top-level fixture orchestration and asset wiring remain the next boundary
+to finish the Qt-free producer; live update/upload and presentation gates remain.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

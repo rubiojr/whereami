@@ -210,14 +210,52 @@ publication; general texture pixel bytes remain immutable borrows.
 Mesh ID and all revisions are one; texture IDs are scene-local. Combining multiple
 packed scenes or publishing incremental resource updates requires caller-owned ID
 and revision remapping. This is offline retained packing, not a GPU upload queue.
-The parent still selects accepted symbols, layer order, icon/halo/fill passes,
-pattern dimensions/phase and material values. Top-level fixture orchestration is
+The parent still selects accepted symbols and layer order. Material and symbol
+pass assembly use the shared methods below. Top-level fixture orchestration is
 the remaining boundary before the producer can build without Qt.
 
 Packing is **100% covered** headlessly, including topology reconstruction, owned
 geometry versus borrowed images, glyph conversion, first-key texture identity,
 ordered draw coalescing/clipping, input and capacity failures, latched errors,
 final scene validation and publication sealing. See kata **tsww**.
+
+## Materials and symbol passes
+
+`SceneBuilder.Primitive(tile, wrap, primitive, lookup)` selects solid or pattern
+paint, computes pattern size/phase with `view.PatternPhase` and clips geometry to
+the 256-unit tile. Patterns request a white, full-opacity sprite; their evaluated
+opacity stays in the material. Missing patterns are skipped. Coordinates remain
+tile-local, and caller transforms provide map positioning.
+
+`SceneBuilder.SymbolLayer(count, symbolAt, atlasID, lookup)` emits one layer's
+accepted icons first, then every eligible text halo, then every accepted text fill.
+This preserves the original pass ordering and prevents later halos covering prior
+fills. The indexed accessor returns `RenderSymbol`, combining shared evaluated
+`placement.Symbol`, collision acceptance and an optional prepared glyph layout.
+It must return the same immutable sequence on each of three traversals. No
+candidate slice is converted or retained. Negative counts or missing accessors
+for nonempty layers latch `ErrPackingInput`; counts above **10,000** fail before
+accessor calls. Zero count needs no accessor. Accessor work is caller-bounded.
+
+Icon and text offsets retain their original size multiplication; angles follow
+map/viewport alignment through `placement.RenderedSymbolAngle`. Icons use the
+original anchor/quad arithmetic and texture key including name/color/opacity.
+Text layouts must already have complete atlas coverage and match the builder's
+expanded/indexed mode. Missing layouts or rejected text are skipped. Halo passes
+require positive width and nonzero halo alpha. The returned count is accepted text
+fills and is meaningful only when `Finish` succeeds. Symbols are not tile-clipped.
+
+`SpriteLookup` is synchronous, caller-owned resource readiness/cache policy. False
+means unavailable; nil means no sprites. Successful images require finite positive
+pixel ratios, and texture insertion validates dimensions/storage. Pixel bytes may
+be retained as immutable scene data. Builders stop accessor/packing work after
+errors and preserve sealed publication. This adds no native fallback or live upload
+queue. Parent adapters copy only value paint fields and share layout/image buffers.
+
+Headless tests cover pass and texture order, labels, solid/pattern materials,
+world-wrap pattern phase, pixel ratios, anchors, rotations, offsets, halo/fill
+paint, missing/rejected symbols, nil accessors, limits and error propagation in
+both representations. All new functions have **100% coverage**. Tracked by **jyqg**.
 
 ## Verification
 
