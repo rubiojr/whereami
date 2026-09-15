@@ -5,6 +5,7 @@ import (
 	"maps"
 	"testing"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,6 +21,23 @@ func TestFixtureFontStacks(t *testing.T) {
 	})
 	assert.Equal(t, []string{"Alpha", "Arabic", "Zulu"}, fonts)
 	assert.Empty(t, fixtureFontStacks(nil))
+}
+
+func TestFixtureLayoutsPreserveCandidateIndexesAndLimit(t *testing.T) {
+	bucket := &tileBucket{symbols: []libertySymbolCandidate{
+		{iconName: "airport"}, {text: "A", fontStack: "font", textSize: 24}, {text: "B", fontStack: "font", textSize: 24},
+	}}
+	fonts := map[string]map[uint32]sdfGlyph{"font": {'A': testSDFGlyph('A', 2, 2, 0, -2, 4, 90)}}
+	layouts, missing, err := fixtureLayouts(bucket, fonts)
+	require.NoError(t, err)
+	assert.Len(t, layouts, 1)
+	assert.Contains(t, layouts, libertySDFLayoutKey{tile: pinnedTile, index: 1})
+	assert.Equal(t, []string{"font"}, missing)
+	bucket.symbols = make([]libertySymbolCandidate, maximumSDFSceneLayouts+1)
+	layouts, missing, err = fixtureLayouts(bucket, fonts)
+	assert.ErrorIs(t, err, geometry.ErrGeometryLimit)
+	assert.Nil(t, layouts)
+	assert.Nil(t, missing)
 }
 
 func TestFixtureGlyphLoaderInvalidTile(t *testing.T) {

@@ -111,6 +111,58 @@ jobs. Primitive assembly checks triangle completeness and preserves the MVT
 feature-resource error identity; it is not a second validation pass over already
 prepared coordinates/indices.
 
+## Font discovery and text preparation
+
+`TextRequest` carries only text, exact font-stack identity and `glyph.LayoutOptions`.
+Its `Layout` method wraps the existing metric layout in a `glyph.PreparedLayout`.
+It does not select eligibility or font readiness: live callers retain those rules
+and Qt fallback policy. The parent shares one request adapter between live shaping
+and offline fixture preparation.
+
+`FontStacks` consumes `iter.Seq2[K, TextRequest]` and returns sorted, unique font
+identities for every nonempty text. It preserves empty/untrimmed names and includes
+unsupported scripts, matching the previous discovery pass. Nil input yields an
+empty slice. Request count, iterator work and identity sizes are caller-bounded.
+Iterators run synchronously and must honor early stop; no intermediate candidate
+or request slice is required.
+
+`DecodeFontRanges` decodes one supplied PBF range per exact font identity, with a
+common caller-provided range start (the fixture uses zero). It reuses
+`glyph.DecodeRange`, preserving per-response byte/metric limits and owns decoded
+maps/bitmaps. Errors include the font identity and return nil output. Map iteration
+order and aggregate font count/input bytes are caller-owned; this is not a new
+network ingestion policy. Empty input returns an owned empty map.
+
+`PrepareTextLayouts` consumes keyed requests and immutable decoded font maps. It
+returns an owned layout map plus sorted, unique missing-font identities under the
+fixture's **SDF-only** policy:
+
+- Empty text is skipped. Unsupported scripts, invalid/oversized text and missing
+  required glyph keys record the font as missing; no native fallback is attempted.
+- `TextComplete` checks the original text before whitespace processing. CR/LF need
+  no glyph; other whitespace does, even if layout will later trim it. Coverage
+  checks keys and SDF eligibility, not metrics, shaping or atlas rectangles.
+- Complete glyph coverage with invalid layout options omits the label without
+  reporting a missing font. This preserves the previous distinction.
+- At most **10,000 yielded requests**, including empty/duplicate requests, are
+  allowed. Overflow stops iteration and returns nil layouts/missing list with
+  `geometry.ErrGeometryLimit`, even after earlier successful layouts. Work between
+  iterator yields remains caller-owned. Nil input yields empty owned results.
+- Keys retain source candidate identity. Repeated keys replace the preceding
+  successful layout; skipped requests do not erase it. Layout buffers are owned,
+  while glyph bitmap bytes are immutable borrows from the supplied font maps.
+
+The parent iterator yields value requests using original tile/candidate keys. The
+fixture still calls its loader once, after tile compilation, then invokes these
+shared helpers. Single-pass preparation and local file/cache policy are preserved.
+Final scene packing and overall fixture orchestration remain parent-bound.
+
+All new text helpers have **100% coverage**, including exact identity/discovery,
+original-text coverage, missing-font versus invalid-layout results, duplicate keys,
+early iterator stop, limits, range-set errors and ownership. Optional pinned-font
+tests decode Regular/Bold/Italic PBFs without Qt. Parent tests check candidate indexes,
+limit propagation and the existing one-loader-call behavior. Tracked by **wxt5**.
+
 ## Verification
 
 ```sh

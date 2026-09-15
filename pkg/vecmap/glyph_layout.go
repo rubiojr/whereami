@@ -4,6 +4,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
@@ -159,16 +160,16 @@ func normalizeLibertySymbolText(text string) string {
 }
 
 func shapeSDFText(candidate libertySymbolCandidate, glyphs map[uint32]sdfGlyph) *sdfTextLayout {
-	prepared, ok := glyph.LayoutText(candidate.text, candidate.fontStack, glyphs, glyph.LayoutOptions{
+	return libertyTextRequest(candidate).Layout(glyphs)
+}
+
+func libertyTextRequest(candidate libertySymbolCandidate) compiler.TextRequest {
+	return compiler.TextRequest{Text: candidate.text, FontStack: candidate.fontStack, Options: glyph.LayoutOptions{
 		TextSize: candidate.textSize, LetterSpacing: candidate.letterSpacing,
 		MaximumWidth: candidate.maximumWidth, LineHeight: candidate.lineHeight,
 		Anchor: candidate.textAnchor, Justify: candidate.textJustify,
 		HaloWidth: candidate.haloWidth, HaloBlur: candidate.haloBlur,
-	})
-	if !ok {
-		return nil
-	}
-	return &sdfTextLayout{TextLayout: prepared}
+	}}
 }
 
 func buildSDFAtlas(glyphs map[sdfGlyphKey]sdfGlyph) *sdfGlyphAtlas {

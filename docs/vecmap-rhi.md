@@ -1395,6 +1395,61 @@ excluding I/O, JSON and GPU work, rather than MapLibre parity. Remaining extract
 includes candidate-to-layout/font orchestration and final scene packing so the
 fixture producer can build without Qt/cgo, before live update and presentation gates.
 
+### Headless font discovery and text requests
+
+Committed shared prepared layouts as `279c65c`, then continued with kata **wxt5**.
+`compiler.TextRequest` and its `Layout` method share candidate-to-metric-layout
+adaptation between live and offline consumers. `FontStacks`, `DecodeFontRanges`,
+`TextComplete` and `PrepareTextLayouts` extract the fixture's discovery, range-set
+decoding and SDF-only layout preparation. They reuse existing glyph algorithms and
+standard Go iterators, adding no module dependency.
+
+The parent yields value requests with original tile/candidate keys, avoiding a
+converted candidate slice or map. Font discovery retains sorted unique exact names,
+including unsupported text and empty/untrimmed font identities. Availability checks
+the original text before whitespace processing; only CR/LF need no glyph. Missing
+glyphs or unsupported/invalid text record the font as missing, while a metric-layout
+failure after complete coverage simply omits the label. Live font resolution and
+Qt fallback remain adapter-owned; the low-level request Layout method does not
+enforce the fixture's SDF-only policy.
+
+Text preparation caps yielded requests at the existing 10,000-layout ceiling,
+including duplicates/empty text, stops the iterator on overflow and returns nil
+outputs with a geometry-limit error. Iterator work between yields, font-discovery
+cardinality and aggregate font input bytes remain caller-bounded. Range decoding
+retains per-PBF bounds and atomic font-context errors. Layout/map buffers are owned;
+bitmap slices are immutable borrows. The fixture retains its single loader call
+and compilation pass. Final scene packing remains parent-bound.
+
+Verification:
+
+- Compiler coverage remains **100%**, including new discovery/layout/range-set
+  functions. Headless amd64/386 tests verify font identity, completeness before
+  normalization, missing versus invalid-layout behavior, duplicate keys, early
+  iterator stop, exact limits, ownership and all three pinned font ranges.
+- Parent regressions preserve candidate indexes, propagate layout limits and retain
+  the existing one-loader-call tests. Full v4 module tests, v1 parent/compiler
+  integration-race checks, targeted staticcheck and application build pass.
+- All three v1 captures remain byte-identical to the original references: 45 draws,
+  62 labels, complete fonts and unchanged geometry/textures.
+- New production functions are at most 10 in complexity review. Gopls reports no
+  new build errors. Repository-wide staticcheck retains only generated ST1006
+  warnings; the recorded GO-2026-5024 baseline remains unresolved.
+
+Separate v4 test binaries ran before/after/after/before with identical pinned assets,
+GOMAXPROCS 16 and two-second direct-fixture samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before text preparation extraction | 36.82 / 37.82 ms | 90,782,116 / 90,781,695 | 102,315 / 102,314 |
+| After text preparation extraction | 37.28 / 37.72 ms | 90,780,955 / 90,781,264 | 102,319 / 102,319 |
+
+Timing ranges overlap and volume stays about **90.78 MB/op**. The iterator-based
+boundary has roughly four to five extra allocations per fixture in these samples;
+there is no large conversion buffer. No speedup is claimed. Samples exclude file
+I/O, JSON and GPU work, and establish no MapLibre parity. Next is final scene
+packing and headless fixture orchestration, followed by live-update/parity gates.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

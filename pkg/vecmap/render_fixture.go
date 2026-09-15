@@ -2,10 +2,10 @@ package vecmap
 
 import (
 	"fmt"
+	"iter"
 	"math"
-	"slices"
-	"unicode/utf8"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 )
@@ -73,7 +73,10 @@ func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, option
 	if err != nil {
 		return nil, err
 	}
-	layouts, missing := fixtureLayouts(bucket, glyphs)
+	layouts, missing, err := fixtureLayouts(bucket, glyphs)
+	if err != nil {
+		return nil, err
+	}
 	fixture.MissingFonts = missing
 	neededGlyphs := sdfLayoutGlyphs(layouts)
 	atlas, _ := buildRetainedSDFAtlas(neededGlyphs, nil)
@@ -128,69 +131,25 @@ func prepareFixtureBucket(tileData []byte, indexed bool) (*tileBucket, error) {
 }
 
 func fixtureFontStacks(candidates []libertySymbolCandidate) []string {
-	stacks := make(map[string]struct{})
-	for _, candidate := range candidates {
-		if candidate.text != "" {
-			stacks[candidate.fontStack] = struct{}{}
-		}
-	}
-	fonts := make([]string, 0, len(stacks))
-	for stack := range stacks {
-		fonts = append(fonts, stack)
-	}
-	slices.Sort(fonts)
-	return fonts
+	return compiler.FontStacks(fixtureTextRequests(candidates))
 }
 
 func decodeFixtureGlyphs(ranges map[string][]byte) (map[string]map[uint32]sdfGlyph, error) {
-	glyphs := make(map[string]map[uint32]sdfGlyph)
-	for font, data := range ranges {
-		rangeData, err := decodeSDFGlyphRange(data, glyphRangeKey{fontStack: font})
-		if err != nil {
-			return nil, fmt.Errorf("font %q: %w", font, err)
-		}
-		glyphs[font] = rangeData.Glyphs
-	}
-	return glyphs, nil
+	return compiler.DecodeFontRanges(ranges, 0)
 }
 
-func fixtureLayouts(bucket *tileBucket, glyphs map[string]map[uint32]sdfGlyph) (map[libertySDFLayoutKey]*sdfTextLayout, []string) {
-	layouts := make(map[libertySDFLayoutKey]*sdfTextLayout)
-	missing := make(map[string]bool)
-	for index, candidate := range bucket.symbols {
-		if candidate.text == "" {
-			continue
-		}
-		available := glyphs[candidate.fontStack]
-		if !fixtureTextComplete(candidate.text, available) {
-			missing[candidate.fontStack] = true
-			continue
-		}
-		if layout := shapeSDFText(candidate, available); layout != nil {
-			layouts[libertySDFLayoutKey{tile: pinnedTile, index: index}] = layout
-		}
-	}
-	fonts := make([]string, 0, len(missing))
-	for font := range missing {
-		fonts = append(fonts, font)
-	}
-	slices.Sort(fonts)
-	return layouts, fonts
+func fixtureLayouts(bucket *tileBucket, glyphs map[string]map[uint32]sdfGlyph) (map[libertySDFLayoutKey]*sdfTextLayout, []string, error) {
+	return compiler.PrepareTextLayouts(fixtureTextRequests(bucket.symbols), glyphs)
 }
 
-func fixtureTextComplete(text string, glyphs map[uint32]sdfGlyph) bool {
-	if glyphs == nil || !utf8.ValidString(text) || !sdfTextEligible(text) {
-		return false
-	}
-	for _, code := range text {
-		if code == '\n' || code == '\r' {
-			continue
-		}
-		if _, exists := glyphs[uint32(code)]; !exists {
-			return false
+func fixtureTextRequests(candidates []libertySymbolCandidate) iter.Seq2[libertySDFLayoutKey, compiler.TextRequest] {
+	return func(yield func(libertySDFLayoutKey, compiler.TextRequest) bool) {
+		for index, candidate := range candidates {
+			if !yield(libertySDFLayoutKey{tile: pinnedTile, index: index}, libertyTextRequest(candidate)) {
+				return
+			}
 		}
 	}
-	return true
 }
 
 // Frame creates camera data without changing the scene or its resource IDs.
