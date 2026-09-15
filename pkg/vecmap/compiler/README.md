@@ -163,6 +163,62 @@ early iterator stop, limits, range-set errors and ownership. Optional pinned-fon
 tests decode Regular/Bold/Italic PBFs without Qt. Parent tests check candidate indexes,
 limit propagation and the existing one-loader-call behavior. Tracked by **wxt5**.
 
+## Scene packing
+
+`NewSceneBuilder(indexed, maximumElements)` creates a single-owner packer for one
+retained mesh plus ordered draws and textures. A zero limit selects the fixture's
+existing **36,780,000-element** ceiling; a positive limit may lower it. The builder
+must not be copied or used concurrently, and its zero value is invalid.
+
+- `Geometry` converts tile-local float64 XY coordinates into scene vertices.
+  Expanded output writes directly into the final buffer without a conversion
+  slice; indexed output reuses `geometry.Builder` and preserves topology. Indexed
+  inputs can also be expanded directly.
+- `ExpandedText` accepts packed XYUV triangles for expanded output;
+  `IndexedText` accepts text vertices and optional triangle indices for either
+  output mode, including icon quads. Both retain the original `math.Sincos` and
+  `geometry.TransformTextVertex` arithmetic. Inputs are copied into owned buffers.
+- Each call appends an ordered draw with the supplied material and clip, coalescing
+  only adjacent compatible draws through `scene.AppendDraw`. No sorting occurs.
+  `PackedColor` preserves the original integer-to-float32 division order.
+- `Texture` assigns IDs starting at one, in first-seen logical-key order, and
+  borrows immutable RGBA bytes for the returned scene's lifetime. Repeated keys
+  reuse the first image even if later metadata differs. Dimensions/storage are
+  validated on first insertion, with overflow-safe byte arithmetic.
+- `GlyphAtlas` converts bounded single-channel SDF pixels into owned RGB distance
+  bytes with opaque alpha, using the reserved `glyph-atlas` key. Nil skips it;
+  subsequent uses of that key reuse the original texture.
+
+Geometry limits cover total draw elements, unique indexed vertices and each
+temporary input-to-packed vertex buffer before allocation. Triangle completeness
+and local indices are checked before append. Both output modes now enforce the
+ceiling (the old expanded path relied on earlier compilation budgets). At most
+**16,384 textures** are retained, each with dimensions at most 16,384 per axis,
+matching scene validation. Texture pixels are already caller-owned; aggregate
+image bytes, logical-key sizes, scheduling and repeated method-call work remain
+caller-bounded. Glyph conversion is separately capped at 2048 per axis.
+
+Methods latch their first error and skip further packing. `Finish` validates the
+scene, including finite packed coordinates, material/clip values and texture
+references, and returns nil on any error. Thus callers never receive a partially
+valid scene. An empty mesh is invalid under the existing scene contract. Successful
+Finish seals the builder; further mutations latch `ErrPackingClosed` without
+changing previously published data. Finish may be repeated before any attempted
+mutation. Returned geometry/draw/texture metadata is owned and immutable after
+publication; general texture pixel bytes remain immutable borrows.
+
+Mesh ID and all revisions are one; texture IDs are scene-local. Combining multiple
+packed scenes or publishing incremental resource updates requires caller-owned ID
+and revision remapping. This is offline retained packing, not a GPU upload queue.
+The parent still selects accepted symbols, layer order, icon/halo/fill passes,
+pattern dimensions/phase and material values. Top-level fixture orchestration is
+the remaining boundary before the producer can build without Qt.
+
+Packing is **100% covered** headlessly, including topology reconstruction, owned
+geometry versus borrowed images, glyph conversion, first-key texture identity,
+ordered draw coalescing/clipping, input and capacity failures, latched errors,
+final scene validation and publication sealing. See kata **tsww**.
+
 ## Verification
 
 ```sh
@@ -171,6 +227,8 @@ WHEREAMI_VECTOR_TILE_FIXTURE=/path/to/pinned.pbf \
   CGO_ENABLED=0 GOARCH=386 go test ./pkg/vecmap/compiler
 CGO_ENABLED=0 go test ./pkg/vecmap/compiler -run '^$' \
   -fuzz '^FuzzLayerCompilation$' -fuzztime=20s
+CGO_ENABLED=0 go test ./pkg/vecmap/compiler -run '^$' \
+  -fuzz '^FuzzScenePacking$' -fuzztime=20s
 ```
 
 Coverage is **100%**. Tests cover paint/defaults, filters, solid/pattern/outline

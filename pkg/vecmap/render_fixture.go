@@ -3,7 +3,6 @@ package vecmap
 import (
 	"fmt"
 	"iter"
-	"math"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
@@ -68,7 +67,7 @@ func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, option
 		}
 	}
 	center := tileLocalCoordinate(pinnedTile, roadPoint{X: 128, Y: 128})
-	fixture := &RenderFixture{Scene: &scene.Scene{}, Camera: NewCamera(center, 10, 0, 512, 512), bucket: bucket}
+	fixture := &RenderFixture{Camera: NewCamera(center, 10, 0, 512, 512), bucket: bucket}
 	glyphs, err := decodeFixtureGlyphs(glyphRanges)
 	if err != nil {
 		return nil, err
@@ -85,14 +84,10 @@ func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, option
 		return nil, err
 	}
 	fixture.accepted = acceptedLibertySymbols(fixture.Camera, []loadedRoadTile{{id: pinnedTile, roads: bucket}}, layouts)
-	builder := fixtureBuilder{fixture: fixture, textures: make(map[string]uint64), indexed: options.DirectIndexed,
-		mesh: geometry.NewBuilder[scene.Vertex](options.DirectIndexed, maxTileRenderedTriangles*3+maximumSDFSceneLayouts*maximumSymbolTextRunes*12+maxTileSymbols*6)}
+	builder := fixtureBuilder{fixture: fixture, indexed: options.DirectIndexed,
+		packing: compiler.NewSceneBuilder(options.DirectIndexed, 0)}
 	if fixture.sdf != nil {
-		pixels := make([]byte, len(atlas.Pixels)*4)
-		for index, value := range atlas.Pixels {
-			pixels[index*4], pixels[index*4+1], pixels[index*4+2], pixels[index*4+3] = value, value, value, 255
-		}
-		builder.atlas = builder.texture("glyph-atlas", atlas.Width, atlas.Height, pixels)
+		builder.atlas = builder.packing.GlyphAtlas(atlas)
 	}
 	layers, err := compiledLibertyLayers()
 	if err != nil {
@@ -106,11 +101,8 @@ func compileRenderFixture(tileData []byte, glyphRanges map[string][]byte, option
 			builder.symbols(layer.Order)
 		}
 	}
-	if builder.err != nil {
-		return nil, builder.err
-	}
-	fixture.Scene.Meshes = []scene.Mesh{{ID: 1, Revision: 1, Vertices: builder.mesh.Vertices, Indices: builder.mesh.Indices}}
-	if err := fixture.Scene.Validate(); err != nil {
+	fixture.Scene, err = builder.packing.Finish()
+	if err != nil {
 		return nil, err
 	}
 	return fixture, nil
@@ -160,38 +152,14 @@ func (f *RenderFixture) Frame(camera Camera) scene.Frame {
 }
 
 type fixtureBuilder struct {
-	fixture  *RenderFixture
-	mesh     geometry.Builder[scene.Vertex]
-	indexed  bool
-	err      error
-	textures map[string]uint64
-	atlas    uint64
-}
-
-func (b *fixtureBuilder) texture(key string, width, height int, pixels []byte) uint64 {
-	if id, exists := b.textures[key]; exists {
-		return id
-	}
-	id := uint64(len(b.textures) + 1)
-	b.textures[key] = id
-	b.fixture.Scene.Textures = append(b.fixture.Scene.Textures, scene.Texture{ID: id, Revision: 1, Width: width, Height: height, RGBA: pixels})
-	return id
-}
-
-func fixtureColor(c mapColor) [4]float32 {
-	return [4]float32{float32(c.Red) / 255, float32(c.Green) / 255, float32(c.Blue) / 255, float32(c.Alpha) / 255}
-}
-
-func (b *fixtureBuilder) draw(first int, material scene.Material, clip [4]float32) {
-	count := b.mesh.Count() - first
-	if count == 0 {
-		return
-	}
-	b.fixture.Scene.Draws = scene.AppendDraw(b.fixture.Scene.Draws, scene.Draw{Mesh: 1, First: uint32(first), Count: uint32(count), Material: material, Clip: clip})
+	fixture *RenderFixture
+	packing *compiler.SceneBuilder
+	indexed bool
+	atlas   uint64
 }
 
 func (b *fixtureBuilder) primitive(primitive libertyRenderPrimitive) {
-	material := scene.Material{Color: fixtureColor(primitive.color)}
+	material := scene.Material{Color: compiler.PackedColor(primitive.color)}
 	if primitive.patternName != "" {
 		sprite, exists := libertySprite(primitive.patternName, mapColor{255, 255, 255, 255}, 1)
 		if !exists {
@@ -199,23 +167,9 @@ func (b *fixtureBuilder) primitive(primitive libertyRenderPrimitive) {
 		}
 		width, height := float64(sprite.width)/sprite.pixelRatio*primitive.patternScale, float64(sprite.height)/sprite.pixelRatio*primitive.patternScale
 		x, y := libertyPatternPhase(pinnedTile, 0, width, height)
-		material = scene.Material{Kind: scene.Pattern, Texture: b.texture("pattern/"+primitive.patternName, sprite.width, sprite.height, sprite.pixels), Color: [4]float32{1, 1, 1, float32(primitive.opacity)}, PatternSize: [2]float32{float32(width), float32(height)}, PatternPhase: [2]float32{float32(x), float32(y)}}
+		material = scene.Material{Kind: scene.Pattern, Texture: b.packing.Texture("pattern/"+primitive.patternName, sprite.width, sprite.height, sprite.pixels), Color: [4]float32{1, 1, 1, float32(primitive.opacity)}, PatternSize: [2]float32{float32(width), float32(height)}, PatternPhase: [2]float32{float32(x), float32(y)}}
 	}
-	first := b.mesh.Count()
-	if b.indexed {
-		vertices := make([]scene.Vertex, len(primitive.triangles))
-		for i, point := range primitive.triangles {
-			vertices[i] = scene.Vertex{X: float32(point.X), Y: float32(point.Y)}
-		}
-		if b.err == nil {
-			b.err = b.mesh.Append(vertices, primitive.indices)
-		}
-	} else {
-		for _, point := range primitive.triangles {
-			b.mesh.Vertices = append(b.mesh.Vertices, scene.Vertex{X: float32(point.X), Y: float32(point.Y)})
-		}
-	}
-	b.draw(first, material, [4]float32{0, 0, tileSize, tileSize})
+	b.packing.Geometry(geometry.Mesh{Vertices: primitive.triangles, Indices: primitive.indices}, material, [4]float32{0, 0, tileSize, tileSize})
 }
 
 func (b *fixtureBuilder) symbols(order int) {
@@ -229,9 +183,9 @@ func (b *fixtureBuilder) symbols(order int) {
 				width, height := float64(sprite.width)/sprite.pixelRatio*candidate.iconSize, float64(sprite.height)/sprite.pixelRatio*candidate.iconSize
 				x, y := libertyAnchoredOrigin(candidate.iconAnchor, width, height)
 				quad := geometry.TextQuad(x, y, x+width, y+height, 0, 0, 1, 1)
-				first := b.indexedSymbolVertices(candidate.anchor, quad[:], []uint32{0, 1, 2, 0, 2, 3}, roadPoint{X: candidate.iconOffset.X * candidate.iconSize, Y: candidate.iconOffset.Y * candidate.iconSize}, libertyRenderedSymbolAngle(candidate.iconLineAngle, candidate.iconRotate, candidate.iconViewportAligned))
 				key := fmt.Sprintf("icon/%s/%v/%g", candidate.iconName, candidate.iconColor, candidate.iconOpacity)
-				b.draw(first, scene.Material{Kind: scene.Image, Texture: b.texture(key, sprite.width, sprite.height, sprite.pixels), Color: [4]float32{1, 1, 1, 1}, MapAligned: !candidate.iconViewportAligned}, [4]float32{})
+				material := scene.Material{Kind: scene.Image, Texture: b.packing.Texture(key, sprite.width, sprite.height, sprite.pixels), Color: [4]float32{1, 1, 1, 1}, MapAligned: !candidate.iconViewportAligned}
+				b.packing.IndexedText(candidate.anchor, quad[:], []uint32{0, 1, 2, 0, 2, 3}, roadPoint{X: candidate.iconOffset.X * candidate.iconSize, Y: candidate.iconOffset.Y * candidate.iconSize}, libertyRenderedSymbolAngle(candidate.iconLineAngle, candidate.iconRotate, candidate.iconViewportAligned), material)
 			}
 		}
 	}
@@ -261,36 +215,12 @@ func (b *fixtureBuilder) symbols(order int) {
 			}
 			offset := roadPoint{X: candidate.textOffset.X * candidate.textSize, Y: candidate.textOffset.Y * candidate.textSize}
 			angle := libertyRenderedSymbolAngle(candidate.lineAngle, candidate.textRotate, candidate.viewportAligned)
-			var first int
+			material := scene.Material{Kind: kind, Texture: b.atlas, Color: compiler.PackedColor(color), FontScale: float32(layout.Scale), HaloWidth: float32(candidate.haloWidth), HaloBlur: float32(candidate.haloBlur), MapAligned: !candidate.viewportAligned}
 			if b.indexed {
-				first = b.indexedSymbolVertices(candidate.anchor, layout.Vertices, layout.Indices, offset, angle)
+				b.packing.IndexedText(candidate.anchor, layout.Vertices, layout.Indices, offset, angle, material)
 			} else {
-				first = b.symbolVertices(candidate.anchor, layout.Expanded, offset, angle)
+				b.packing.ExpandedText(candidate.anchor, layout.Expanded, offset, angle, material)
 			}
-			b.draw(first, scene.Material{Kind: kind, Texture: b.atlas, Color: fixtureColor(color), FontScale: float32(layout.Scale), HaloWidth: float32(candidate.haloWidth), HaloBlur: float32(candidate.haloBlur), MapAligned: !candidate.viewportAligned}, [4]float32{})
 		}
 	}
-}
-
-func (b *fixtureBuilder) symbolVertices(anchor roadPoint, vertices []float32, offset roadPoint, angle float64) int {
-	first := b.mesh.Count()
-	sin, cos := math.Sincos(angle)
-	for index := 0; index < len(vertices); index += 4 {
-		vertex := geometry.TextVertex{X: vertices[index], Y: vertices[index+1], U: vertices[index+2], V: vertices[index+3]}
-		b.mesh.Vertices = append(b.mesh.Vertices, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
-	}
-	return first
-}
-
-func (b *fixtureBuilder) indexedSymbolVertices(anchor roadPoint, vertices []geometry.TextVertex, indices []uint32, offset roadPoint, angle float64) int {
-	first := b.mesh.Count()
-	sin, cos := math.Sincos(angle)
-	packed := make([]scene.Vertex, len(vertices))
-	for i, vertex := range vertices {
-		packed[i] = geometry.TransformTextVertex(anchor, vertex, offset, sin, cos)
-	}
-	if b.err == nil {
-		b.err = b.mesh.Append(packed, indices)
-	}
-	return first
 }

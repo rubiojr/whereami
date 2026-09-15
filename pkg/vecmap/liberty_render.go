@@ -5,8 +5,6 @@ import (
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 )
 
-const maxTileRenderedTriangles = geometry.MaxLineTriangles
-
 type libertyRenderPrimitive struct {
 	order     int
 	layerID   string

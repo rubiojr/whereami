@@ -1450,6 +1450,61 @@ there is no large conversion buffer. No speedup is claimed. Samples exclude file
 I/O, JSON and GPU work, and establish no MapLibre parity. Next is final scene
 packing and headless fixture orchestration, followed by live-update/parity gates.
 
+### Headless scene buffer and draw packing
+
+Committed font/text preparation as `f6ad403`, then continued with kata **tsww**.
+`compiler.SceneBuilder` now owns final geometry/text vertex packing, indexed
+assembly, first-seen texture identities, glyph RGB-distance conversion, adjacent
+draw coalescing and scene validation. The parent supplies evaluated materials,
+clipping and accepted symbol passes in the original order. Expanded geometry/text
+writes directly into final buffers; indexed geometry and icon topology reuse the
+existing builder. No post-hashing or conversion pass is introduced.
+
+The builder preserves one mesh with ID/revision one, texture IDs starting at one,
+original float32 color conversion, `Sincos`/text transform arithmetic and borrowed
+immutable sprite pixels. Glyph conversion owns its output bytes. Repeated texture
+keys keep the first image. `Finish` validates then seals the output; errors return
+nil and later builder mutation cannot change a published scene. Resource identities
+are scene-local, not a new incremental-upload protocol.
+
+Capacity checks precede scratch allocation and apply the existing combined
+**36,780,000-element** fixture ceiling to both output modes and unique vertex
+storage; callers can lower it. Expanded packing previously depended on upstream
+limits. Triangle/index validation occurs before append. Texture metadata is capped
+at 16,384 entries with valid scene dimensions/storage, checked without 386 integer
+overflow; image-byte ownership and aggregate image memory remain caller-bounded.
+Glyph conversion retains its 2048-square bound. Methods latch the first error and
+skip subsequent preparation; final finite/material/clip checks reuse scene.Validate.
+
+Verification:
+
+- Compiler coverage remains **100%**, including new packing functions. Headless
+  amd64/386 tests cover topology, draw order/coalescing/clips, transforms, texture
+  identities, ownership, glyph conversion, malformed/oversized input, error latching,
+  final validation and sealed publication. A 20-second fuzz run completed
+  **1,626,740 executions** without failure.
+- Full v4 module coverage tests, v1 parent/compiler integration-race checks,
+  targeted staticcheck and application build pass; gopls reports no build errors.
+  New functions are all at most 10 in complexity review. Existing generated ST1006
+  and recorded GO-2026-5024 baseline findings remain unresolved.
+- All three v1 captures are byte-identical to the original references: 45 draws,
+  62 labels, complete fonts and unchanged geometry/textures. No GPU or generated
+  binding algorithms changed.
+
+Separate v4 binaries ran before/after/after/before, with identical pinned inputs,
+GOMAXPROCS 16 and two-second direct-fixture preparation samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before shared scene packing | 29.00 / 30.63 ms | 90,780,918 / 90,781,255 | 102,319 / 102,320 |
+| After shared scene packing | 29.68 / 30.80 ms | 90,780,635 / 90,781,098 | 102,318 / 102,319 |
+
+Allocation volume stays about **90.78 MB/op** and timing ranges overlap. No speedup
+is established; every sample is retained. These exclude I/O/JSON/GPU work and do
+not establish MapLibre parity. Layer/material/pass selection and top-level fixture
+orchestration remain parent-bound; extracting them will make the command headless.
+Live update, upload scheduling and matched-quality presentation gates remain open.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and
