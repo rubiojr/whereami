@@ -1,8 +1,8 @@
 # retained
 
 Toolkit-neutral retained fragment updates and ordered scene composition. This is
-the identity/publication layer between prepared tile scenes and a future upload
-planner. It uses the existing `scene.Scene` contract without Qt, cgo or new module
+the identity/publication layer between prepared tile scenes and the acknowledged
+upload planner described below. It uses `scene.Scene` without Qt, cgo or new module
 dependencies. It is not yet connected to the production renderer or QRhi viewer.
 
 ```go
@@ -54,7 +54,8 @@ texture. Local input revisions are ignored.
 
 QRhi already compares mesh/texture ID and revision pairs before uploading. This
 package establishes those pairs for multiple retained fragments; it does not
-perform uploads, track GPU acknowledgements or make native replacement atomic.
+perform uploads or make native replacement atomic. The separate `Planner` tracks
+adapter acknowledgements against exact resource versions.
 
 ## Atomic updates and bounds
 
@@ -137,3 +138,102 @@ the recorded v4/GOMAXPROCS16 run: **316.2 / 299.4 / 288.7 ns/op**, **768 B/op**,
 **6 allocs/op**. It excludes preparation, deep validation and GPU work; it is not
 a frame-performance or MapLibre comparison. See kata **0ex5** and
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md).
+
+## Acknowledged upload planning
+
+`Planner` consumes immutable snapshots from **one Store namespace**. It is a
+single-owner state machine with no native handles. A typical owner runs off the
+render thread, sends batches to the backend, then processes acknowledgement
+messages. Do not call its methods concurrently, including `Current`.
+
+```go
+planner, err := retained.NewPlanner(retained.ResidencyLimits{})
+// Handle err.
+err = planner.SetTarget(snapshot)
+// Handle err. Current() still returns the last fully ready scene.
+batch, err := planner.Next(retained.Budget{Bytes: 16 << 20, Resources: 8})
+// Handle err; nil batch means no queued work. Execute on the native owner.
+// After the entire batch is ready (or failed and rolled back):
+err = planner.Acknowledge(batch.Ticket, success)
+// Handle err. Publish planner.Current() if it changed.
+```
+
+### Admission and publication
+
+- `SetTarget` bounds and validates the scene on the calling preparation worker.
+  Each target obeys Store scene ceilings; resource revisions must be nonzero.
+  The pointer and payload remain immutable borrows. Reusing a version with changed
+  content is forbidden: Store guarantees this identity contract. Validation does
+  not hash/compare payloads against earlier versions.
+- Active plus desired **unique kind/ID/revision versions** must fit the configured
+  residency ceilings before the target changes. Defaults/maxima are **1 GiB of
+  logical payload and 16,384 resources**, sufficient for two maximum-sized Store
+  snapshots. Positive values can lower limits. These are payload budgets, excluding
+  driver alignment, native object/binding overhead, transfer staging and caller-held
+  CPU snapshots. A replacement that cannot coexist with the active scene rejects
+  with `ErrLimit`, retaining the prior target/current scene rather than stalling.
+- `Current()` changes only when every target version is acknowledged resident.
+  Until then it returns the previous ready scene (nil before initial readiness).
+  A draw/instance-only change whose versions are already ready publishes immediately.
+  An empty scene also publishes immediately. `SetTarget(nil)` clears the active
+  scene; acknowledged release batches then reclaim old allocations.
+- Replacement revisions must coexist with the old revision of the same resource
+  ID. Backend maps must key by **kind, ID and revision**, not just ID. The existing
+  QRhi viewer's ID-only residency implementation has not been adapted yet.
+- Target supersession is accepted between batches. Successfully uploaded resources
+  of an abandoned target are retired before new uploads, unless needed by the
+  active/new target. This maintains the residency bound even when stale partial
+  targets temporarily occupy the admission window.
+
+### Batches and acknowledgements
+
+`Next` allows one outstanding batch. Batches contain **either uploads or releases**.
+Releases take priority and follow successful admission order. Uploads follow target
+mesh then texture slice order. Every batch has a fresh, nonzero ticket; ticket
+exhaustion returns `ErrLimit` without issuing work. `SetTarget` and another `Next`
+return `ErrBusy` while acknowledgement is pending.
+
+`Budget.Bytes` and `Budget.Resources` must be positive and within residency limits.
+Upload bytes and total resource operations are bounded per call. Mesh vertex plus
+index buffers form one indivisible unit, as does each texture. An oversized missing
+resource returns **ErrBudget**; it is not skipped or silently admitted over budget.
+Raise the budget explicitly or prepare smaller resource units upstream. This
+checkpoint does not split large uploads into chunks or enforce elapsed-time limits.
+
+`Acknowledge(ticket, success)` affects only the matching outstanding batch. Stale
+and duplicate tickets return `ErrTicket` and leave state intact. Public batch
+descriptor slices are separate from the private acknowledgement record; geometry
+and pixels remain immutable borrows. After failure, `Next` retries with a fresh
+ticket, and pending targets remain unpublished.
+
+The adapter's all-or-nothing batch obligations are concrete:
+
+- Successful upload acknowledgement means **every** staged resource is usable by
+  the next frame, not merely that a CPU request was queued.
+- A failed upload batch must discard all allocations created by that batch before
+  acknowledging failure. Earlier successful batches remain resident.
+- Successful release acknowledgement means all listed allocations have completed
+  their native lifetime obligations. Failed release acknowledgement means none were
+  released. Residency is not reclaimed optimistically before success.
+- Release batches exclude active and desired versions. Before executing retirement,
+  the adapter must consume the newly published current scene and protect any earlier
+  in-flight frames with its native deferred destruction/fence rules. CPU publication
+  alone does not prove that the GPU has stopped using an old resource.
+- An initially empty backend namespace is required. Backend loss/reset requires
+  disposing/resetting native state and creating a new Planner; do not carry CPU
+  ready bits into an empty device. The implicit white texture (ID zero), uniforms,
+  bindings and other backend-owned objects are outside this planner.
+
+Per-call planning scans only bounded resource metadata, not vertex/pixel payloads.
+Repeated small batches may rescan target resources; this is not a priority queue
+or a measured render-thread time budget. Live tile loading, frame transforms,
+selection/placement and native integration remain caller/backend work.
+
+Upload planning (kata **09np**) keeps package coverage at **100%**. Tests cover
+readiness, failed-batch retry, stale tickets, descriptor isolation, retirement,
+supersession, draw-only/empty publication, byte/count admission, oversized units,
+ticket exhaustion and pinned two-fragment replacement under a 12 MiB/two-resource
+batch budget. A fake-backend state-machine fuzz run exercised **431,742 executions**
+in 20 seconds without failure, checking current-scene readiness, release safety and
+peak logical residency. Headless 386, v1 race and full module checks pass. This is
+CPU planning evidence, not GPU latency, presentation or MapLibre parity evidence.

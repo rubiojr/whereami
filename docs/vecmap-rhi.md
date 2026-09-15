@@ -47,8 +47,8 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
 - `pkg/vecmap/fixture`: top-level pinned offline orchestration using the shared
   engine and Liberty assets. The fixture producer builds with `CGO_ENABLED=0`.
 - `pkg/vecmap/retained`: bounded atomic fragment replacement/removal, stable
-  store-wide resource IDs/revisions and explicit ordered snapshot composition.
-  This contract is not yet wired to live loading or a backend upload planner.
+  store-wide resource IDs/revisions, explicit ordered snapshot composition and
+  bounded acknowledged upload/release planning. Not yet wired to live/native execution.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
@@ -1737,6 +1737,59 @@ Next is a bounded upload/admission planner over these stable identities, includi
 successful-upload acknowledgement and old-scene retention until replacement
 resources are ready. Live tile/placement selection, coverage/clip/wrap policy and
 matched-quality presentation comparisons remain separate acceptance gates.
+
+### Acknowledged bounded upload planning
+
+Committed retained fragment updates as **41faeaf**, then continued with kata
+**09np**. `retained.Planner` now consumes immutable Store snapshots and plans exact
+kind/ID/revision upload and release operations. The current scene remains unchanged
+until every desired version has a successful acknowledgement. Old and replacement
+revisions can coexist; obsolete allocations retire only after publication and a
+separate successful release acknowledgement.
+
+Admission rejects active-plus-target unions exceeding configured logical residency
+limits (default/max 1 GiB, 16,384 resources). Each target still obeys Store's scene
+limits. Native overhead/staging and caller-held CPU snapshots have separate budgets.
+Per-batch positive byte/resource limits are explicit. Resources are indivisible:
+oversized uploads return `ErrBudget` rather than exceeding a cap or being skipped.
+The planner does not chunk uploads or promise a wall-clock render-thread budget.
+
+One batch may be outstanding. Stale/duplicate acknowledgement tickets cannot commit
+different work, and failed batches retry with fresh tickets. Public descriptor
+slices are isolated from the private pending record. Supersession happens between
+batches; successfully uploaded but abandoned target versions retire before new
+uploads. Draw-only targets already resident publish immediately, as do empty scenes.
+Nil targets clear publication, then retire resources through the same protocol.
+
+The adapter must stage exact versions, acknowledge uploads only when usable, discard
+an entire failed upload batch, and respect in-flight frames before confirming native
+releases. Failed release acknowledgement means nothing was released. CPU readiness
+is not a GPU fence. Device loss/reset requires a new planner and reset native
+namespace. These obligations are documented in the package README; the current
+ID-only QRhi residency maps have not yet been migrated to versioned staging.
+
+Verification:
+
+- Package remains **100% covered** headlessly. Tests exercise activation, failures,
+  retries, descriptor isolation, stale tickets, revision coexistence, release
+  accounting, supersession, draw-only/empty publication, input/budget rejection and
+  ticket exhaustion.
+- Pinned two-fragment replacement runs through 12 MiB/two-resource batches under a
+  64 MiB/32-resource logical residency cap, preserving the previous scene until
+  readiness and checking that release never targets active/desired versions.
+- A fake-backend fuzz model checks published-resource readiness, release safety
+  and peak logical residency across target changes, batches and acknowledgements:
+  **431,742 executions**, 20 seconds, no failure.
+- Headless amd64/386, v1 race, full v4 coverage, targeted staticcheck and application
+  build pass. Gopls reports no diagnostics. Complexity review retains Next12 for
+  explicit state/budget/ticket guards; other new production functions are <=10.
+  Generated ST1006 and the recorded **GO-2026-5024** baseline remain.
+
+This checkpoint changes CPU planning only. No new dependency, generated bindings,
+GPU upload algorithm, production renderer or fixture geometry is changed. There
+is no new GPU/presentation timing or parity claim. Next is revision-aware QRhi
+staging/execution with acknowledged batches and native lifetime tests, followed by
+live tile/placement wiring and matched-quality presentation validation.
 
 ## Flatpak integration
 

@@ -59,4 +59,31 @@ func TestPinnedMultiFragmentComposition(t *testing.T) {
 	assert.Equal(t, combined.Meshes[1].ID, updated.Meshes[1].ID)
 	assert.Equal(t, uint64(2), updated.Meshes[1].Revision)
 	assert.Equal(t, uint64(1), combined.Meshes[1].Revision)
+	p := planner(t, ResidencyLimits{Bytes: 64 << 20, Resources: 32})
+	budget := Budget{Bytes: 12 << 20, Resources: 2}
+	require.NoError(t, p.SetTarget(combined))
+	settle(t, p, budget)
+	require.NoError(t, p.SetTarget(updated))
+	assert.Same(t, combined, p.Current())
+	for range 32 {
+		batch, err := p.Next(budget)
+		require.NoError(t, err)
+		if batch == nil {
+			break
+		}
+		var residentBytes uint64
+		for _, resource := range p.resident {
+			residentBytes += resource.bytes()
+		}
+		assert.LessOrEqual(t, residentBytes+batch.Bytes, p.limits.Bytes)
+		assert.LessOrEqual(t, len(batch.Uploads)+len(batch.Releases), budget.Resources)
+		assert.LessOrEqual(t, batch.Bytes, budget.Bytes)
+		for _, version := range batch.Releases {
+			assert.NotContains(t, p.activeSet, version)
+			assert.NotContains(t, p.targetSet, version)
+		}
+		require.NoError(t, p.Acknowledge(batch.Ticket, true))
+	}
+	assert.Same(t, updated, p.Current())
+	assert.Len(t, p.resident, len(updated.Meshes)+len(updated.Textures))
 }
