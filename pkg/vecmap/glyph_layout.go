@@ -4,12 +4,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
 
-const maximumSDFSceneLayouts = 10_000
+const maximumSDFSceneLayouts = glyph.MaxPreparedLayouts
 
 type libertySDFLayoutKey struct {
 	tile  vectorTileID
@@ -20,14 +19,7 @@ type sdfGlyphKey = glyph.Key
 
 type sdfPositionedGlyph = glyph.PositionedGlyph
 
-type sdfTextLayout struct {
-	glyphs          []sdfPositionedGlyph
-	bounds          libertyCollisionBox
-	vertices        []float32
-	indexedVertices []geometry.TextVertex
-	indices         []uint32
-	scale           float64
-}
+type sdfTextLayout = glyph.PreparedLayout
 
 type sdfAtlasRect = glyph.Rect
 type sdfGlyphAtlas = glyph.Atlas
@@ -85,24 +77,9 @@ func buildSDFScene(
 }
 
 func buildSDFSceneGeometry(layouts map[libertySDFLayoutKey]*sdfTextLayout, atlas *sdfGlyphAtlas, indexed bool) (*sdfScene, error) {
-	if len(layouts) == 0 || atlas == nil {
-		return nil, nil
-	}
-	renderable := make(map[libertySDFLayoutKey]*sdfTextLayout, len(layouts))
-	for key, layout := range layouts {
-		if !sdfLayoutFitsAtlas(layout, atlas) {
-			continue
-		}
-		prepared := glyph.TextLayout{Glyphs: layout.glyphs, Scale: layout.scale}
-		mesh, err := glyph.BuildLayoutMesh(&prepared, atlas, indexed)
-		if err != nil {
-			return nil, err
-		}
-		layout.vertices, layout.indexedVertices, layout.indices = mesh.Expanded, mesh.Vertices, mesh.Indices
-		if len(layout.vertices) == 0 && len(layout.indices) == 0 {
-			continue
-		}
-		renderable[key] = layout
+	renderable, err := glyph.PrepareLayouts(layouts, atlas, indexed)
+	if err != nil {
+		return nil, err
 	}
 	if len(renderable) == 0 {
 		return nil, nil
@@ -115,15 +92,7 @@ func buildSDFSceneGeometry(layouts map[libertySDFLayoutKey]*sdfTextLayout, atlas
 }
 
 func sdfLayoutGlyphs(layouts map[libertySDFLayoutKey]*sdfTextLayout) map[sdfGlyphKey]sdfGlyph {
-	glyphs := make(map[sdfGlyphKey]sdfGlyph)
-	for _, layout := range layouts {
-		for _, positioned := range layout.glyphs {
-			if len(positioned.Glyph.Bitmap) > 0 {
-				glyphs[positioned.Key] = positioned.Glyph
-			}
-		}
-	}
-	return glyphs
+	return glyph.LayoutGlyphs(layouts)
 }
 
 func sdfGlyphKeySet(glyphs map[sdfGlyphKey]sdfGlyph) map[sdfGlyphKey]struct{} {
@@ -158,14 +127,6 @@ func buildRetainedSDFAtlas(
 	// degradation on invalid current data; headless callers can inspect the error.
 	atlas, resident, _ := glyph.BuildRetainedAtlas(current, retained)
 	return atlas, resident
-}
-
-func sdfLayoutFitsAtlas(layout *sdfTextLayout, atlas *sdfGlyphAtlas) bool {
-	if layout == nil {
-		return false
-	}
-	prepared := glyph.TextLayout{Glyphs: layout.glyphs, Scale: layout.scale}
-	return glyph.FitsAtlas(&prepared, atlas)
 }
 
 func sdfTextEligible(text string) bool {
@@ -207,9 +168,7 @@ func shapeSDFText(candidate libertySymbolCandidate, glyphs map[uint32]sdfGlyph) 
 	if !ok {
 		return nil
 	}
-	return &sdfTextLayout{glyphs: prepared.Glyphs, scale: prepared.Scale,
-		bounds: libertyCollisionBox{left: prepared.Bounds.Left, top: prepared.Bounds.Top,
-			right: prepared.Bounds.Right, bottom: prepared.Bounds.Bottom}}
+	return &sdfTextLayout{TextLayout: prepared}
 }
 
 func buildSDFAtlas(glyphs map[sdfGlyphKey]sdfGlyph) *sdfGlyphAtlas {
@@ -223,7 +182,6 @@ func sdfLayoutVertices(layout *sdfTextLayout, atlas *sdfGlyphAtlas) []float32 {
 	if layout == nil {
 		return nil
 	}
-	prepared := glyph.TextLayout{Glyphs: layout.glyphs, Scale: layout.scale}
-	mesh, _ := glyph.BuildLayoutMesh(&prepared, atlas, false)
+	mesh, _ := glyph.BuildLayoutMesh(&layout.TextLayout, atlas, false)
 	return mesh.Expanded
 }

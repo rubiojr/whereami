@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +88,7 @@ func TestLibertyCandidateCollisionUsesSDFMetrics(t *testing.T) {
 		textOffset:  roadPoint{X: 1, Y: 2},
 		textPadding: 2,
 	}
-	layout := &sdfTextLayout{bounds: libertyCollisionBox{left: -5, top: -6, right: 7, bottom: 8}}
+	layout := &sdfTextLayout{TextLayout: glyph.TextLayout{Bounds: glyph.TextBounds{Left: -5, Top: -6, Right: 7, Bottom: 8}}}
 	textBox, present, visible, _, _, _ := libertyCandidateCollisionBoxes(
 		affineTransform{M11: 1, M22: 1},
 		candidate,
@@ -108,7 +110,7 @@ func TestLibertyCandidateCollisionRotatesSDFMetrics(t *testing.T) {
 		textSize:    10,
 		textPadding: 0,
 	}
-	layout := &sdfTextLayout{bounds: libertyCollisionBox{left: -5, top: -2, right: 5, bottom: 2}}
+	layout := &sdfTextLayout{TextLayout: glyph.TextLayout{Bounds: glyph.TextBounds{Left: -5, Top: -2, Right: 5, Bottom: 2}}}
 	textBox, _, visible, _, _, _ := libertyCandidateCollisionBoxes(
 		affineTransform{M11: 1, M22: 1},
 		candidate,
@@ -168,8 +170,8 @@ func TestAcceptedLibertySymbolsUsesLayerPriority(t *testing.T) {
 		roads: &tileBucket{symbols: []libertySymbolCandidate{lower, higher}},
 	}}
 	layouts := map[libertySDFLayoutKey]*sdfTextLayout{
-		{tile: vectorTileID{Z: 0}, index: 0}: {bounds: libertyCollisionBox{left: -40, top: -10, right: 40, bottom: 10}},
-		{tile: vectorTileID{Z: 0}, index: 1}: {bounds: libertyCollisionBox{left: -40, top: -10, right: 40, bottom: 10}},
+		{tile: vectorTileID{Z: 0}, index: 0}: {TextLayout: glyph.TextLayout{Bounds: glyph.TextBounds{Left: -40, Top: -10, Right: 40, Bottom: 10}}},
+		{tile: vectorTileID{Z: 0}, index: 1}: {TextLayout: glyph.TextLayout{Bounds: glyph.TextBounds{Left: -40, Top: -10, Right: 40, Bottom: 10}}},
 	}
 
 	accepted := acceptedLibertySymbols(camera, tiles, layouts)
@@ -192,7 +194,7 @@ func TestAcceptedLibertySymbolsReportsInvalidCollisionJob(t *testing.T) {
 	tiles := []loadedRoadTile{{id: tile, roads: &tileBucket{symbols: []libertySymbolCandidate{{
 		anchor: roadPoint{X: 128, Y: 128}, text: "label", textColor: mapColor{Alpha: 255}, textSize: 16, sortKey: math.NaN(),
 	}}}}}
-	layouts := map[libertySDFLayoutKey]*sdfTextLayout{{tile: tile, index: 0}: {bounds: libertyCollisionBox{left: -10, top: -10, right: 10, bottom: 10}}}
+	layouts := map[libertySDFLayoutKey]*sdfTextLayout{{tile: tile, index: 0}: {TextLayout: glyph.TextLayout{Bounds: glyph.TextBounds{Left: -10, Top: -10, Right: 10, Bottom: 10}}}}
 	assert.Nil(t, acceptedLibertySymbols(camera, tiles, layouts))
 	require.Len(t, messages, 1)
 	assert.Contains(t, messages[0], "symbol collision preparation failed")
@@ -270,8 +272,8 @@ func TestAcceptedLibertySymbolsReflowsWhenCameraZoomChanges(t *testing.T) {
 		roads: &tileBucket{symbols: []libertySymbolCandidate{first, second}},
 	}}
 	layouts := map[libertySDFLayoutKey]*sdfTextLayout{
-		{tile: vectorTileID{Z: 0}, index: 0}: {bounds: libertyCollisionBox{left: -25, top: -10, right: 25, bottom: 10}},
-		{tile: vectorTileID{Z: 0}, index: 1}: {bounds: libertyCollisionBox{left: -25, top: -10, right: 25, bottom: 10}},
+		{tile: vectorTileID{Z: 0}, index: 0}: {TextLayout: glyph.TextLayout{Bounds: glyph.TextBounds{Left: -25, Top: -10, Right: 25, Bottom: 10}}},
+		{tile: vectorTileID{Z: 0}, index: 1}: {TextLayout: glyph.TextLayout{Bounds: glyph.TextBounds{Left: -25, Top: -10, Right: 25, Bottom: 10}}},
 	}
 	center := Coordinate{Longitude: -90}
 	zoomedIn := NewCamera(center, 3, 0, 256, 256)

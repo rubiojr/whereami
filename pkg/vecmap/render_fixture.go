@@ -304,11 +304,11 @@ func (b *fixtureBuilder) symbols(order int) {
 			angle := libertyRenderedSymbolAngle(candidate.lineAngle, candidate.textRotate, candidate.viewportAligned)
 			var first int
 			if b.indexed {
-				first = b.indexedSymbolVertices(candidate.anchor, layout.indexedVertices, layout.indices, offset, angle)
+				first = b.indexedSymbolVertices(candidate.anchor, layout.Vertices, layout.Indices, offset, angle)
 			} else {
-				first = b.symbolVertices(candidate.anchor, layout.vertices, offset, angle)
+				first = b.symbolVertices(candidate.anchor, layout.Expanded, offset, angle)
 			}
-			b.draw(first, scene.Material{Kind: kind, Texture: b.atlas, Color: fixtureColor(color), FontScale: float32(layout.scale), HaloWidth: float32(candidate.haloWidth), HaloBlur: float32(candidate.haloBlur), MapAligned: !candidate.viewportAligned}, [4]float32{})
+			b.draw(first, scene.Material{Kind: kind, Texture: b.atlas, Color: fixtureColor(color), FontScale: float32(layout.Scale), HaloWidth: float32(candidate.haloWidth), HaloBlur: float32(candidate.haloBlur), MapAligned: !candidate.viewportAligned}, [4]float32{})
 		}
 	}
 }

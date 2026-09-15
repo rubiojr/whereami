@@ -129,7 +129,7 @@ func projectLibertySymbol(transform affineTransform, candidate *libertySymbolCan
 		TextReady: candidate.text != "" && candidate.textColor.Alpha > 0 && libertyTextRenderable(candidate.text, sdfLayout)}
 	var bounds placement.Box
 	if sdfLayout != nil {
-		bounds = placement.Box{Left: sdfLayout.bounds.left, Top: sdfLayout.bounds.top, Right: sdfLayout.bounds.right, Bottom: sdfLayout.bounds.bottom}
+		bounds = placement.Box{Left: sdfLayout.Bounds.Left, Top: sdfLayout.Bounds.Top, Right: sdfLayout.Bounds.Right, Bottom: sdfLayout.Bounds.Bottom}
 		context.TextBounds = &bounds
 	}
 	var sprite placement.SpriteMetrics
@@ -232,10 +232,10 @@ func newLibertySymbolLayerTileNode(
 				layout := sdfScene.layouts[libertySDFLayoutKey{tile: tile, index: index}]
 				if layout != nil {
 					textNode = sdfAtlas.NewTextNode(
-						layout.vertices,
+						layout.Expanded,
 						libertyColorArray(candidate.textColor),
 						libertyColorArray(candidate.haloColor),
-						float32(layout.scale),
+						float32(layout.Scale),
 						float32(candidate.haloWidth),
 						float32(candidate.haloBlur),
 					)

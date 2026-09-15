@@ -64,8 +64,8 @@ func TestDirectRenderFixture(t *testing.T) {
 	requireMeshExpansion(t, expanded.Scene.Meshes[0], post)
 	assert.Less(t, direct.Scene.Meshes[0].BufferBytes(), expanded.Scene.Meshes[0].BufferBytes())
 	for _, layout := range direct.sdf.layouts {
-		assert.Empty(t, layout.vertices, "direct glyph construction must not expand quads")
-		assert.NotEmpty(t, layout.indices)
+		assert.Empty(t, layout.Expanded, "direct glyph construction must not expand quads")
+		assert.NotEmpty(t, layout.Indices)
 	}
 	for _, features := range direct.bucket.sourceLayers {
 		for _, feature := range features {

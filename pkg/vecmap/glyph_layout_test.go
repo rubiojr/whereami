@@ -32,20 +32,20 @@ func TestShapeSDFTextUsesGlyphMetricsAndHalo(t *testing.T) {
 
 	layout := shapeSDFText(candidate, glyphs)
 	require.NotNil(t, layout)
-	assert.Equal(t, 1.0, layout.scale)
-	assert.Len(t, layout.glyphs, 2)
-	assert.InDelta(t, -11, layout.glyphs[0].X, 0.001)
-	assert.InDelta(t, -1, layout.glyphs[1].X, 0.001)
-	assert.InDelta(t, -14, layout.bounds.left, 0.001)
-	assert.InDelta(t, 10, layout.bounds.right, 0.001)
-	assert.InDelta(t, -12, layout.bounds.top, 0.001)
-	assert.InDelta(t, 2, layout.bounds.bottom, 0.001)
+	assert.Equal(t, 1.0, layout.Scale)
+	assert.Len(t, layout.Glyphs, 2)
+	assert.InDelta(t, -11, layout.Glyphs[0].X, 0.001)
+	assert.InDelta(t, -1, layout.Glyphs[1].X, 0.001)
+	assert.InDelta(t, -14, layout.Bounds.Left, 0.001)
+	assert.InDelta(t, 10, layout.Bounds.Right, 0.001)
+	assert.InDelta(t, -12, layout.Bounds.Top, 0.001)
+	assert.InDelta(t, 2, layout.Bounds.Bottom, 0.001)
 }
 
 func TestSDFAtlasPreservesGuardsAndProducesQuads(t *testing.T) {
-	glyph := testSDFGlyph('A', 2, 2, 0, -2, 4, 90)
+	g := testSDFGlyph('A', 2, 2, 0, -2, 4, 90)
 	key := sdfGlyphKey{FontStack: "Noto Sans Regular", ID: 'A'}
-	atlas := buildSDFAtlas(map[sdfGlyphKey]sdfGlyph{key: glyph})
+	atlas := buildSDFAtlas(map[sdfGlyphKey]sdfGlyph{key: g})
 	require.NotNil(t, atlas)
 	rectangle := atlas.Positions[key]
 	assert.Equal(t, 10, rectangle.Width)
@@ -54,10 +54,10 @@ func TestSDFAtlasPreservesGuardsAndProducesQuads(t *testing.T) {
 	firstBitmapPixel := (rectangle.Y+1)*atlas.Width + rectangle.X + 1
 	assert.Equal(t, byte(90), atlas.Pixels[firstBitmapPixel])
 
-	layout := &sdfTextLayout{
-		glyphs: []sdfPositionedGlyph{{Key: key, Glyph: glyph, X: 0, Y: 0}},
-		scale:  1,
-	}
+	layout := &sdfTextLayout{TextLayout: glyph.TextLayout{
+		Glyphs: []sdfPositionedGlyph{{Key: key, Glyph: g, X: 0, Y: 0}},
+		Scale:  1,
+	}}
 	vertices := sdfLayoutVertices(layout, atlas)
 	assert.Len(t, vertices, 24)
 	assert.Equal(t, float32(-4), vertices[0])
@@ -70,14 +70,14 @@ func TestBuildSDFSceneRejectsInvalidQuadGeometry(t *testing.T) {
 	g := testSDFGlyph('A', 2, 2, 0, -2, 4, 90)
 	key := sdfGlyphKey{FontStack: "test", ID: 'A'}
 	atlas := buildSDFAtlas(map[sdfGlyphKey]sdfGlyph{key: g})
-	layout := &sdfTextLayout{glyphs: []sdfPositionedGlyph{{Key: key, Glyph: g, X: math.MaxFloat64}}, scale: 1}
+	layout := &sdfTextLayout{TextLayout: glyph.TextLayout{Glyphs: []sdfPositionedGlyph{{Key: key, Glyph: g, X: math.MaxFloat64}}, Scale: 1}}
 	for _, indexed := range []bool{false, true} {
 		scene, err := buildSDFSceneGeometry(map[libertySDFLayoutKey]*sdfTextLayout{{}: layout}, atlas, indexed)
 		assert.ErrorIs(t, err, glyph.ErrLayoutGeometry)
 		assert.Nil(t, scene)
-		assert.Nil(t, layout.vertices)
-		assert.Nil(t, layout.indexedVertices)
-		assert.Nil(t, layout.indices)
+		assert.Nil(t, layout.Expanded)
+		assert.Nil(t, layout.Vertices)
+		assert.Nil(t, layout.Indices)
 	}
 }
 
@@ -109,13 +109,13 @@ func TestNormalizeSDFTextUsesFetchedSeparators(t *testing.T) {
 
 func TestBuildSDFSceneRejectsLayoutsWithoutDrawableGlyphs(t *testing.T) {
 	key := libertySDFLayoutKey{tile: vectorTileID{Z: 1}, index: 2}
-	layout := &sdfTextLayout{
-		glyphs: []sdfPositionedGlyph{{
+	layout := &sdfTextLayout{TextLayout: glyph.TextLayout{
+		Glyphs: []sdfPositionedGlyph{{
 			Key:   sdfGlyphKey{FontStack: "test", ID: ' '},
 			Glyph: sdfGlyph{ID: ' ', Advance: 5},
 		}},
-		scale: 1,
-	}
+		Scale: 1,
+	}}
 	atlas := &sdfGlyphAtlas{Width: 256, Height: 256, Positions: make(map[sdfGlyphKey]sdfAtlasRect)}
 	assert.Nil(t, buildSDFScene(map[libertySDFLayoutKey]*sdfTextLayout{key: layout}, atlas))
 }

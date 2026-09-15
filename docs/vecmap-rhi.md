@@ -1338,6 +1338,63 @@ work. Shared layout-map orchestration and scene packing remain the next boundari
 toward a headless fixture producer; live scheduling and MapLibre parity gates stay
 open.
 
+### Shared prepared layouts and mesh-set orchestration
+
+Committed retained atlas selection as `c91d836`, then continued with kata **r5xn**.
+`glyph.PreparedLayout` combines shared metric layout and atlas-dependent mesh
+values. The parent aliases this model, passing layout maps directly into
+`glyph.PrepareLayouts` and `LayoutGlyphs` without conversion maps/slices or extra
+positioned-glyph buffers. Projection and legacy/fixture renderers now read the
+shared fields; bounds are copied only at the projection boundary.
+
+The generic mesh-set API preserves caller keys and layout pointers, filters through
+whole-label atlas coverage, attaches successful geometry in place and returns an
+owned map of drawable layouts. Successful mode switches replace all mesh fields;
+missing coverage leaves old geometry untouched but excludes that label from the
+result. Empty/bitmap-free layouts produce no renderable entry. Nil layouts are
+skipped. Empty maps/nil atlases return nil. Nonempty jobs with an atlas are capped
+at the existing **10,000 layout** ceiling before map allocation; glyph mesh limits
+remain 256 positioned glyphs per label.
+
+As before, failed jobs return nil output but do not roll back earlier successful
+attachments; input map traversal order is unspecified. The failing layout retains
+its previous mesh. Callers must prepare unpublished layouts with exclusive access,
+then publish immutable data. Drawable-glyph collection owns its result map and
+borrows bitmap bytes; cardinality and work remain caller-bounded. Repeated glyph
+keys must describe identical data. The parent retains font resolution, candidate
+selection, Qt fallback and rendering counters.
+
+Verification:
+
+- New functions have **100% coverage**; overall glyph coverage remains **99.8%**.
+  Headless amd64/386 tests cover key/pointer identity, ownership, mode changes,
+  metric preservation, missing coverage, empty glyphs, nil values, layout ceilings,
+  mesh failures and drawable collection. A 20-second mesh-set fuzz run completed
+  **867,083 executions** without failure.
+- Full v4 module coverage tests, v1 parent/glyph integration-race checks and the
+  application build pass. Gopls reports no new build errors. Repository-wide
+  staticcheck reports only existing generated ST1006 warnings; the recorded
+  GO-2026-5024 baseline remains unresolved.
+- Expanded/direct/post-indexed v1 scene captures remain byte-identical to their
+  original references: 45 draws, 62 labels, complete fonts and unchanged buffers.
+- Complexity review retains the short sequential mesh-set loop (11 including
+  bounds/filter/error branches); collection is below the threshold. GPU code and
+  generated bindings are unaffected.
+
+Separate v4 binaries ran before/after/after/before with identical pinned inputs,
+GOMAXPROCS 16 and two-second direct-fixture preparation samples:
+
+| Version | Time/op | Allocated bytes/op | Allocs/op |
+| --- | ---: | ---: | ---: |
+| Before shared layout sets | 32.57 / 30.95 ms | 90,780,970 / 90,781,763 | 102,313 / 102,315 |
+| After shared layout sets | 30.97 / 30.28 ms | 90,781,402 / 90,781,163 | 102,314 / 102,314 |
+
+Allocation volume remains about **90.78 MB/op** with the same allocation-count
+range. Variable samples do not establish a speedup. This measures CPU preparation,
+excluding I/O, JSON and GPU work, rather than MapLibre parity. Remaining extraction
+includes candidate-to-layout/font orchestration and final scene packing so the
+fixture producer can build without Qt/cgo, before live update and presentation gates.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

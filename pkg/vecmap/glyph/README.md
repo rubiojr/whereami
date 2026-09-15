@@ -59,7 +59,7 @@ stack, then ascending code point. Shelf packing tries square powers of two from
 **256** through **2048**. At the maximum size it retains the deterministic sorted
 prefix that fits. Overflow is normal resource degradation, reported by which
 keys appear in `Atlas.Positions`. A layout must have every drawable glyph present
-before rendering. The parent already enforces this through `sdfLayoutFitsAtlas`.
+before rendering. `PrepareLayouts` enforces this through `FitsAtlas`.
 
 Pixels are single-channel SDF values. Each rectangle includes the three-texel PBF
 border plus one zero-filled guard texel, making total padding four per edge.
@@ -146,8 +146,9 @@ strings are application-owned.
 
 The returned positioned slice is owned. Metrics are value copies; immutable
 bitmaps are borrowed. The input glyph map is not retained or modified. The parent
-adapter aliases `PositionedGlyph`, shares its slice directly and copies only the
-small bounds value into its collision type. Scene packing remains caller-owned.
+aliases `PreparedLayout`, sharing the metric layout and mesh buffers directly.
+Projection copies only the small bounds value into its collision type. Scene
+packing remains caller-owned.
 
 ## Eligibility and atlas-dependent geometry
 
@@ -190,6 +191,43 @@ Nonfinite float32 quad output is rejected (`ErrLayoutGeometry`). Rectangle/scale
 validation is independent of atlas pixel buffers, which this code does not read.
 An empty layout needs no usable atlas metadata.
 
+## Prepared layout maps
+
+`PreparedLayout` embeds `TextLayout` and `LayoutMesh` without allocating another
+object. `PrepareLayouts[K comparable]` accepts caller-keyed pointers to these
+values, builds their meshes and returns a map containing complete drawable labels.
+The parent aliases this type, so its layout maps pass directly into the shared
+engine and back to rendering; there are no conversion maps/slices or duplicate
+positioned glyph buffers.
+
+- The result map is owned, with the original keys and layout pointers. The input
+  map itself is not modified. Build with exclusive access to unpublished layouts;
+  treat the results and all reachable data as immutable once published.
+- Successful preparation replaces the entire mesh in place, clearing the alternate
+  representation when switching expanded/indexed modes. Metric layout is unchanged.
+- Nil layouts and incomplete atlas coverage are omitted without touching old mesh
+  data. Successful bitmap-free/empty layouts replace old meshes with empty output
+  and are omitted from the returned map. Coverage rejection includes the existing
+  per-label positioned-glyph cap.
+- Empty input or nil atlas returns nil. Otherwise at most **10,000 map entries**
+  are allowed, checked before allocation (`geometry.ErrGeometryLimit`). This shares
+  the existing parent scene-layout ceiling. Mesh bounds retain the per-label
+  256-positioned-glyph cap; scheduling and total retained memory are caller-owned.
+- Any mesh error returns nil output. Earlier successful mesh attachments remain;
+  iteration order is unspecified, and the failing layout retains its old mesh.
+  This preserves the previous in-place preparation policy rather than promising
+  transactional input rollback. No partial map is published on error.
+
+`LayoutGlyphs[K comparable]` collects drawable glyphs into an owned map, copying
+metrics and borrowing immutable bitmap slices. It skips nil layouts and bitmap-free
+glyphs. Repeated keys must have identical glyph values; conflicting values follow
+unspecified traversal order, as before. Collection input cardinality/work remains
+caller-bounded; it does not impose the mesh-set ceiling itself.
+
+Qt fallback, font resolution and candidate selection still belong to adapters.
+The parent `sdfScene` retains rendering counters and native readiness policy; final
+scene vertex/material packing is still a separate extraction boundary.
+
 ## Verification
 
 ```sh
@@ -202,6 +240,8 @@ CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
   -fuzz '^FuzzLayoutText$' -fuzztime=20s
 CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
   -fuzz '^FuzzLayoutMesh$' -fuzztime=20s
+CGO_ENABLED=0 go test ./pkg/vecmap/glyph -run '^$' \
+  -fuzz '^FuzzPrepareLayouts$' -fuzztime=20s
 ```
 
 Tests cover parser limits and exact boundaries, malformed fields, failure after
@@ -212,8 +252,10 @@ headless fixtures. Layout regressions cover anchors/justification, spacing,
 wrapping, missing/bitmap-free glyphs, bounds/halo arithmetic, ownership, UTF-8,
 limits and nonfinite/overflow rejection. Eligibility/mesh regressions cover scripts,
 exact packed/indexed reconstruction, ownership, missing/bitmap-free glyphs, limits,
-atlas coordinates, signed zeros and atomic/streaming failures. Coverage is **99.7%**,
+atlas coordinates, signed zeros and atomic/streaming failures. Prepared-map tests
+cover shared identity, owned map storage, mode transitions, completeness, limits,
+mesh errors and drawable-glyph collection. Coverage is **99.8%**,
 with layout, eligibility and mesh functions at **100%**; only the atlas growth loop's
-unreachable final return is uncovered. See kata **sp7z**, **hk7t**, **gpwj** and
+unreachable final return is uncovered. See kata **sp7z**, **hk7t**, **gpwj**, **r5xn** and
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full-capture equality and
 controlled before/after preparation measurements.
