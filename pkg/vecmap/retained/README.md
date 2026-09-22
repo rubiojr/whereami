@@ -178,8 +178,9 @@ err = planner.Acknowledge(batch.Ticket, success)
   An empty scene also publishes immediately. `SetTarget(nil)` clears the active
   scene; acknowledged release batches then reclaim old allocations.
 - Replacement revisions must coexist with the old revision of the same resource
-  ID. Backend maps must key by **kind, ID and revision**, not just ID. The existing
-  QRhi viewer's ID-only residency implementation has not been adapted yet.
+  ID. Backend maps must key by **kind, ID and revision**, not just ID. QRhi now has
+  separate revision-keyed mesh/texture caches and transactional allocation staging;
+  bounded batch execution and end-of-frame release acknowledgements remain to wire.
 - Target supersession is accepted between batches. Successfully uploaded resources
   of an abandoned target are retired before new uploads, unless needed by the
   active/new target. This maintains the residency bound even when stale partial

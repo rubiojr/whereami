@@ -52,7 +52,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
 - `internal/vecmaprhi`: a Qt backend that retains buffers/textures and records
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
-  render-thread cleanup. Glyph offsets stay in screen pixels during camera motion.
+  render-thread cleanup. Revision-keyed caches and allocation staging allow old/new
+  versions to coexist; planner batch execution is not yet wired. Glyph offsets stay
+  in screen pixels during camera motion.
 - `internal/qtrhi`: a focused, generated Qt adapter. Native virtual callbacks and
   lifetime notifications are generated; rendering logic is Go. Returned native
   value copies require explicit `Delete`; GPU ownership never relies on finalizers.
@@ -1790,6 +1792,80 @@ GPU upload algorithm, production renderer or fixture geometry is changed. There
 is no new GPU/presentation timing or parity claim. Next is revision-aware QRhi
 staging/execution with acknowledged batches and native lifetime tests, followed by
 live tile/placement wiring and matched-quality presentation validation.
+
+### Revision-aware transactional QRhi staging
+
+Committed acknowledged upload planning as **a252847**, then continued with kata
+**bekb**. The next native checkpoint replaces ID-only GPU caches with exact
+ID/revision keys, prepares selected resource keys per draw, and separates allocation,
+upload recording and scene selection. Existing methods and generated Qt bindings
+are reused; no C++ or generated binding file is edited.
+
+All missing mesh/texture allocations now succeed before any resource upload is
+recorded. Failed allocation destroys only fresh, unrecorded objects and leaves
+prior cache entries intact. Successful stages transfer ownership on recording;
+consumed stages cannot subsequently discard cached objects. Older and staged new
+revisions can coexist while the old scene remains selected. Activation of an
+already-staged version performs no additional upload. This is transactional
+resource allocation, not full-frame rollback: automatic prepare/pipeline failures
+still follow the existing renderer reset path.
+
+Qt's documented `QRhiResource::deleteLater` guarantees wrappers referenced by the
+current frame survive through `endFrame`, with underlying native GPU destruction
+deferred until safe. The adapter now uses the existing generated DeleteLater for
+resident retirement, including bindings, uniforms, pipelines and samplers. Fresh
+unrecorded allocation failures still delete immediately. A test retires throwaway
+uploads while their commands belong to the current frame, then verifies rendering.
+
+DeleteLater scheduling is **not** completed release acknowledgement. Live cache
+counters exclude deferred retirement, and upload counters count recorded commands,
+not planner readiness. End-of-frame/native retirement acknowledgements and bounded
+Planner batch execution remain the next integration boundary. The current viewer
+still synchronizes a changed scene's missing resources as a whole.
+
+Verification:
+
+- Vulkan integration passes on **AMD Radeon 860M Graphics / RADV KRACKAN1**, including
+  generated lifecycle/pair-bound tests and both expanded/indexed rendering paths.
+- OpenGL integration passes under Xvfb/Mesa llvmpipe, including **QT_SCALE_FACTOR=2**
+  and **GOAMD64=v1 race** checks. Tests cover injected mesh/white/later-texture
+  allocation failure, real allocation rollback, revision coexistence, old pixels
+  during staging, activation without reupload, uniform-buffer growth, consumed
+  stages, current-frame retirement and zero logical cache counts at teardown.
+- Native renderer coverage is **89.0%**; all new `resources.go` functions are **100%**.
+  Native allocation/device/pipeline failure guards remain partly uncovered.
+- Final expanded/direct full Madrid static Vulkan PNGs are byte-identical to the
+  earlier reference PNGs. Each retains **45 draws, 62 labels, complete fonts**;
+  uploads remain 19,045,116 expanded bytes or 11,834,328 direct bytes, with one mesh
+  and five textures including white.
+- Full v4 module coverage, default application build, tagged v1 viewer build and
+  tagged integration staticcheck pass. Tagged staticcheck exposed an existing
+  S1011 loop in the edited renderer test; it was replaced with equivalent slice
+  append. Default repository staticcheck still reports generated ST1006 findings.
+  Gopls lacks package metadata for the opt-in integration files, so tagged
+  compilation/tests/staticcheck provide the semantic checks. GO-2026-5024 remains.
+- Complexity review retains prepare15, pipeline preparation14, resource preparation11
+  and render11; all new resource staging/selection functions are <=10. These explicit
+  lifecycle guards and pass setup remain visible rather than split for a metric.
+- One parallel Xvfb race attempt aborted in QApplication construction before any
+  renderer was created. The same command passed serially; the startup cause is
+  unconfirmed. An initial test tried to install a second generated prepare override,
+  which is forbidden; node/lifetime setup now supports one test wrapper installation.
+
+Static smoke runs are short correctness captures, **not controlled performance
+comparisons**. To retain all observed samples, their reported p95s are below. The
+final captures overlapped a staticcheck process; no timing improvement is inferred.
+
+| Capture | Frames | Prepare µs p95 | Submit µs p95 | Previous Qt GPU frame ms p95 | Callback ms p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Initial direct smoke | 61 | 49.002 | 113.344 | 0.963630 | 17.079643 |
+| Final direct smoke | 58 | 62.598 | 111.440 | 0.956577 | 17.239544 |
+| Final expanded smoke | 58 | 60.023 | 116.470 | 2.399158 | 25.415715 |
+
+These are not actual presentation timestamps or MapLibre parity evidence. Final
+artifacts: `/tmp/opencode/vecmap-rhi-staging`, `vecmap-{direct,expanded}-staging.png`
+and `vecmap-native-staging-final-coverage.out`. Live map scheduling and production
+renderer migration remain outside this checkpoint.
 
 ## Flatpak integration
 

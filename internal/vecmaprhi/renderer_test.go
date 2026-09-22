@@ -25,6 +25,8 @@ func TestRenderer(t *testing.T) {
 		testRendererLifetime(t, false)
 		testRendererLifetime(t, true)
 	}
+	testResourceStaging(t, false)
+	testResourceStaging(t, true)
 }
 
 func testRendererLifetime(t *testing.T, indexed bool) {
@@ -37,9 +39,7 @@ func testRendererLifetime(t *testing.T, indexed bool) {
 		s.Textures = append(s.Textures, scene.Texture{ID: id, Revision: 1, Width: 1, Height: 1, RGBA: pixels[:]})
 		first := len(s.Meshes[0].Vertices)
 		x := float32(10 + i*20)
-		for _, v := range []scene.Vertex{{X: x, Y: 10}, {X: x + 15, Y: 10, U: 1}, {X: x, Y: 25, V: 1}, {X: x + 15, Y: 10, U: 1}, {X: x + 15, Y: 25, U: 1, V: 1}, {X: x, Y: 25, V: 1}} {
-			s.Meshes[0].Vertices = append(s.Meshes[0].Vertices, v)
-		}
+		s.Meshes[0].Vertices = append(s.Meshes[0].Vertices, []scene.Vertex{{X: x, Y: 10}, {X: x + 15, Y: 10, U: 1}, {X: x, Y: 25, V: 1}, {X: x + 15, Y: 10, U: 1}, {X: x + 15, Y: 25, U: 1, V: 1}, {X: x, Y: 25, V: 1}}...)
 		color := [4]float32{1, 1, 1, 1}
 		if kind == scene.SDFFill {
 			color = [4]float32{1, 1, 0, 1}

@@ -25,9 +25,8 @@ var fragmentShader []byte
 const uniformBytes = 176
 
 type gpuMesh struct {
-	buffer   *rhi.QRhiBuffer
-	indices  *rhi.QRhiBuffer
-	revision uint64
+	buffer  *rhi.QRhiBuffer
+	indices *rhi.QRhiBuffer
 }
 
 func (m gpuMesh) release() {
@@ -42,11 +41,12 @@ func (m gpuMesh) release() {
 type gpuTexture struct {
 	texture  *rhi.QRhiTexture
 	bindings [2]*rhi.QRhiShaderResourceBindings
-	revision uint64
 }
 
 // Stats is sampled on the render thread after a frame. Native byte counts are
 // tracked explicitly; Go allocation measurements do not include GPU resources.
+// Live counts describe cache entries, excluding DeleteLater/in-flight retirements.
+// Upload counters count recorded commands, not planner acknowledgements.
 type Stats struct {
 	Frames, Draws, MeshUploads, TextureUploads, UploadedBytes uint64
 	LiveMeshes, LiveTextures                                  int
@@ -62,8 +62,9 @@ type Renderer struct {
 	context    *rhi.QRhi
 	frame      scene.Frame
 	resident   *scene.Scene
-	meshes     map[uint64]gpuMesh
-	textures   map[uint64]gpuTexture
+	meshes     map[resourceKey]gpuMesh
+	textures   map[resourceKey]gpuTexture
+	drawKeys   []drawResourceKeys
 	samplers   [2]*rhi.QRhiSampler
 	uniform    *rhi.QRhiBuffer
 	uniforms   []float32
@@ -79,8 +80,15 @@ type Renderer struct {
 // New is called from updatePaintNode. Qt owns the returned node; its generated
 // destruction callback releases resources on the render thread before Qt exits.
 func New(item *rhi.QQuickItem, observe func(Stats)) *Renderer {
-	r := &Renderer{Node: rhi.NewQSGRenderNode(), window: rhi.UnsafeNewQQuickItem(item.UnsafePointer()).Window(), observe: observe}
+	r := newRenderer(item, observe)
 	r.Node.OnPrepare(func(func()) { r.prepare() })
+	return r
+}
+
+// Keep node/lifetime setup separate so integration tests can install one prepare
+// callback around native staging. Generated virtual overrides are single-install.
+func newRenderer(item *rhi.QQuickItem, observe func(Stats)) *Renderer {
+	r := &Renderer{Node: rhi.NewQSGRenderNode(), window: rhi.UnsafeNewQQuickItem(item.UnsafePointer()).Window(), observe: observe}
 	r.Node.OnRender(r.render)
 	r.Node.OnReleaseResources(func(func()) { r.release() })
 	r.Node.OnFlags(func(func() rhi.QSGRenderNode__RenderingFlag) rhi.QSGRenderNode__RenderingFlag {
@@ -184,8 +192,8 @@ func (r *Renderer) initialize(context *rhi.QRhi) error {
 	r.release()
 	r.context = context
 	r.stride = context.UbufAligned(uniformBytes)
-	r.meshes = make(map[uint64]gpuMesh)
-	r.textures = make(map[uint64]gpuTexture)
+	r.meshes = make(map[resourceKey]gpuMesh)
+	r.textures = make(map[resourceKey]gpuTexture)
 	r.stats.Backend = context.BackendName()
 	info := context.DriverInfo()
 	r.stats.Device = string(info.DeviceName())
@@ -206,14 +214,14 @@ func (r *Renderer) prepareResources(updates *rhi.QRhiResourceUpdateBatch) error 
 		for id, texture := range r.textures {
 			for _, binding := range texture.bindings {
 				if binding != nil {
-					binding.Delete()
+					binding.DeleteLater()
 				}
 			}
 			texture.bindings = [2]*rhi.QRhiShaderResourceBindings{}
 			r.textures[id] = texture
 		}
 		if r.uniform != nil {
-			r.uniform.Delete()
+			r.uniform.DeleteLater()
 		}
 		r.uniform = r.context.NewBuffer(rhi.QRhiBuffer__Dynamic, rhi.QRhiBuffer__UniformBuffer, uint32(needed))
 		if !r.uniform.Create() {
@@ -227,47 +235,19 @@ func (r *Renderer) prepareResources(updates *rhi.QRhiResourceUpdateBatch) error 
 		r.uniforms = r.uniforms[:length]
 	}
 	if r.resident != s {
-		if err := r.syncMeshes(s, updates); err != nil {
+		stage, err := r.allocateResources(s, r.createMesh, r.createTexture)
+		if err != nil {
 			return err
 		}
-		if err := r.syncTextures(s, updates); err != nil {
-			return err
-		}
+		r.recordResources(stage, updates)
+		r.selectResources(s)
 		r.resident = s
 	}
 	return r.prepareBindings()
 }
 
-func (r *Renderer) syncMeshes(s *scene.Scene, updates *rhi.QRhiResourceUpdateBatch) error {
-	desired := make(map[uint64]bool, len(s.Meshes))
-	for _, mesh := range s.Meshes {
-		desired[mesh.ID] = true
-		if old, exists := r.meshes[mesh.ID]; exists {
-			if old.revision == mesh.Revision {
-				continue
-			}
-			old.release()
-			delete(r.meshes, mesh.ID)
-		}
-		gpu, err := r.uploadMesh(mesh, updates)
-		if err != nil {
-			return err
-		}
-		r.meshes[mesh.ID] = gpu
-		r.stats.MeshUploads++
-		r.stats.UploadedBytes += mesh.BufferBytes()
-	}
-	for id, mesh := range r.meshes {
-		if !desired[id] {
-			mesh.release()
-			delete(r.meshes, id)
-		}
-	}
-	return nil
-}
-
-func (r *Renderer) uploadMesh(mesh scene.Mesh, updates *rhi.QRhiResourceUpdateBatch) (gpuMesh, error) {
-	gpu := gpuMesh{revision: mesh.Revision}
+func (r *Renderer) createMesh(mesh scene.Mesh) (gpuMesh, error) {
+	gpu := gpuMesh{}
 	gpu.buffer = r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__VertexBuffer, uint32(len(mesh.Vertices)*24))
 	if !gpu.buffer.Create() {
 		gpu.release()
@@ -281,42 +261,8 @@ func (r *Renderer) uploadMesh(mesh scene.Mesh, updates *rhi.QRhiResourceUpdateBa
 			gpu.release()
 			return gpuMesh{}, fmt.Errorf("create indices for mesh %d", mesh.ID)
 		}
-		updates.UploadStaticBuffer3(gpu.indices, unsafe.Pointer(unsafe.SliceData(mesh.Indices)))
-		runtime.KeepAlive(mesh.Indices)
 	}
-	updates.UploadStaticBuffer3(gpu.buffer, unsafe.Pointer(unsafe.SliceData(mesh.Vertices)))
-	runtime.KeepAlive(mesh.Vertices)
 	return gpu, nil
-}
-
-func (r *Renderer) syncTextures(s *scene.Scene, updates *rhi.QRhiResourceUpdateBatch) error {
-	textures := make(map[uint64]bool, len(s.Textures)+1)
-	textures[0] = true
-	if _, exists := r.textures[0]; !exists {
-		if err := r.uploadTexture(updates, scene.Texture{Width: 1, Height: 1, RGBA: []byte{255, 255, 255, 255}}); err != nil {
-			return err
-		}
-	}
-	for _, texture := range s.Textures {
-		textures[texture.ID] = true
-		if old, exists := r.textures[texture.ID]; exists {
-			if old.revision == texture.Revision {
-				continue
-			}
-			r.deleteTexture(old)
-			delete(r.textures, texture.ID)
-		}
-		if err := r.uploadTexture(updates, texture); err != nil {
-			return err
-		}
-	}
-	for id, texture := range r.textures {
-		if !textures[id] {
-			r.deleteTexture(texture)
-			delete(r.textures, id)
-		}
-	}
-	return nil
 }
 
 func (r *Renderer) prepareBindings() error {
@@ -342,27 +288,15 @@ func (r *Renderer) prepareBindings() error {
 	return nil
 }
 
-func (r *Renderer) uploadTexture(updates *rhi.QRhiResourceUpdateBatch, source scene.Texture) error {
+func (r *Renderer) createTexture(source scene.Texture) (gpuTexture, error) {
 	size := qt.NewQSize2(source.Width, source.Height)
 	defer size.Delete()
 	texture := r.context.NewTexture(rhi.QRhiTexture__RGBA8, size)
 	if !texture.Create() {
 		texture.Delete()
-		return fmt.Errorf("create texture %d", source.ID)
+		return gpuTexture{}, fmt.Errorf("create texture %d", source.ID)
 	}
-	data := rhi.NewQRhiTextureSubresourceUploadDescription3(unsafe.Pointer(unsafe.SliceData(source.RGBA)), uint32(len(source.RGBA)))
-	data.SetSourceSize(size)
-	entry := rhi.NewQRhiTextureUploadEntry2(0, 0, data)
-	description := rhi.NewQRhiTextureUploadDescription2(entry)
-	updates.UploadTexture(texture, description)
-	description.Delete()
-	entry.Delete()
-	data.Delete()
-	runtime.KeepAlive(source.RGBA)
-	r.textures[source.ID] = gpuTexture{texture: texture, revision: source.Revision}
-	r.stats.TextureUploads++
-	r.stats.UploadedBytes += uint64(len(source.RGBA))
-	return nil
+	return gpuTexture{texture: texture}, nil
 }
 
 func (r *Renderer) preparePipelines() error {
@@ -372,7 +306,7 @@ func (r *Renderer) preparePipelines() error {
 	if !slices.Equal(format, r.passFormat) || samples != r.samples {
 		for index, p := range r.pipelines {
 			if p != nil {
-				p.Delete()
+				p.DeleteLater()
 				r.pipelines[index] = nil
 			}
 		}
@@ -416,7 +350,7 @@ func (r *Renderer) preparePipelines() error {
 		pipeline.SetFlags(rhi.QRhiGraphicsPipeline__UsesScissor | rhi.QRhiGraphicsPipeline__UsesStencilRef)
 		pipeline.SetShaderStages([]rhi.QRhiShaderStage{*vs, *fs})
 		pipeline.SetVertexInputLayout(layout)
-		pipeline.SetShaderResourceBindings(r.textures[0].bindings[0])
+		pipeline.SetShaderResourceBindings(r.textures[resourceKey{}].bindings[0])
 		pipeline.SetRenderPassDescriptor(target.RenderPassDescriptor())
 		pipeline.SetTargetBlends([]rhi.QRhiGraphicsPipeline__TargetBlend{*blend})
 		pipeline.SetDepthTest(false)
@@ -469,10 +403,11 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 		cb.SetStencilRef(uint32(state.StencilValue()))
 	}
 	cb.SetGraphicsPipeline(r.pipelines[pipeline])
-	var current uint64
+	var current resourceKey
 	for index, draw := range r.frame.Scene.Draws {
-		mesh := r.meshes[draw.Mesh]
-		if current != draw.Mesh {
+		keys := r.drawKeys[index]
+		mesh := r.meshes[keys.mesh]
+		if current != keys.mesh {
 			binding := struct {
 				First  *rhi.QRhiBuffer
 				Second uint32
@@ -482,13 +417,13 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 			} else {
 				cb.SetVertexInput(0, 1, binding)
 			}
-			current = draw.Mesh
+			current = keys.mesh
 		}
 		sampler := 0
 		if draw.Material.Kind == scene.Pattern {
 			sampler = 1
 		}
-		cb.SetShaderResources3(r.textures[draw.Material.Texture].bindings[sampler], 1, struct {
+		cb.SetShaderResources3(r.textures[keys.texture].bindings[sampler], 1, struct {
 			First  int
 			Second uint32
 		}{0, uint32(index * r.stride)})
@@ -510,35 +445,36 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 func (r *Renderer) deleteTexture(texture gpuTexture) {
 	for _, binding := range texture.bindings {
 		if binding != nil {
-			binding.Delete()
+			binding.DeleteLater()
 		}
 	}
-	texture.texture.Delete()
+	texture.texture.DeleteLater()
 }
 
 func (r *Renderer) release() {
 	for _, pipeline := range r.pipelines {
 		if pipeline != nil {
-			pipeline.Delete()
+			pipeline.DeleteLater()
 		}
 	}
 	for _, texture := range r.textures {
 		r.deleteTexture(texture)
 	}
 	for _, mesh := range r.meshes {
-		mesh.release()
+		mesh.retire()
 	}
 	if r.uniform != nil {
-		r.uniform.Delete()
+		r.uniform.DeleteLater()
 	}
 	for _, sampler := range r.samplers {
 		if sampler != nil {
-			sampler.Delete()
+			sampler.DeleteLater()
 		}
 	}
 	r.pipelines = [2]*rhi.QRhiGraphicsPipeline{}
 	r.textures = nil
 	r.meshes = nil
+	r.drawKeys = nil
 	r.uniform = nil
 	r.samplers = [2]*rhi.QRhiSampler{}
 	r.context = nil
