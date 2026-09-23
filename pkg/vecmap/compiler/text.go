@@ -7,6 +7,7 @@ import (
 
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
+	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 )
 
 // TextRequest is the metric-layout portion of an evaluated symbol. Text and font
@@ -14,6 +15,22 @@ import (
 type TextRequest struct {
 	Text, FontStack string
 	Options         glyph.LayoutOptions
+}
+
+// SymbolTextRequests yields layout requests keyed by original candidate index.
+// It borrows the immutable candidate slice and honors early iterator termination.
+func SymbolTextRequests(symbols []placement.Symbol) iter.Seq2[int, TextRequest] {
+	return func(yield func(int, TextRequest) bool) {
+		for i, s := range symbols {
+			if !yield(i, TextRequest{Text: s.Text, FontStack: s.FontStack, Options: glyph.LayoutOptions{
+				TextSize: s.TextSize, LetterSpacing: s.LetterSpacing, MaximumWidth: s.MaximumWidth,
+				LineHeight: s.LineHeight, Anchor: s.TextAnchor, Justify: s.TextJustify,
+				HaloWidth: s.HaloWidth, HaloBlur: s.HaloBlur,
+			}}) {
+				return
+			}
+		}
+	}
 }
 
 // Layout reuses metric layout without choosing script/readiness policy. Live

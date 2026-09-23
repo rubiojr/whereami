@@ -1,4 +1,4 @@
-// Package tiles composes prepared, retained tile scenes into ordered map targets.
+// Package tiles prepares and composes retained tile scenes into ordered map targets.
 // It owns no I/O, goroutines, toolkit handles or GPU readiness. A preparation
 // worker owns a Set; immutable snapshots can be handed to retained.WorkerWithData.
 package tiles
@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 	"github.com/rubiojr/whereami/pkg/vecmap/retained"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
@@ -22,26 +23,18 @@ var (
 
 const MaxTiles = 128
 
-type Part uint8
+type Part = compiler.DrawPart
 
 const (
-	Base Part = iota
-	Icon
-	Text
+	Base = compiler.BaseDraw
+	Icon = compiler.IconDraw
+	Text = compiler.TextDraw
 )
 
 // Draw describes one scene draw record. Layer is the style's original order.
 // Icon/Text records refer to a candidate by index; Base ignores Candidate.
 // A coalesced draw must not cross a layer or candidate boundary.
-type Draw struct {
-	Layer     int
-	Part      Part
-	Candidate int
-	// PatternPeriod is the original float64 tile-local period, before packing
-	// into Material.PatternSize. Required for Pattern draws so wrap phase does
-	// not accumulate float32 rounding error. Other draws leave it zero.
-	PatternPeriod [2]float64
-}
+type Draw = compiler.DrawSource
 
 // Symbol pairs evaluated paint with prepared asset readiness and value metrics.
 // It does not load or shape text. TextReady retains producer policy independently

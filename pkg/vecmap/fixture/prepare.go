@@ -40,17 +40,7 @@ func prepareTile(sources map[string][]mvt.Feature, layers []style.CompiledLayer,
 }
 
 func textRequests(symbols []placement.Symbol) iter.Seq2[int, compiler.TextRequest] {
-	return func(yield func(int, compiler.TextRequest) bool) {
-		for i, s := range symbols {
-			if !yield(i, compiler.TextRequest{Text: s.Text, FontStack: s.FontStack, Options: glyph.LayoutOptions{
-				TextSize: s.TextSize, LetterSpacing: s.LetterSpacing, MaximumWidth: s.MaximumWidth,
-				LineHeight: s.LineHeight, Anchor: s.TextAnchor, Justify: s.TextJustify,
-				HaloWidth: s.HaloWidth, HaloBlur: s.HaloBlur,
-			}}) {
-				return
-			}
-		}
-	}
+	return compiler.SymbolTextRequests(symbols)
 }
 
 func (p *preparedTile) pack(b *compiler.SceneBuilder, layouts map[int]*glyph.PreparedLayout, accepted map[int]placement.Accepted, atlas uint64) int {

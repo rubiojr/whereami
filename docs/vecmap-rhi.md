@@ -2300,6 +2300,107 @@ screenshot or performance measurement was made. The checked GPU drains and
 asynchronous-completion audit remain in force. Production renderer migration and
 MapLibre parity still require realistic compiled-tile workloads and comparison gates.
 
+### Generic prepared-tile compilation
+
+Committed tile composition as **3b77d8e**, then continued with **re90**.
+`tiles.Prepare` now decodes an arbitrary bounded MVT tile with application-supplied
+compiled style layers. It owns reusable geometry and evaluated symbol candidates,
+without retaining source feature/property maps. `Prepared.Build` consumes loaded
+font/sprite snapshots, reuses the shared layout/atlas/packing algorithms and returns
+an immutable `tiles.Fragment` plus missing-font and MVT-degradation diagnostics.
+Asset refresh doesn't decode or tessellate the tile again. These methods do no I/O
+and start no workers; bounded live loading/scheduling is still the next boundary.
+
+The new `compiler.FragmentBuilder` preserves metadata while packing, rather than
+trying to reconstruct it from flattened output. Every draw carries its layer,
+candidate and base/icon/text part. Patterns retain their exact float64 period.
+Draw boundaries prevent cross-candidate/layer coalescing; icons, all halos and all
+fills retain their original pass order. Missing assets produce no orphan records.
+Empty fragments are valid ready tiles. Ordinary SceneBuilder coalescing and its
+existing fixture path remain intact. `tiles.Draw`/`Part` alias the compiler types,
+and both producers share the candidate-to-text-request iterator.
+
+Build packs every potentially drawable candidate before camera-dependent placement.
+The compositor can change label acceptance without repacking geometry. This costs
+extra retained geometry and draw records; selected-run coalescing and shared atlases
+remain future optimizations. The default fallback predicate is nil; callers can
+explicitly supply `glyph.LegacyFallbackEligible` to preserve the fixture's non-SDF
+collision-readiness behavior. Metrics still reserve space when atlas coverage is
+incomplete, without inventing drawable fallback text.
+
+Input bounds retain the MVT 2 MiB ceiling and compiler geometry/text budgets, plus
+at most 1,024 style layers in increasing nonnegative order and evaluated zoom 0–20.
+PrepareOptions can lower aggregate triangles, candidates, packed elements and draws.
+Successful compilation does not guarantee Store/Planner residency or indivisible
+upload-budget admission; those remain separate checks. Style expression work,
+asset storage, concurrent jobs and old snapshot memory remain producer-owned.
+
+`vecmap-fixture -retained` exposes a reproducible comparison path through the new
+compiler and compositor. The command still enforces the pinned tile checksum and
+uses the same range-0 font files. The generic library supports merged decoded ranges,
+including non-Latin glyphs. Default capture behavior is unchanged.
+
+Verification:
+
+- Expanded/indexed selected-rendering comparisons match the original fixture with
+  complete, partial and missing fonts: exact ordered float32 vertex bits, material
+  and clip values, texture contents, label counts and diagnostics. The comparison
+  removes only local resource identity, unused packed data and source-boundary draw
+  splits. It doesn't claim raw scene-buffer equality.
+- Tests cover layer/candidate boundaries, exact periods, both topologies, empty
+  tiles, sealed publication, source-input release, asset refresh, Unicode font maps,
+  partial atlas coverage, explicit fallback readiness, malformed assets, limits,
+  float32 geometry overflow, MVT degradation and concurrent immutable Builds.
+- Compiler coverage remains **100%**. Tiles is **98.8%**: the text-request-limit
+  forwarding guard is unreachable after Prepare's candidate cap; existing defensive
+  Store.Snapshot error forwarding is also uncovered. Fixture is **94.4%** after the
+  iterator extraction, with the same lower-level failure guards outstanding.
+- Prepared-tile fuzzing completed **622,712 executions** in the configured 20 seconds.
+  Pinned 386 and v1 race checks pass. Full pinned v4 module coverage, default/tagged/
+  headless builds and targeted staticcheck pass. Shared diagnostics are clean;
+  generated ST1006, native gopls tag metadata and the earlier GO-2026-5024 baseline
+  remain. No dependency, binding, C++ or shader changes.
+- Basic/threaded native renderer/viewer tests pass on Vulkan and OpenGL, including
+  2× OpenGL/v1 race. Actual new-path expanded/direct threaded Vulkan screenshots
+  equal the old reference PNGs byte-for-byte. Direct OpenGL at 2× also matches its
+  ordinary-fixture capture. These are fixed-scene checks, not multi-tile style/label
+  or MapLibre parity evidence.
+- Complexity review keeps the explicit bounds/forwarding guards: options validation
+  13, metric readiness 11, retained CLI orchestration 14. Shared pass traversal avoids
+  a second rendering algorithm in the provenance path.
+
+The new full-font captures still draw **782,409 selected elements and 62 labels**.
+Their retained buffers include rejected candidates, and source boundaries expand
+the draw list to **150**. Each has five scene textures plus backend white, and
+reports eight drains with one-resource batches:
+
+| Retained capture | Packed vertices | Packed indices | Recorded upload bytes including white |
+| --- | ---: | ---: | ---: |
+| Direct indexed | 376,786 | 820,251 | 12,592,324 |
+| Expanded | 820,251 | 0 | 19,954,480 |
+
+Artifacts: `/tmp/opencode/vecmap-fixture-prepared`, `vecmap-rhi-prepared`,
+`vecmap-prepared-{direct,expanded}-scene.json`, `vecmap-{direct,expanded}-prepared.png`,
+and `vecmap-direct-{reference,prepared}-gl2.png`. Coverage profile:
+`/tmp/opencode/vecmap-prepared-compiler-coverage.out`.
+
+The short smokes below are correctness runs, not controlled performance comparisons.
+OpenGL uses software llvmpipe. Warm samples omit the first 30 frames; callback
+intervals are not presentation timestamps. Preserve the observations without
+interpreting the different frame/sample counts as a speedup:
+
+| Capture | Frames | Finish wall ms | Prepare µs p95 | Submit µs p95 | Previous Qt GPU ms p95 | Callback ms p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Retained direct Vulkan, 2 s | 122 | 3.890623 | 57.248 | 207.431 | 0.868329 | 16.959896 |
+| Retained expanded Vulkan, 2 s | 121 | 5.111566 | 62.208 | 200.028 | 0.872297 | 17.149935 |
+| Ordinary direct OpenGL 2×, 1 s | 45 | 2.332262 | 41.107 | 80.291 | 7.168368 | 29.176470 |
+| Retained direct OpenGL 2×, 1 s | 49 | 2.490301 | 65.975 | 115.297 | 8.585442 | 30.403556 |
+
+Next: bounded tile/asset loading, cancellation and style-generation-aware producer
+scheduling feeding prepared fragments into Set and WorkerWithData. Use those live
+workloads to measure draw/upload/placement costs before changing the checked native
+completion baseline. The production renderer remains separate.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

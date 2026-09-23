@@ -22,21 +22,28 @@ type SpriteLookup func(name string, color style.Color, opacity float64) (sprite.
 // Pattern phase uses the supplied canonical tile and world wrap; geometry stays
 // tile-local. Missing patterns are skipped. Inputs follow CompileTile's contract.
 func (b *SceneBuilder) Primitive(tile view.TileID, wrap int, primitive Primitive, lookup SpriteLookup) {
+	b.primitive(tile, wrap, primitive, lookup)
+}
+
+func (b *SceneBuilder) primitive(tile view.TileID, wrap int, primitive Primitive, lookup SpriteLookup) [2]float64 {
 	if !b.ready() {
-		return
+		return [2]float64{}
 	}
+	var period [2]float64
 	material := scene.Material{Color: PackedColor(primitive.Color)}
 	if primitive.PatternName != "" {
 		image, ok := b.sprite(lookup, primitive.PatternName, style.Color{Red: 255, Green: 255, Blue: 255, Alpha: 255}, 1)
 		if !ok {
-			return
+			return period
 		}
 		width, height := float64(image.Width)/image.PixelRatio*primitive.PatternScale, float64(image.Height)/image.PixelRatio*primitive.PatternScale
+		period = [2]float64{width, height}
 		x, y := view.PatternPhase(tile, wrap, width, height)
 		material = scene.Material{Kind: scene.Pattern, Texture: b.Texture("pattern/"+primitive.PatternName, image.Width, image.Height, image.Pixels),
 			Color: [4]float32{1, 1, 1, float32(primitive.Opacity)}, PatternSize: [2]float32{float32(width), float32(height)}, PatternPhase: [2]float32{float32(x), float32(y)}}
 	}
 	b.Geometry(primitive.Mesh, material, [4]float32{0, 0, view.TileSize, view.TileSize})
+	return period
 }
 
 // RenderSymbol pairs evaluated paint with caller-owned collision acceptance and
@@ -56,6 +63,12 @@ type RenderSymbol struct {
 // fill labels, and is meaningful only if Finish succeeds. Errors latch on the
 // builder; callers still use Finish for atomic scene publication.
 func (b *SceneBuilder) SymbolLayer(count int, symbolAt func(int) RenderSymbol, atlas uint64, lookup SpriteLookup) int {
+	return b.symbolLayer(count, symbolAt, func(_ int, kind scene.Kind, item RenderSymbol) bool {
+		return b.symbolPass(kind, item, atlas, lookup)
+	})
+}
+
+func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, emit func(int, scene.Kind, RenderSymbol) bool) int {
 	if !b.ready() {
 		return 0
 	}
@@ -70,15 +83,8 @@ func (b *SceneBuilder) SymbolLayer(count int, symbolAt func(int) RenderSymbol, a
 	labels := 0
 	for _, kind := range [...]scene.Kind{scene.Image, scene.SDFHalo, scene.SDFFill} {
 		for index := range count {
-			item := symbolAt(index)
-			if kind == scene.Image {
-				if item.Accepted.Icon && item.Symbol.IconName != "" {
-					b.icon(item.Symbol, lookup)
-				}
-			} else if item.Accepted.Text && item.Layout != nil {
-				if b.text(item.Symbol, item.Layout, atlas, kind) && kind == scene.SDFFill {
-					labels++
-				}
+			if emit(index, kind, symbolAt(index)) {
+				labels++
 			}
 			if b.err != nil {
 				return labels
@@ -86,6 +92,17 @@ func (b *SceneBuilder) SymbolLayer(count int, symbolAt func(int) RenderSymbol, a
 		}
 	}
 	return labels
+}
+
+func (b *SceneBuilder) symbolPass(kind scene.Kind, item RenderSymbol, atlas uint64, lookup SpriteLookup) bool {
+	if kind == scene.Image {
+		if item.Accepted.Icon && item.Symbol.IconName != "" {
+			b.icon(item.Symbol, lookup)
+		}
+	} else if item.Accepted.Text && item.Layout != nil {
+		return b.text(item.Symbol, item.Layout, atlas, kind) && kind == scene.SDFFill
+	}
+	return false
 }
 
 func (b *SceneBuilder) sprite(lookup SpriteLookup, name string, color style.Color, opacity float64) (sprite.Image, bool) {

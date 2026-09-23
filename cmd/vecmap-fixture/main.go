@@ -22,14 +22,15 @@ func main() {
 	output := flag.String("out", "", "output JSON scene (stdout when empty)")
 	indexed := flag.Bool("indexed", false, "deduplicate vertices into indexed buffers before capturing")
 	directIndexed := flag.Bool("direct-indexed", false, "construct indexed geometry directly without vertex deduplication")
+	retained := flag.Bool("retained", false, "compile all candidates through the retained tile compiler and compositor")
 	flag.Parse()
-	if err := run(*tile, *glyphDir, *output, *indexed, *directIndexed); err != nil {
+	if err := run(*tile, *glyphDir, *output, *indexed, *directIndexed, *retained); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(path, glyphDir, output string, indexed, directIndexed bool) error {
+func run(path, glyphDir, output string, indexed, directIndexed, retained bool) error {
 	if indexed && directIndexed {
 		return fmt.Errorf("-indexed and -direct-indexed are mutually exclusive")
 	}
@@ -42,13 +43,20 @@ func run(path, glyphDir, output string, indexed, directIndexed bool) error {
 	if glyphDir != "" {
 		load = func(fonts []string) (map[string][]byte, error) { return loadFixtureGlyphs(glyphDir, fonts) }
 	}
-	fixture, err := fixture.CompileWithGlyphLoader(data, load, options)
+	compile := fixture.CompileWithGlyphLoader
+	if retained {
+		compile = compileRetainedFixture
+	}
+	fixture, err := compile(data, load, options)
 	if err != nil {
 		return err
 	}
 	document := scene.Document{Scene: *fixture.Scene, Transforms: fixture.Frame(fixture.Camera).Transforms, Width: 512, Height: 512, Labels: fixture.Labels, MissingFonts: fixture.MissingFonts, Source: "OpenFreeMap 20260823 z9/250/193; Liberty at fixed zoom 10"}
 	document.Camera = &fixture.Camera
 	document.TileSpaces = []scene.TileSpace{{Tile: view.TileID{X: 250, Y: 193, Z: 9}}}
+	if retained {
+		document.Source += "; retained candidate placement"
+	}
 	if indexed {
 		if err := indexDocument(&document); err != nil {
 			return err

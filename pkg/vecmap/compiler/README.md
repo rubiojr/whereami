@@ -258,6 +258,42 @@ world-wrap pattern phase, pixel ratios, anchors, rotations, offsets, halo/fill
 paint, missing/rejected symbols, nil accessors, limits and error propagation in
 both representations. All new functions have **100% coverage**. Tracked by **jyqg**.
 
+## Fragment packing with draw provenance
+
+`NewFragmentBuilder(indexed, maximumElements, maximumDraws)` uses the same packing
+and material/pass math as SceneBuilder, but keeps a `DrawSource` for every draw.
+Zero limits choose `MaxSceneElements` and **65,536 draws**; positive limits may
+lower them. Methods latch errors; Finish returns nil scene and metadata on failure.
+
+- `Primitive(tile, primitive, lookup)` records the layer order and original
+  **float64 pattern period** before material packing. Initial phase is for wrap
+  zero; a compositor can recompute other wraps without recovering a rounded period.
+- `SymbolLayer(first, count, symbolAt, atlas, lookup)` records the original candidate
+  index (`first + local index`), layer and icon/text part. It preserves icons, then
+  all halos, then all fills. Candidate ranges are bounded by 10,000.
+- Each primitive/candidate pass starts a draw boundary. Identical materials never
+  merge different candidates or layers. Geometry and texture packing are reused;
+  this adds metadata, not a second tessellator or image conversion.
+- Missing assets and empty geometry emit no orphan source records. Empty fragments
+  succeed without an empty mesh or unused atlas texture. The ordinary SceneBuilder
+  retains its previous empty-mesh rejection and coalescing behavior.
+- Finish seals both outputs; repeated Finish is allowed until another mutation is
+  attempted. Returned geometry/metadata are owned and immutable. Sprite RGBA remains
+  borrowed; glyph RGBA conversion remains owned.
+
+`tiles.Draw`/`Part` alias the compiler's `DrawSource`/`DrawPart`, so the generic tile
+producer can hand these slices to the compositor directly. `SymbolTextRequests`
+shares the candidate-to-layout iterator with the fixed fixture and generic producer.
+
+The generic two-stage producer is documented in [`tiles`](../tiles/README.md).
+Packing limits bound arrays and draw work, not all caller-owned assets or retained
+snapshots. Store and Planner byte/resource admission is still required. The
+provenance path is opt-in; the existing fixture path retains its old output.
+
+Checkpoint **re90** keeps compiler coverage at **100%**, including provenance,
+pass order, boundary-preserving coalescing, precise periods, empty output, draw and
+element limits, failure atomicity and sealed publication.
+
 ## Verification
 
 ```sh

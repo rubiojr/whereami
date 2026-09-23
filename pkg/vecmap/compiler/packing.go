@@ -27,13 +27,15 @@ var (
 // Texture pixel slices are borrowed immutably; geometry inputs are copied. The
 // builder is single-owner and must not be copied or used concurrently.
 type SceneBuilder struct {
-	mesh     geometry.Builder[scene.Vertex]
-	result   scene.Scene
-	textures map[string]uint64
-	indexed  bool
-	limit    int
-	err      error
-	closed   bool
+	mesh      geometry.Builder[scene.Vertex]
+	result    scene.Scene
+	textures  map[string]uint64
+	indexed   bool
+	limit     int
+	err       error
+	closed    bool
+	breakDraw bool
+	drawLimit int
 }
 
 // NewSceneBuilder selects the output topology. Zero maximumElements selects the
@@ -209,7 +211,17 @@ func (b *SceneBuilder) draw(first int, material scene.Material, clip [4]float32)
 	if b.err != nil || count == 0 {
 		return
 	}
-	b.result.Draws = scene.AppendDraw(b.result.Draws, scene.Draw{Mesh: 1, First: uint32(first), Count: uint32(count), Material: material, Clip: clip})
+	draw := scene.Draw{Mesh: 1, First: uint32(first), Count: uint32(count), Material: material, Clip: clip}
+	if b.breakDraw {
+		if len(b.result.Draws) >= b.drawLimit {
+			b.err = geometry.ErrGeometryLimit
+			return
+		}
+		b.result.Draws = append(b.result.Draws, draw)
+		b.breakDraw = false
+	} else {
+		b.result.Draws = scene.AppendDraw(b.result.Draws, draw)
+	}
 }
 
 // Finish validates and seals the builder, returning owned geometry/draw/texture
@@ -217,6 +229,10 @@ func (b *SceneBuilder) draw(first int, material scene.Material, clip [4]float32)
 // attempts further mutation; mutating methods after Finish latch ErrPackingClosed
 // without changing published data. IDs/revisions are one-scene-local, starting at 1.
 func (b *SceneBuilder) Finish() (*scene.Scene, error) {
+	return b.finish(false)
+}
+
+func (b *SceneBuilder) finish(allowEmpty bool) (*scene.Scene, error) {
 	if b.err != nil {
 		return nil, b.err
 	}
@@ -227,7 +243,11 @@ func (b *SceneBuilder) Finish() (*scene.Scene, error) {
 		return nil, b.err
 	}
 	b.closed = true
-	b.result.Meshes = []scene.Mesh{{ID: 1, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices}}
+	if allowEmpty && b.mesh.Count() == 0 {
+		b.result = scene.Scene{} // no empty mesh or unused atlas allocation
+	} else {
+		b.result.Meshes = []scene.Mesh{{ID: 1, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices}}
+	}
 	if err := b.result.Validate(); err != nil {
 		b.err = err
 		return nil, err

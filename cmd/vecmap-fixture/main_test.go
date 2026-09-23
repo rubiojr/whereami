@@ -18,7 +18,7 @@ func TestRunPinnedHeadless(t *testing.T) {
 		t.Skip("set pinned tile and glyph fixture environment variables")
 	}
 	out := filepath.Join(t.TempDir(), "scene.json")
-	require.NoError(t, run(path, dir, out, false, true))
+	require.NoError(t, run(path, dir, out, false, true, false))
 	data, err := os.ReadFile(out)
 	require.NoError(t, err)
 	var document scene.Document
@@ -28,7 +28,20 @@ func TestRunPinnedHeadless(t *testing.T) {
 	assert.Len(t, document.Scene.Draws, 45)
 	assert.Len(t, document.Scene.Meshes[0].Indices, 782409)
 	assert.Empty(t, document.MissingFonts)
-	assert.ErrorContains(t, run(path, dir, out, true, true), "mutually exclusive")
+	assert.ErrorContains(t, run(path, dir, out, true, true, false), "mutually exclusive")
+	require.NoError(t, run(path, dir, out, false, true, true))
+	data, err = os.ReadFile(out)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &document))
+	require.NoError(t, document.Validate())
+	assert.Equal(t, 62, document.Labels)
+	assert.Greater(t, len(document.Scene.Draws), 45, "retained packing preserves candidate/layer boundaries")
+	var selectedElements uint64
+	for _, draw := range document.Scene.Draws {
+		selectedElements += uint64(draw.Count)
+	}
+	assert.Equal(t, uint64(782409), selectedElements)
+	assert.Contains(t, document.Source, "retained candidate placement")
 }
 
 func TestLoadFixtureGlyphs(t *testing.T) {

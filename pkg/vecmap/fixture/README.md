@@ -48,6 +48,29 @@ This is a pinned offline fixture, not a generic style/tile ingestion API, live
 scheduler, incremental upload queue or shaping engine. Resource IDs are local to
 one scene; multi-tile/live composition must define stable identities separately.
 
+## Retained compiler comparison
+
+The command's optional `-retained` flag now compiles the same pinned input through
+the generic `tiles.Prepare` / `Prepared.Build` / `Set.Select` path:
+
+```sh
+CGO_ENABLED=0 GOAMD64=v1 go run ./cmd/vecmap-fixture \
+  -tile /path/to/openfreemap-20260823-z9-250-193.pbf \
+  -glyph-dir /path/to/glyphs -retained -direct-indexed -out /tmp/retained.json
+```
+
+The command retains its checksum, range-0 glyph files, Liberty style, fixed zoom
+and viewport contract. The library itself accepts arbitrary bounded tiles,
+application styles and merged decoded font ranges. See [`tiles`](../tiles/README.md).
+
+Retained packing keeps all potentially drawable candidates and explicit source
+boundaries. Its selected full-font scene has **150 draws and 62 labels**, with more
+packed geometry than the ordinary 45-draw fixture. Raw JSON/buffer equality is not
+expected. Tests compare exact ordered selected vertex bits, materials/clips and
+texture contents in expanded/indexed modes with full, partial and absent fonts.
+Expanded/direct Vulkan PNGs and a direct OpenGL 2× comparison are byte-identical
+to ordinary fixture rendering. The default fixture remains the comparison oracle.
+
 ## Publication and failures
 
 `Result` owns packed scene geometry/metadata and the missing-font list. Sprite
@@ -83,7 +106,8 @@ WHEREAMI_VECTOR_GLYPH_FIXTURE_DIR=/path/to/glyphs \
 CGO_ENABLED=0 GOARCH=386 go test ./pkg/vecmap/fixture ./cmd/vecmap-fixture
 ```
 
-Fixture coverage is **94.6%**. All assembly, request iteration, pass packing,
+Fixture coverage is **94.4%** after sharing the text-request iterator with the
+generic compiler. All assembly, request iteration, pass packing,
 projection and collision functions have 100% coverage. Uncovered statements are
 error propagation guards for pinned decode/style/geometry and validated atlas/mesh
 preparation, plus a finish-level collision error guard. Lower-level failure paths

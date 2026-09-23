@@ -4,10 +4,10 @@ Toolkit-neutral composition of prepared tile scenes. `Set` combines retained
 resource identity, fallback coverage, layer ordering, world instances and
 cross-tile symbol placement. It builds without Qt or cgo and adds no dependency.
 
-A preparation worker owns the Set. Tile decoding, style evaluation, glyph/sprite
-loading and scene packing happen upstream. The compositor does no I/O and starts
-no goroutines. Backend readiness still belongs to `retained.Worker` and its native
-adapter.
+A preparation worker owns the Set. `Prepare` and `Prepared.Build` now provide the
+upstream decoding, style evaluation and scene packing; the caller supplies loaded
+font/sprite assets. The package does no I/O and starts no goroutines. Backend
+readiness still belongs to `retained.Worker` and its native adapter.
 
 ```go
 set, err := tiles.New(retained.Limits{})
@@ -25,6 +25,83 @@ packet's `CurrentData.Frame(latestCamera)` pairs Current with its own transform
 slots. Return eligible Current coverage to the producer through its mailbox;
 don't read or mutate Set from a render callback. Initial worker startup uses
 `RestartWithData(target.Scene, target)` and an empty native namespace.
+
+## Generic tile preparation
+
+```go
+prepared, err := tiles.Prepare(pbf, layers, tiles.PrepareOptions{
+    Tile: tileID, Zoom: styleZoom, Indexed: true,
+})
+// Handle err. Discover font stacks/ranges from prepared.TextRequests(), then
+// load/decode assets outside this package.
+built, err := prepared.Build(tiles.Assets{
+    Fonts: decodedFonts,
+    Sprite: spriteLookup,
+    SpriteEntry: spriteMetadata,
+    // Optional compatibility policy; nil means no non-SDF collision readiness.
+    FallbackEligible: glyph.LegacyFallbackEligible,
+})
+// Handle err before publishing the immutable fragment.
+err = set.Apply([]tiles.Change{{Tile: tileID, Fragment: built.Fragment}})
+```
+
+`Prepare` accepts arbitrary bounded MVT input and application-owned compiled style
+layers. It reuses the existing MVT decoder, Earcut/line geometry, layer visibility
+and symbol-candidate algorithms. Unsupported style kinds retain compiler's existing
+skip behavior; this isn't a new MapLibre style implementation.
+
+The prepared object owns reusable primitives and evaluated candidates. It drops
+source features and style maps. `TextRequests` yields original candidate indexes
+with text, exact font-stack identity and layout options. A loader can inspect code
+points to request any supported glyph range; the library has no range-0 assumption.
+`Limits()` returns copied MVT degradation summaries.
+
+Build can run again when fonts or sprites become available without decoding or
+tessellating the tile again. It reuses text completeness, metric layout, retained
+atlas selection and mesh preparation. Font maps can merge decoded ranges. Asset
+maps/pixels must be immutable; callbacks must be synchronous and do no I/O. Prepared
+objects are immutable and support concurrent Builds if callbacks are safe, but the
+caller still bounds concurrent jobs and their memory.
+
+Every potentially drawable candidate is packed **before camera-dependent
+placement**. `compiler.FragmentBuilder` emits layer/candidate/part metadata without
+cross-boundary draw merging and preserves exact pattern periods. All symbol passes
+keep the existing icon/halo/fill order. Set.Select can then change accepted labels
+without rebuilding geometry. This retains unselected candidate geometry and can
+increase draw count; selected-run coalescing is not implemented here.
+
+Build returns `BuildResult{Fragment, MissingFonts, Limits}`. SDF-ineligible or
+incomplete text reports its font as missing. Metric-ready text with incomplete atlas
+coverage keeps its collision bounds but has no text draw records. Non-SDF fallback
+readiness is an explicit optional predicate; it does not draw native fallback.
+Passing `glyph.LegacyFallbackEligible` preserves the fixed fixture's policy.
+Sprite metadata controls collision readiness separately from prepared image lookup.
+
+All Prepare/Build errors return nil output, including errors after earlier layers
+or packing calls. A valid empty tile succeeds with an empty scene. Repeated asset
+builds own independent output metadata/geometry and converted glyph RGBA; sprite
+pixels remain immutable borrows. Font maps and layout scratch are not retained by
+the built fragment. Style zoom, visibility and paint are frozen at Prepare; prepare
+again when the producer's style-zoom/epoch changes.
+
+### Preparation bounds
+
+- MVT bytes retain the decoder's **2 MiB** limit and feature/geometry/work limits.
+- At most **1,024 compiled style layers**, with strictly increasing nonnegative
+  Order values, matching style.Compile output. Style expression width, source strings
+  and evaluation work retain the shared compiler's caller-owned input contract.
+- Tile source zoom is 0–14 and evaluated zoom is finite in 0–20.
+- `TriangleLimit` lowers the existing 2,000,000 aggregate base-triangle ceiling.
+  `CandidateLimit` lowers the 10,000-candidate ceiling shared across symbol layers.
+- `ElementLimit` lowers the existing 36,780,000 packed-element ceiling;
+  `DrawLimit` lowers the 65,536 provenance-record ceiling. Zero selects defaults.
+  A finite style value that overflows float32 packed geometry fails atomically.
+- Sprite/atlas/texture bounds remain those of the shared packer. **Successful Build
+  does not guarantee Store or upload-budget admission.** Set/Planner still apply
+  their aggregate byte/resource limits, and resources remain indivisible uploads.
+  Choose lower compilation limits for the application's memory/upload policy.
+
+Loading, retries, cancellation, cache/style epochs and scheduling remain caller work.
 
 ## Prepared fragment contract
 
@@ -176,7 +253,26 @@ is pending. Both children then appear together with their own transforms and no
 batch failure. OpenGL also passes at 2× scale under the race detector. Production
 scheduler regressions pass through the extracted shared selection policy.
 
-Next is a generic prepared-tile compiler that emits this metadata, then bounded
-loading and live producer scheduling. The command's file reload path still consumes
-whole scene documents. This checkpoint adds neither network tile loading nor a new
-GPU completion mechanism, and makes no MapLibre performance or visual-parity claim.
+The subsequent **re90** checkpoint supplies the generic compiler above. Its tests
+compare selected rendering against the original Madrid fixture in both topologies
+with complete, partial and missing fonts: exact ordered vertex bits, material/clip
+values, texture contents and label counts match after ignoring resource IDs,
+unselected buffer contents and provenance-induced draw splits. Tests also cover
+Unicode font maps, asset refresh, missing sprites, partial atlases, overflow,
+degradation summaries, concurrent Builds and atomic failures.
+
+Compiler coverage is **100%**; tiles coverage remains **98.8%**. The new remaining
+uncovered branch forwards the text-request-limit error after Prepare has already
+bounded candidate count. The existing defensive Store.Snapshot forwarding remains.
+Prepared-tile fuzzing completed **622,712 executions** in its configured 20 seconds.
+
+`vecmap-fixture -retained` produces captures through Prepare/Build/Set while retaining
+the command's pinned input checks. Full-font expanded/direct Vulkan PNGs equal the
+old references byte-for-byte; a direct OpenGL 2× capture also equals its ordinary
+fixture capture. The retained captures use 150 draws and retain more vertices than
+the 45-draw fixture because they preserve candidate boundaries and unselected data.
+
+Next is bounded loading and live producer scheduling. The viewer's file reload path
+still consumes whole scene documents. These checkpoints add no network loader or
+new GPU completion mechanism and make no MapLibre performance or general visual-
+parity claim.

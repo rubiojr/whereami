@@ -216,7 +216,12 @@ prepared-tile coverage, layer/wrap assembly and cross-tile placement. Native vie
 tests feed its snapshots through the existing document/Worker handoff: a parent
 stays visible through partial CPU preparation and partial child uploads, then both
 children appear together. The file-reload command still loads complete documents;
-generic tile compilation and live loading are the remaining producer boundaries.
+live loading/scheduling remains the producer boundary. Generic tile compilation is
+now supplied by `tiles.Prepare` / `Prepared.Build`. `vecmap-fixture -retained` emits
+comparison documents through that path and Set.Select. Full-font expanded/direct
+Vulkan captures and a direct OpenGL 2× comparison match ordinary fixture pixels
+byte-for-byte. They retain extra candidate geometry and 150 selected draw records,
+so their upload/draw counts are deliberately different from the 45-draw reference.
 
 ## Verification
 
