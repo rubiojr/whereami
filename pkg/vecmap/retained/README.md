@@ -301,10 +301,10 @@ CPU buffers still have their independent immutable lifetime. Queue bounds count
 messages and references, not total caller-owned snapshot bytes or driver overhead.
 Bound concurrent scene preparation and snapshots separately.
 
-The fixed-scene viewer uses generation checks, an initial native completion drain
-on recreation, and its existing 8 ms GUI timer for frame pumping. Camera changes
-coalesce while a native batch is busy. It does not yet send live Store updates or
-solve transform/placement handoff across changing tile targets.
+The viewer uses generation checks, initial native completion drains on recreation,
+and its existing 8 ms GUI timer for frame pumping. Camera changes coalesce while a
+native batch is busy. Live document replacement uses the associated-data transport
+below; tile cover and placement selection remain producer work.
 
 Worker verification (kata **qfkf**): headless transition, rollback/retry, supersession,
 reset, stale sequence/generation, mailbox bounds, errors, concurrent producers and
@@ -312,3 +312,44 @@ shutdown tests pass, including 386 and v1 race. Retained package coverage is **9
 the state-level exhaustion guard is covered, while the worker-loop return forwarding
 that guard is not driven through 2^64 actual packets. Store and Planner coverage
 remain 100%. Qt integration tests exercise basic/threaded Vulkan and OpenGL paths.
+
+### Scene-associated producer data
+
+`NewWorkerWithData[T]` pairs each target with immutable producer data. This lets a
+consumer retain the right transform-slot mapping while a replacement uploads,
+without keeping a lookup table of every historical scene pointer. The ordinary
+`Worker` and `Packet` types are aliases with empty data; their API is unchanged.
+
+```go
+worker, err := retained.NewWorkerWithData[*scene.Document](limits, budget)
+// Validate and freeze the document on the producer before handing it off.
+generation, err := worker.RestartWithData(&document.Scene, document)
+accepted := worker.SetTargetWithData(generation, &replacement.Scene, replacement)
+packet, available := worker.Next()
+// packet.CurrentData belongs to packet.Current, not necessarily replacement.
+// Reproject packet.CurrentData with the latest camera before consuming Batch.
+```
+
+- `PacketWithData[T].CurrentData` switches with Current. Partial uploads, failed
+  batches and rejected targets keep the old association. Initial/reset state and
+  explicit nil targets have zero data, even if the caller supplies data for nil.
+- Promotion is captured during acknowledgement, before applying a coalesced target.
+  This matters when the final upload of B completes while C is already queued:
+  B's mapping must survive even if no standalone B publication packet was sent.
+- A new data value for the same scene still produces an acknowledged publication
+  packet. Resident versions don't upload again. Camera-only changes should bypass
+  target planning and update frame transforms on the consumer.
+- The worker doesn't inspect, validate or copy `T`'s referenced storage. Producers
+  own metadata validation, including slot bounds and finite transforms. Both scene
+  and data remain immutable through every worker, packet and native borrow.
+- Data follows the bounded current/accepted/latest-target and packet lifetimes.
+  Superseded partial-target data is dropped; there is no historical association
+  map. Byte limits still cover resource payloads, not arbitrary producer data or
+  caller-retained snapshots. Bound those separately.
+- `Restart` and `SetTarget` on a data-bearing worker supply zero data. Consumers
+  needing associations should consistently use the `WithData` methods.
+
+Checkpoint **w8sf** verifies the final-ack/coalesced-target race, retry, rejection,
+same-scene data publication, clear/reset and weak-reference collection of abandoned
+mapping data. Headless 386 and v1 race tests pass. Package coverage remains **99.7%**;
+the new data association helpers have **100%** coverage.

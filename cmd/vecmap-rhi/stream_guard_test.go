@@ -19,7 +19,7 @@ func TestViewerBudgetPreflight(t *testing.T) {
 }
 
 func TestStreamResultGuards(t *testing.T) {
-	worker, err := retained.NewWorker(retained.ResidencyLimits{}, retained.Budget{Bytes: 100, Resources: 1})
+	worker, err := retained.NewWorkerWithData[*scene.Document](retained.ResidencyLimits{}, retained.Budget{Bytes: 100, Resources: 1})
 	require.NoError(t, err)
 	worker.Close()
 	<-worker.Done()
@@ -32,12 +32,12 @@ func TestStreamResultGuards(t *testing.T) {
 	assert.True(t, current.dead)
 	assert.ErrorContains(t, stream.status.Err, "does not match")
 	current.dead = false
-	current.pending = &retained.Packet{Generation: 2, Sequence: 1, Batch: &retained.Batch{Ticket: 4}}
+	current.pending = &retained.PacketWithData[*scene.Document]{Generation: 2, Sequence: 1, Batch: &retained.Batch{Ticket: 4}}
 	stream.complete(current, vecmaprhi.BatchResult{Ticket: 4, Success: false})
 	assert.True(t, current.dead)
 	assert.Equal(t, uint64(1), stream.status.BatchFailures)
 	assert.ErrorContains(t, stream.status.Err, "mailbox unavailable")
-	assert.Nil(t, stream.sync(nil, nil, scene.Frame{}))
+	assert.Nil(t, stream.sync(nil, nil, streamUpdate{}))
 	assert.ErrorIs(t, stream.status.Err, retained.ErrClosed)
 }
 

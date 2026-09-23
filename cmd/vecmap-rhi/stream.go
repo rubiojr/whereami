@@ -13,6 +13,7 @@ import (
 
 type streamStatus struct {
 	Generation, BatchFailures uint64
+	Current                   *scene.Document
 	Ready                     bool
 	Err                       error
 }
@@ -20,24 +21,24 @@ type streamStatus struct {
 type nativeEpoch struct {
 	generation uint64
 	renderer   *vecmaprhi.BatchRenderer
-	pending    *retained.Packet
-	current    *scene.Scene
+	pending    *retained.PacketWithData[*scene.Document]
+	current    *scene.Document
 	dead       bool
 }
 
-// viewerStream is render-thread owned. The fixed document uses the same transform
-// slots across every generation, so the latest camera transforms are also valid
-// while Current is old/empty. Live target changes need their own frame mapping.
+// viewerStream is render-thread owned. Documents carry immutable scene-local
+// transform mappings; camera state is independent and applies to Current, not the
+// unfinished target. The worker carries the mapping through publication.
 type viewerStream struct {
-	worker  *retained.Worker
-	target  *scene.Scene
+	worker  *retained.WorkerWithData[*scene.Document]
+	target  *scene.Document
 	epoch   *nativeEpoch
 	observe func(vecmaprhi.Stats)
 	report  func(streamStatus)
 	status  streamStatus
 }
 
-func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, camera scene.Frame) *rhi.QSGNode {
+func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, update streamUpdate) *rhi.QSGNode {
 	select {
 	case <-s.worker.Done():
 		s.status.Err = retained.ErrClosed
@@ -49,9 +50,19 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, camera scene
 		if old != nil {
 			old.Delete()
 		}
-		return s.recreate(item, camera)
+		s.target = update.target
+		return s.recreate(item, update.camera)
 	}
 	e := s.epoch
+	if s.target != update.target {
+		s.target = update.target
+		s.status.Ready = false
+		if !s.worker.SetTargetWithData(e.generation, documentScene(s.target), s.target) {
+			s.status.Err = fmt.Errorf("target mailbox unavailable")
+			e.dead = true
+		}
+		s.report(s.status)
+	}
 	if e.pending != nil {
 		return old
 	} // coalesce camera changes until completion
@@ -61,12 +72,11 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, camera scene
 			s.status.Err = packet.Err
 			s.acknowledge(e, packet, false)
 		} else {
-			e.current, batch = packet.Current, packet.Batch
+			e.current, batch = packet.CurrentData, packet.Batch
 			e.pending = &packet
 		}
 	}
-	camera.Scene = e.current
-	if err := e.renderer.Sync(camera, batch); err != nil {
+	if err := e.renderer.Sync(update.camera.frame(e.current), batch); err != nil {
 		s.status.Err = err
 		e.dead = true
 	} else if e.pending != nil && batch == nil {
@@ -74,12 +84,13 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, camera scene
 		e.pending = nil
 	}
 	s.status.Ready = e.current == s.target && !e.dead
+	s.status.Current = e.current
 	s.report(s.status)
 	return e.renderer.Node.QSGNode
 }
 
-func (s *viewerStream) recreate(item *rhi.QQuickItem, camera scene.Frame) *rhi.QSGNode {
-	generation, err := s.worker.Restart(s.target)
+func (s *viewerStream) recreate(item *rhi.QQuickItem, camera streamCamera) *rhi.QSGNode {
+	generation, err := s.worker.RestartWithData(documentScene(s.target), s.target)
 	if err != nil {
 		s.status.Err = err
 		s.report(s.status)
@@ -88,13 +99,13 @@ func (s *viewerStream) recreate(item *rhi.QQuickItem, camera scene.Frame) *rhi.Q
 	e := &nativeEpoch{generation: generation}
 	s.epoch = e
 	s.status.Generation, s.status.Ready = generation, false
+	s.status.Current = nil
 	e.renderer = vecmaprhi.NewBatchRenderer(item, s.observe, func(result vecmaprhi.BatchResult) {
 		s.complete(e, result)
 	})
 	// Do not consume work during node replacement. Start empty and allow the
 	// previous node's DeleteLater objects to reach endFrame before new uploads.
-	camera.Scene = nil
-	if err := e.renderer.Sync(camera, nil); err != nil {
+	if err := e.renderer.Sync(camera.frame(nil), nil); err != nil {
 		s.status.Err = err
 	}
 	s.report(s.status)
@@ -121,9 +132,16 @@ func (s *viewerStream) complete(e *nativeEpoch, result vecmaprhi.BatchResult) {
 	s.report(s.status)
 }
 
-func (s *viewerStream) acknowledge(e *nativeEpoch, packet retained.Packet, success bool) {
+func (s *viewerStream) acknowledge(e *nativeEpoch, packet retained.PacketWithData[*scene.Document], success bool) {
 	if !s.worker.Acknowledge(e.generation, packet.Sequence, success) {
 		s.status.Err = fmt.Errorf("upload acknowledgement mailbox unavailable")
 		e.dead = true
 	}
+}
+
+func documentScene(document *scene.Document) *scene.Scene {
+	if document == nil {
+		return nil
+	}
+	return &document.Scene
 }

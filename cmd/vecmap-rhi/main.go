@@ -5,11 +5,8 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"runtime"
 	"slices"
@@ -34,8 +31,9 @@ func main() {
 	diagnostics := flag.Bool("diagnostics", false, "report timer delivery and window state around pacing gaps")
 	uploadBytes := flag.Uint64("upload-bytes", 32<<20, "maximum geometry/index/RGBA bytes per upload batch (resources are indivisible)")
 	uploadResources := flag.Int("upload-resources", 2, "maximum resource operations per upload or retirement batch")
+	reload := flag.Duration("reload", 0, "poll the scene file for live replacements (for example 1s); zero disables")
 	flag.Parse()
-	if err := run(*path, benchmarkOptions{duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources}}); err != nil {
+	if err := run(*path, benchmarkOptions{duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -47,36 +45,23 @@ type benchmarkOptions struct {
 	screenshot              string
 	foreground, diagnostics bool
 	budget                  retained.Budget
+	reload                  time.Duration
+	feed                    *sceneFeed
 }
 
 func run(path string, options benchmarkOptions) error {
-	document, err := readDocument(path)
+	feed, err := newSceneFeed(path, options.reload)
 	if err != nil {
 		return err
 	}
-	return display(document, options)
-}
-
-func readDocument(path string) (scene.Document, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return scene.Document{}, err
-	}
-	var document scene.Document
-	err = json.NewDecoder(io.LimitReader(file, 128<<20)).Decode(&document)
-	file.Close()
-	if err != nil {
-		return document, err
-	}
-	if err := document.Validate(); err != nil {
-		return document, err
-	}
-	return document, nil
+	defer feed.close()
+	options.feed = feed
+	return display(*feed.latest.Load(), options)
 }
 
 func display(document scene.Document, options benchmarkOptions) error {
 	duration, animate, screenshot := options.duration, options.animate, options.screenshot
-	worker, err := retained.NewWorker(retained.ResidencyLimits{}, options.budget)
+	worker, err := retained.NewWorkerWithData[*scene.Document](retained.ResidencyLimits{}, options.budget)
 	if err != nil {
 		return fmt.Errorf("upload budget: %w", err)
 	}
@@ -86,13 +71,17 @@ func display(document scene.Document, options benchmarkOptions) error {
 	item := rhi.NewQQuickItem()
 	defer item.Delete()
 	item.SetFlag(rhi.QQuickItem__ItemHasContents)
-	var frame atomic.Pointer[scene.Frame]
-	frame.Store(&scene.Frame{Scene: &document.Scene, Transforms: document.Transforms, DevicePixelRatio: 1})
+	var frame atomic.Pointer[streamUpdate]
+	target := &document
+	if options.feed != nil {
+		target = options.feed.latest.Load()
+	}
+	frame.Store(&streamUpdate{target: target, camera: traceCamera(document, 0, false)})
 	var mu sync.Mutex
 	var samples frameSamples
 	var pacing pacingSamples
 	var status streamStatus
-	stream := &viewerStream{worker: worker, target: &document.Scene,
+	stream := &viewerStream{worker: worker,
 		observe: func(stats vecmaprhi.Stats) { mu.Lock(); defer mu.Unlock(); samples.add(stats) },
 		report:  func(value streamStatus) { mu.Lock(); defer mu.Unlock(); status = value },
 	}
@@ -124,8 +113,16 @@ func display(document scene.Document, options benchmarkOptions) error {
 			mu.Unlock()
 		}
 		elapsed := time.Since(start)
+		if options.feed != nil {
+			target = options.feed.latest.Load()
+			select {
+			case err := <-options.feed.errors:
+				fmt.Fprintf(os.Stderr, "scene reload: %v (keeping previous target)\n", err)
+			default:
+			}
+		}
 		if duration > 0 && elapsed >= duration {
-			if !currentStatus.Ready {
+			if !currentStatus.Ready || currentStatus.Current != target {
 				screenshotError = fmt.Errorf("scene uploads did not become ready before the duration elapsed")
 			} else if screenshot != "" {
 				image := item.Window().GrabWindow()
@@ -137,8 +134,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 			qt.QCoreApplication_Quit()
 			return
 		}
-		transforms := traceTransforms(document, elapsed.Seconds(), animate)
-		frame.Store(&scene.Frame{Scene: &document.Scene, Transforms: transforms, DevicePixelRatio: 1})
+		frame.Store(&streamUpdate{target: target, camera: traceCamera(document, elapsed.Seconds(), animate)})
 		item.Update()
 	})
 	timer.Start(8)
@@ -154,6 +150,9 @@ func display(document scene.Document, options benchmarkOptions) error {
 	fmt.Printf("platform=%s foreground=%t trace_geographic=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0)
 	if options.diagnostics {
 		pacing.report()
+	}
+	if finalStatus.Current != nil {
+		document = *finalStatus.Current
 	}
 	fmt.Printf("scene draws=%d labels=%d missing_fonts=%q\n", len(document.Scene.Draws), document.Labels, document.MissingFonts)
 	fmt.Printf("upload_budget_bytes=%d upload_budget_resources=%d planner_ready=%t native_generation=%d batch_failures=%d\n", options.budget.Bytes, options.budget.Resources, finalStatus.Ready, finalStatus.Generation, finalStatus.BatchFailures)
@@ -205,28 +204,4 @@ func (s *frameSamples) add(stats vecmaprhi.Stats) {
 		s.lastFrame = time.Now()
 	}
 	s.latest = stats
-}
-
-func traceTransforms(document scene.Document, t float64, animate bool) []scene.Affine {
-	if document.Camera != nil && len(document.TileSpaces) > 0 {
-		camera := document.Camera.WithViewport(float64(document.Width), float64(document.Height))
-		if animate {
-			camera.Zoom += 0.2 * math.Sin(t)
-			camera.Bearing += 0.15 * math.Sin(t*0.7) * 180 / math.Pi
-			camera = camera.Normalized().Panned(-math.Sin(t*1.3)*20, 0)
-		}
-		return document.FrameAt(camera).Transforms
-	}
-	transforms := slices.Clone(document.Transforms)
-	if !animate {
-		return transforms
-	}
-	scale := float32(math.Exp2(0.2 * math.Sin(t)))
-	sin, cos := math.Sincos(0.15 * math.Sin(t*0.7))
-	for i, base := range transforms {
-		a, b := float32(cos)*scale, float32(sin)*scale
-		cx, cy := float32(document.Width)/2, float32(document.Height)/2
-		transforms[i] = scene.Affine{M11: a*base.M11 - b*base.M21, M12: a*base.M12 - b*base.M22, M21: b*base.M11 + a*base.M21, M22: b*base.M12 + a*base.M22, DX: cx + a*(base.DX-cx) - b*(base.DY-cy) + float32(math.Sin(t*1.3))*20, DY: cy + b*(base.DX-cx) + a*(base.DY-cy)}
-	}
-	return transforms
 }

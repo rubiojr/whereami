@@ -188,11 +188,11 @@ func TestWorkerPrivateProtocol(t *testing.T) {
 	w := &Worker{limits: ResidencyLimits{}, packets: make(chan Packet, 1), acks: make(chan workerAck, 1), stop: make(chan struct{})}
 	require.True(t, w.Acknowledge(1, 1, true))
 	assert.False(t, w.Acknowledge(1, 2, true))
-	s := workerState{}
+	s := workerState[struct{}]{}
 	assert.True(t, s.advance(Budget{}))
 	s.acknowledge(workerAck{})
 	w.packets <- Packet{Generation: 1}
-	s.target(w, &workerTarget{generation: 2, scene: &scene.Scene{}})
+	s.target(w, &workerTarget[struct{}]{generation: 2, scene: &scene.Scene{}})
 	assert.Empty(t, w.packets)
 	assert.True(t, s.advance(Budget{Bytes: 100, Resources: 1}))
 	s.waiting, s.out = s.out, nil

@@ -2143,6 +2143,94 @@ Next is asynchronous native completion with explicit failure/result lifetimes, t
 live retained targets and scene-associated transform/coverage/order/wrap/placement
 handoff. This checkpoint makes no frame-time or MapLibre parity claim.
 
+### Asynchronous completion audit
+
+Committed checked submission and scoped signals as **07301d5**. Follow-up **w47r**
+audits the prospective readback-based replacement against Qt 6.11.2 source.
+The findings and implementation gates are in
+[Asynchronous QRhi completion](vecmap-rhi-completion.md).
+
+Vulkan records pending readbacks before submission and can later invoke their
+callbacks on a matching frame slot without a successful producing submission.
+QRhi cleanup registrations are invoked and cleared before backend destruction,
+which can still write readback result storage. OpenGL performs synchronous driver
+readback calls and can abandon commands on context failure. The threaded loop also
+fires `frameSwapped` after failed endFrame results.
+
+These findings block a callback-only replacement, not every possible asynchronous
+design. The checked executor remains in place. Proceeding requires selecting a
+backend-specific completion integration or a Qt/render-loop integration with
+explicit submission and final-reference boundaries; live target work can proceed
+independently with the checked baseline. No native readback failure injection or
+new performance measurement was performed in this audit.
+
+### Live target data and fixture replacement
+
+After the asynchronous-completion audit, the user asked which direction best serves
+the original performance goal. The recommendation was to retain stock Qt and its
+checked drains while building realistic target transitions, then use measured
+workloads to decide whether backend-specific completion is warranted. A Qt fork is
+not a prerequisite for this checkpoint (**w8sf**).
+
+The toolkit-neutral `WorkerWithData[T]` carries immutable producer data with the
+Current scene. Existing Worker/Packet APIs remain aliases with empty data. Mapping
+promotion occurs at the same acknowledgement that makes a scene ready, including
+when another target is already queued. Superseded data has bounded lifetime; no
+scene-pointer history map is needed. Same-scene data changes publish without
+resource uploads. Producers validate and bound their own data.
+
+The viewer uses documents as associated data. Camera state is independent of target
+slot numbering. Partial uploads keep the old mapping; publication switches scene
+and mapping together. An optional `-reload` interval runs a single background file
+producer with a latest-document slot and a retained Store namespace. It detects
+content changes, rejects invalid documents, and gives replacements fresh resource
+revisions. See the [native contract](../internal/vecmaprhi/README.md#live-fixture-targets)
+for usage and bounds. This is live fixture replacement, not network tile loading
+or a cover/placement policy.
+
+Verification:
+
+- Headless Worker tests cover partial/retried uploads, final-ack supersession,
+  rejected targets, same-scene data changes, clear/reset, stale generations and
+  collection of abandoned mapping data. 386 and v1 race checks pass. Retained
+  coverage remains **99.7%**, with new association helpers at 100%.
+- Basic/threaded Vulkan and OpenGL viewer processes replace a one-slot scene with
+  a two-slot scene, check old pixels during partial upload, then check the new
+  mapping and a mapping-only publication without uploads. Clear/reselect and reset
+  retain the correct association. OpenGL also passes at 2× scale with v1 race.
+- Real viewer reload processes atomically replace a scene file while running,
+  then verify the final screenshot uses the replacement's transform slot. Feed
+  tests check unchanged-content suppression, fresh revisions, old snapshot
+  immutability, invalid-input recovery, coordinate-mode/viewport guards and the
+  file-size bound. Frame/camera helpers have 100% coverage. Native subprocess
+  coverage is separate from the parent test profile; don't treat the parent's
+  viewer percentage as integrated renderer coverage.
+- Full v4 module coverage with pinned assets, tagged targeted staticcheck, default
+  application, tagged viewer and headless fixture builds pass. Existing generated
+  ST1006, gopls build-tag metadata and GO-2026-5024 baselines remain.
+- Complexity review: worker advance 14, viewer sync 15, feed replacement 13, display
+  24. These retain explicit protocol/validation guards. Display and the process
+  test remain candidates for a focused harness refactor as more scenarios arrive.
+
+Static expanded/direct threaded Vulkan PNGs are byte-identical to the previous
+checked-submission references. Both retain 45 draws, 62 labels and seven drains.
+Uploads are still 19,045,116 expanded bytes or 11,834,328 direct bytes. Artifacts:
+`/tmp/opencode/vecmap-rhi-live-targets` and
+`/tmp/opencode/vecmap-{direct,expanded}-live-targets.png`.
+
+These two-second static smokes are correctness checks, not controlled performance
+comparisons. Their full warm samples are recorded here to preserve the observations:
+
+| Capture | Frames | Finish wall ms | Prepare µs p95 | Submit µs p95 | Previous Qt GPU ms p95 | Callback ms p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Direct live-target harness | 121 | 2.700751 | 55.725 | 126.168 | 0.864642 | 17.290775 |
+| Expanded live-target harness | 121 | 3.251635 | 67.597 | 122.421 | 0.872618 | 18.903448 |
+
+Next: feed retained tile fragments into this association boundary with explicit
+cover/order/wrap and placement policy, then measure tile-arrival bursts alongside
+camera traces. The production renderer remains separate. Neither asynchronous GPU
+completion nor MapLibre parity is claimed.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

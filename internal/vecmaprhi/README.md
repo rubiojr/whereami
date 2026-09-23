@@ -147,10 +147,18 @@ White texture, uniforms, bindings and pipelines remain backend overhead outside 
 Planner's logical byte/resource limits. The executor performs no extra geometry or
 bitmap conversion. The fixture viewer now supplies a `retained.Worker`, generation-
 tagged packets/results, timer-driven GUI frame pumping, camera coalescing and native
-node recreation. Its fixed document shares transform slots across generations.
-Changing live targets needs its own scene/frame mapping and placement handoff.
+node recreation. `WorkerWithData[*scene.Document]` now keeps each Current scene
+paired with its own transform-slot mapping across live document replacement.
+Tile coverage and placement selection still belong to the producer.
 Replacement of the blocking drain remains subsequent work. The production
 renderer/scheduler is unchanged.
+
+The [Qt 6.11.2 asynchronous-completion audit](../../docs/vecmap-rhi-completion.md)
+records why readback callbacks alone cannot replace checked submission: Vulkan
+can invoke them without a successful producing submission, QRhi cleanup callbacks
+precede backend result writes during destruction, and OpenGL readback can block.
+`frameSwapped` is not a submission-success signal either. Resolve the native
+submission and final-reference boundaries before introducing result ownership.
 
 ### Signal subscription ownership
 
@@ -164,6 +172,45 @@ The generated Qt functor owns the Go callback handle through shared native lifet
 storage. Disconnect or sender destruction releases it after any in-progress callback
 returns. No separate sender-destruction subscription is needed. This is generic Qt
 callback ownership in the generator; all rendering and upload policy remains Go.
+
+### Live fixture targets
+
+The viewer accepts an opt-in `-reload` interval:
+
+```sh
+vecmap-rhi -scene /tmp/live-scene.json -reload 250ms -duration 0 \
+  -upload-resources 1
+```
+
+Publish files by writing a sibling temporary file and renaming it over the scene
+path. One background producer reads at most 128 MiB per poll, compares a SHA-256
+digest, then decodes, validates and remaps changed documents through one retained
+Store. Identical file contents don't publish a target, even after a rename.
+Invalid files report an error and retain the last valid target; changed content
+can recover. Viewport size and geographic/affine coordinate mode must stay fixed.
+Transform slots, tile spaces, resources and draw order may change. Mappings are
+limited to 65,536 slots; Store limits apply to scenes.
+
+Each accepted file replaces one fragment. Surviving local resource IDs retain
+global IDs and get new revisions, so edited bytes cannot masquerade as already
+resident data even when the file reuses its original IDs/revisions. This deliberately
+reuploads changed documents conservatively. It isn't a fine-grained tile updater.
+
+The producer publishes one latest-document slot. The worker coalesces targets while
+native work is pending and carries the Current document in its packet. The render
+thread projects **that document's** tile spaces with the latest common camera, or
+composes the camera's affine transform with its local transforms. It never pairs
+an old scene with an unfinished target's slots. The initial document defines the
+camera trace; reload does not jump to a replacement document's captured camera.
+
+The 8 ms GUI timer only samples the latest target and camera. Decoding, Store
+updates and Planner validation stay off GUI/render callbacks. Resource residency
+or indivisible-upload budget errors still stop the benchmark. At a timed exit,
+the latest sampled target must be ready before a screenshot is accepted.
+
+This supplies a live document-replacement harness. Live network tile loading,
+cover/order/wrap selection and cross-tile placement remain the next producer work.
+The checked submission and retirement drains remain in use.
 
 ## Verification
 

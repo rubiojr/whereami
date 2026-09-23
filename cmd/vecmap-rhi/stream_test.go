@@ -23,7 +23,7 @@ import (
 )
 
 func TestViewerStream(t *testing.T) {
-	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}} {
+	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}} {
 		t.Run("test"+scenario.loop+"-"+scenario.name, func(t *testing.T) {
 			binary, err := os.Executable()
 			require.NoError(t, err)
@@ -44,6 +44,10 @@ func TestViewerStreamProcess(t *testing.T) {
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+	if os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO") == "reload" {
+		testViewerReload(t)
+		return
+	}
 	app := qt.NewQApplication([]string{"vecmap-stream-test"})
 	defer app.Delete()
 	guiThread := qt.QThread_CurrentThreadId()
@@ -56,27 +60,31 @@ func TestViewerStreamProcess(t *testing.T) {
 	if os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO") == "budget" {
 		budget.Bytes = 1
 	}
-	worker, err := retained.NewWorker(retained.ResidencyLimits{Bytes: 4096, Resources: 8}, budget)
+	worker, err := retained.NewWorkerWithData[*scene.Document](retained.ResidencyLimits{Bytes: 4096, Resources: 8}, budget)
 	require.NoError(t, err)
 	defer func() { worker.Close(); <-worker.Done() }()
 	item := rhi.NewQQuickItem()
 	defer item.Delete()
 	item.SetFlag(rhi.QQuickItem__ItemHasContents)
-	var frame atomic.Pointer[scene.Frame]
-	frame.Store(&scene.Frame{Transforms: document.Transforms, DevicePixelRatio: 1})
+	var frame atomic.Pointer[streamUpdate]
+	frame.Store(&streamUpdate{target: &document, camera: traceCamera(document, 0, false)})
 	var requestReset, resetWhileUploading atomic.Bool
+	var pauseSync, pauseReplacement atomic.Bool
 	var duringUpload atomic.Int32
 	var mu sync.Mutex
 	var status streamStatus
 	var stats vecmaprhi.Stats
 	var renderThread unsafe.Pointer
-	stream := &viewerStream{worker: worker, target: &document.Scene}
+	stream := &viewerStream{worker: worker}
 	stream.report = func(value streamStatus) { mu.Lock(); defer mu.Unlock(); status = value }
 	stream.observe = func(value vecmaprhi.Stats) {
 		mu.Lock()
 		stats = value
 		renderThread = qt.QThread_CurrentThreadId()
 		mu.Unlock()
+		if value.MeshUploads == 2 && pauseReplacement.CompareAndSwap(true, false) {
+			pauseSync.Store(true)
+		}
 		if stream.epoch != nil && stream.epoch.pending != nil && value.MeshUploads > 0 && resetWhileUploading.CompareAndSwap(true, false) {
 			duringUpload.Add(1)
 			// Invalidate after recording, before endFrame/acknowledgement. Native
@@ -86,6 +94,9 @@ func TestViewerStreamProcess(t *testing.T) {
 	}
 	var retired *nativeEpoch // used only by render-thread callbacks
 	item.OnUpdatePaintNode(func(_ func(*rhi.QSGNode, *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode, old *rhi.QSGNode, _ *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode {
+		if pauseSync.Load() {
+			return old
+		}
 		if old != nil && requestReset.Swap(false) {
 			retired = stream.epoch
 			if retired.pending != nil {
@@ -133,7 +144,7 @@ func TestViewerStreamProcess(t *testing.T) {
 			value := status
 			mu.Unlock()
 			require.NoError(t, value.Err)
-			if value.Generation >= generation && (!ready || value.Ready) {
+			if value.Generation >= generation && (!ready || (value.Ready && value.Current == frame.Load().target)) {
 				return
 			}
 			time.Sleep(8 * time.Millisecond)
@@ -166,12 +177,59 @@ func TestViewerStreamProcess(t *testing.T) {
 	} else {
 		assert.Equal(t, guiThread, observedThread)
 	}
-	frame.Store(&scene.Frame{Transforms: []scene.Affine{{M11: 1, M22: 1, DX: 20}}, DevicePixelRatio: 1})
+	camera := streamCamera{affine: scene.Affine{M11: 1, M22: 1, DX: 20}, dpr: 1}
+	frame.Store(&streamUpdate{target: &document, camera: camera})
 	item.Update()
 	pixel(5, 5, false)
 	pixel(30, 30, true)
 	mu.Lock()
 	assert.Equal(t, initial.UploadedBytes, stats.UploadedBytes)
+	mu.Unlock()
+	// A replacement changes transform-slot count/order. During partial uploads
+	// the old scene must keep its old mapping, not use target slot zero at x=1000.
+	replacement := document
+	replacement.Scene.Meshes = append([]scene.Mesh(nil), document.Scene.Meshes...)
+	replacement.Scene.Meshes[0].Revision++
+	replacement.Scene.Textures = append([]scene.Texture(nil), document.Scene.Textures...)
+	replacement.Scene.Textures[0].Revision++
+	replacement.Scene.Draws = append([]scene.Draw(nil), document.Scene.Draws...)
+	replacement.Scene.Draws[0].Transform = 1
+	replacement.Transforms = []scene.Affine{{M11: 1, M22: 1, DX: 1000}, {M11: 1, M22: 1, DX: 30}}
+	require.NoError(t, replacement.Validate())
+	pauseReplacement.Store(true)
+	frame.Store(&streamUpdate{target: &replacement, camera: camera})
+	deadline := time.Now().Add(5 * time.Second)
+	for !pauseSync.Load() && time.Now().Before(deadline) {
+		item.Update()
+		qt.QCoreApplication_ProcessEvents()
+		mu.Lock()
+		failure := status.Err
+		mu.Unlock()
+		require.NoError(t, failure)
+		time.Sleep(8 * time.Millisecond)
+	}
+	require.True(t, pauseSync.Load())
+	pixel(30, 30, true)
+	mu.Lock()
+	assert.Same(t, &document, status.Current)
+	assert.False(t, status.Ready)
+	mu.Unlock()
+	pauseSync.Store(false)
+	pump(1, true)
+	pixel(30, 30, false)
+	pixel(60, 30, true)
+	// A mapping-only target with exactly resident resource versions publishes
+	// without upload and without using the prior target's mapping.
+	mappingOnly := replacement
+	mappingOnly.Transforms = []scene.Affine{{M11: 1, M22: 1, DX: 1000}, {M11: 1, M22: 1, DX: 5}}
+	mu.Lock()
+	uploaded := stats.UploadedBytes
+	mu.Unlock()
+	frame.Store(&streamUpdate{target: &mappingOnly, camera: camera})
+	pump(1, true)
+	pixel(30, 30, true)
+	mu.Lock()
+	assert.Equal(t, uploaded, stats.UploadedBytes)
 	mu.Unlock()
 	requestReset.Store(true)
 	pump(2, true)
@@ -187,6 +245,14 @@ func TestViewerStreamProcess(t *testing.T) {
 	assert.Zero(t, status.BatchFailures)
 	t.Logf("loop=%s backend=%s device=%s generation=%d", os.Getenv("QSG_RENDER_LOOP"), stats.Backend, stats.Device, status.Generation)
 	mu.Unlock()
+	// Clearing a live target selects an empty frame while retirement completes;
+	// reselecting it restores its own mapping in the same native generation.
+	frame.Store(&streamUpdate{camera: camera})
+	pump(4, true)
+	pixel(30, 30, false)
+	frame.Store(&streamUpdate{target: &mappingOnly, camera: camera})
+	pump(4, true)
+	pixel(30, 30, true)
 	// Leave a fresh generation in flight; deferred teardown and worker cancellation
 	// must not wait for an acknowledgement from the destroyed scene graph.
 	requestReset.Store(true)
