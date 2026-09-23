@@ -53,9 +53,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
   render-thread cleanup. Revision-keyed caches and allocation staging allow old/new
-  versions to coexist. An opt-in batch executor consumes worker-planned uploads
-  with conservative native completion drains; the viewer still uses whole-scene
-  uploads. Glyph offsets stay in screen pixels during camera motion.
+  versions to coexist. The fixture viewer feeds its batch executor through a
+  generation-aware headless Worker, with conservative native completion drains.
+  Glyph offsets stay in screen pixels during camera motion.
 - `internal/qtrhi`: a focused, generated Qt adapter. Native virtual callbacks and
   lifetime notifications are generated; rendering logic is Go. Returned native
   value copies require explicit `Delete`; GPU ownership never relies on finalizers.
@@ -1950,6 +1950,105 @@ Verification on Qt 6.11.2 / Mesa **26.2.2**:
 No new full-fixture screenshot or presentation/performance comparison is claimed in
 this checkpoint. The native adapter README specifies transport/lifetime obligations
 for the next worker-mailbox integration.
+
+### Worker-owned planning in the fixture viewer
+
+Committed the bounded native executor as **229451b**, then continued with kata
+**qfkf**. The opt-in QRhi viewer now uses `retained.Worker` and `BatchRenderer` by
+default. Its new flags are `-upload-bytes` (default **32 MiB**) and
+`-upload-resources` (default **2**). Budgets are positive and bounded by Planner
+residency limits; indivisible meshes/textures still produce ErrBudget when too large.
+The 32 MiB default admits the existing expanded fixture's mesh without chunking.
+
+`retained.Worker` owns one Planner on one goroutine, with a latest-target slot and
+single-slot packet/acknowledgement queues. Same-generation targets coalesce until
+the outstanding packet completes. Packets couple Current selection to native work;
+even draw-only/empty publication requires consumption acknowledgement. Validation
+and planning stay off the GUI/render thread. Target/budget errors report once and
+pause until a new target/reset rather than spinning or bypassing the budget.
+
+Native generations are explicit. Restart replaces the Planner and drops old queued
+messages without spawning another goroutine. Consumers reject old packets and
+callbacks by generation, and stale sequence/generation acknowledgements cannot
+commit new residency. Closing the worker cancels queued/outstanding CPU work without
+waiting for a GPU result; shutdown joins it after native teardown. This preserves
+toolkit-neutral queue/planning logic and adds no module dependency.
+
+The viewer's render-thread facade consumes packets only when its native executor is
+available. Its existing **8 ms GUI timer** polls/pumps frames through startup and
+partial uploads, even when Current is empty. Camera updates coalesce while native
+work is pending. A fixed document retains the same transform slots across generations;
+live target changes will need explicit scene-associated frame/placement metadata.
+The source document is still loaded/validated before opening the window; this is
+not a live tile ingestion path or a replacement for the production map scheduler.
+
+Resource release, node recreation and reset-before-acknowledgement now drive a new
+generation automatically. Each BatchRenderer has an initial prepared-frame/endFrame/
+next-prepare drain **before its first Planner-owned allocation**, so replacing a node
+on the same QRhi cannot overlook its predecessor's deferred native releases. Subsequent
+batch completion retains the previous conservative drain. `Stats.PrepareTime` now
+includes the whole batch callback, including upload allocation/recording and drains.
+These drains remain blocking and can stall unrelated work on the same graphics queue.
+Inert per-node frame-end signal registrations still live until window destruction.
+
+The CLI reports readiness, generation, batch failures and configured limits. It
+returns an error if uploads have not become ready before exit, and does not save a
+requested screenshot at the duration cutoff while still loading. Upload/live counters
+describe the latest native renderer namespace; native recreation resets those counters.
+Timing sample arrays retain warm samples across generations, but callback cadence
+does not bridge a reset. The existing first-30-frame sampling filter is unchanged.
+
+Verification:
+
+- Headless Worker tests cover readiness, acknowledgement ordering, failure/retry,
+  supersession, old/new namespaces, stale tokens, queue bounds, target/budget errors,
+  concurrent producers, cancellation and exhaustion guards. Retained coverage is
+  **99.7%**, with Store/Planner still at 100%; the worker-loop return forwarding
+  sequence exhaustion is not exercised with 2^64 real packets. 386 and v1 race pass.
+- Real viewer transport tests run in separate **basic and threaded Qt processes**
+  on desktop Vulkan/RADV and Xvfb OpenGL/llvmpipe. The threaded test verifies rendering
+  runs on a different OS thread. OpenGL also passes **2× scale with v1 race**.
+- Native tests check initial publication, camera-only pixels without uploads, idle
+  recreation, explicit release after upload recording but before acknowledgement,
+  stale-epoch reset rejection, fresh-namespace reupload and cancellation at teardown.
+  This exercises native release/recreation, not physical GPU-device-loss injection.
+  An oversized-budget-unit test rejects before any geometry upload; the CLI Vulkan
+  smoke with `-upload-bytes 1` reports ErrBudget and only four white-texture bytes.
+- Full v4 module coverage with pinned fixtures, targeted tagged staticcheck, default
+  app build, tagged v1 viewer build and headless fixture build pass. Default staticcheck
+  still reports generated ST1006 findings. Gopls resolves the headless changes but
+  reports build-tag/package-metadata errors for the opt-in native files; tagged tests
+  and staticcheck provide validation. GO-2026-5024 remains the vulnerability baseline.
+- Complexity review retains explicit state-machine/transport guards: Worker.run13,
+  workerState.advance13, viewerStream.sync13 and the existing display orchestration19.
+  They keep cancellation, publication and acknowledgement order visible.
+- The initial basic-loop reset test queued invalidation for a later GUI tick; the
+  upload could complete first. The test now invalidates directly from the render
+  observer after recording and before endFrame, making the intended lifetime case
+  deterministic. Both loops then pass, including the race checks.
+
+Expanded/direct full-fixture static Vulkan PNGs are **byte-identical** to their old
+references. Both use the actual threaded viewer with a **one-resource batch budget**,
+45 draws, 62 labels and complete fonts. Total uploads remain 19,045,116 expanded bytes
+or 11,834,328 direct bytes, one mesh and five textures including white; logical caches
+are empty at teardown. Artifacts: `/tmp/opencode/vecmap-rhi-worker`,
+`vecmap-{direct,expanded}-worker.png`, `vecmap-worker-coverage.out` and
+`vecmap-viewer-stream-coverage.out`.
+
+Two-second static smoke samples are retained below, not treated as controlled
+performance comparisons. The direct capture preceded the change to include the
+entire batch callback in prepare timing. Both samples apply the existing warm-frame
+filter; they do not measure cold preparation/upload latency or actual presentation.
+
+| Capture | Frames | Prepare µs p95 | Submit µs p95 | Previous Qt GPU frame ms p95 | Callback ms p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Direct worker smoke | 119 | 56.406 | 121.879 | 0.866446 | 18.249444 |
+| Expanded worker smoke | 114 | 72.406 | 149.471 | 0.883198 | 17.789049 |
+
+Next: remove/replace or measure the blocking native drains, add explicit signal
+disconnection for long-lived repeated recreation, then integrate live Store targets
+with scene-associated transforms, coverage/order/wrap and placement policy. No
+MapLibre parity or production migration claim follows from this checkpoint.
 
 ## Flatpak integration
 

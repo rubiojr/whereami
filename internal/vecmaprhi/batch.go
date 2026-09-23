@@ -5,6 +5,7 @@ package vecmaprhi
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	rhi "github.com/rubiojr/whereami/internal/qtrhi"
 	"github.com/rubiojr/whereami/pkg/vecmap/retained"
@@ -32,6 +33,7 @@ type BatchRenderer struct {
 	pending                   *retained.Batch
 	lastTicket                uint64
 	executed, submitted, dead bool
+	warming, prepared         bool
 	batchError                error
 	meshFactory               func(scene.Mesh) (gpuMesh, error)
 	textureFactory            func(scene.Texture) (gpuTexture, error)
@@ -44,7 +46,7 @@ type BatchRenderer struct {
 // at afterFrameEnd and the drain takes place in the following prepare callback.
 func NewBatchRenderer(item *rhi.QQuickItem, observe func(Stats), notify func(BatchResult)) *BatchRenderer {
 	r := newRenderer(item, observe)
-	b := &BatchRenderer{r: r, Node: r.Node, notify: notify, meshFactory: r.createMesh, textureFactory: r.createTexture}
+	b := &BatchRenderer{r: r, Node: r.Node, notify: notify, meshFactory: r.createMesh, textureFactory: r.createTexture, warming: true}
 	r.executor = b
 	r.Node.OnPrepare(func(func()) { b.prepare() })
 	// The signal connection lives until the window dies; sever its Go reference
@@ -103,6 +105,8 @@ func (r *Renderer) requireResident(s *scene.Scene) error {
 }
 
 func (b *BatchRenderer) prepare() {
+	start := time.Now()
+	defer func() { b.r.stats.PrepareTime = time.Since(start) }()
 	if b.dead {
 		return
 	}
@@ -119,6 +123,10 @@ func (b *BatchRenderer) prepare() {
 	}
 	if !b.r.ready {
 		b.invalidate(fmt.Errorf("prepare: %s", b.r.stats.Error))
+		return
+	}
+	if b.warming {
+		b.prepared = true
 		return
 	}
 	if b.pending == nil || b.executed {
@@ -206,7 +214,7 @@ func (b *BatchRenderer) contains(v retained.Version) bool {
 }
 
 func (b *BatchRenderer) afterFrame() {
-	if b.dead || !b.executed {
+	if b.dead || (!b.executed && !b.prepared) {
 		return
 	}
 	context := b.r.context
@@ -232,9 +240,15 @@ func (b *BatchRenderer) complete() {
 		b.invalidate(fmt.Errorf("native completion drain failed"))
 		return
 	}
+	b.submitted, b.prepared = false, false
+	if b.warming {
+		// A replacement node may share the same QRhi with its retired predecessor.
+		// Drain that namespace before allocating any new Planner-owned resources.
+		b.warming = false
+		return
+	}
 	result := BatchResult{Ticket: b.pending.Ticket, Success: b.batchError == nil, Err: b.batchError}
 	b.pending, b.batchError, b.executed = nil, nil, false
-	b.submitted = false
 	if b.notify != nil {
 		b.notify(result)
 	}

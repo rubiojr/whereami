@@ -3,7 +3,8 @@
 Toolkit-neutral retained fragment updates and ordered scene composition. This is
 the identity/publication layer between prepared tile scenes and the acknowledged
 upload planner described below. It uses `scene.Scene` without Qt, cgo or new module
-dependencies. It is not yet connected to the production renderer or QRhi viewer.
+dependencies. The QRhi fixture viewer now uses its asynchronous upload Worker;
+the production renderer and live tile scheduler retain their existing path.
 
 ```go
 store, err := retained.New(retained.Limits{})
@@ -181,8 +182,8 @@ err = planner.Acknowledge(batch.Ticket, success)
   ID. Backend maps must key by **kind, ID and revision**, not just ID. QRhi now has
   separate revision-keyed mesh/texture caches and transactional allocation staging.
   Its opt-in `BatchRenderer` executes these batches, with end-of-frame observation
-  followed by a conservative native drain before acknowledgement. The viewer still
-  uses whole-scene uploads; worker transport integration remains to wire. See the
+  followed by a conservative native drain before acknowledgement. The fixture viewer
+  uses the Worker transport described below. See the
   [native adapter contract](../../../internal/vecmaprhi/README.md).
 - Target supersession is accepted between batches. Successfully uploaded resources
   of an abandoned target are retired before new uploads, unless needed by the
@@ -241,3 +242,71 @@ batch budget. A fake-backend state-machine fuzz run exercised **431,742 executio
 in 20 seconds without failure, checking current-scene readiness, release safety and
 peak logical residency. Headless 386, v1 race and full module checks pass. This is
 CPU planning evidence, not GPU latency, presentation or MapLibre parity evidence.
+
+## Asynchronous worker and native generations
+
+`NewWorker(limits, budget)` starts one Go goroutine that exclusively owns a Planner.
+All target validation and planning run there. Construct workers with NewWorker;
+the zero value is invalid and workers must not be copied. Methods are concurrent-safe.
+
+```go
+worker, err := retained.NewWorker(retained.ResidencyLimits{}, retained.Budget{
+    Bytes: 32 << 20, Resources: 2,
+})
+// Handle err; invalid limits/budgets reject before starting the goroutine.
+generation, err := worker.Restart(snapshot)
+// Handle err. The matching native namespace must initially be empty.
+// Later producer updates coalesce to the newest immutable snapshot:
+accepted := worker.SetTarget(generation, replacement)
+// False means closed or a stale/invalid generation; no target was accepted.
+```
+
+The transport has one latest-target slot, one output slot and one acknowledgement
+slot. During outstanding work, same-generation targets remain in the coalescing slot;
+only the newest is validated after acknowledgement. A short mutex protects input
+metadata, never validation or native work. `Next()` polls without waiting. A `Packet`
+contains a generation, sequence, Current scene, optional Batch and optional Err.
+
+- Consume `Packet.Current` before executing its batch. Releases must use the new
+  Current selection, with that scene's own transform-slot mapping.
+- After the whole native batch completes, call
+  `Acknowledge(packet.Generation, packet.Sequence, success)`. This never waits; false
+  means the mailbox is full or closed. Retry or reset rather than dropping a required
+  acknowledgement. Native callbacks should be the only result producer.
+- Even a packet **without a batch** must be acknowledged after Current is consumed.
+  This gives draw-only/empty publication the same ordering and backpressure as
+  resource work. If publication cannot be consumed, reset the namespace.
+- Target/budget errors arrive in `Packet.Err`, retaining the previously active scene.
+  Acknowledge that error packet; planning then sleeps until another target or reset.
+  Oversized units do not cause a busy loop or silently enlarge the budget.
+- Failed native uploads retry with fresh sequences/tickets after all failed-batch
+  allocations are discarded. Successful earlier batches remain resident.
+- The worker privately retains the Planner ticket; public descriptors cannot change
+  which pending batch is acknowledged. All payloads remain immutable borrows.
+
+`Restart` is for native namespace recreation, **not target supersession**. Dispose of
+the old native namespace first, then use its returned generation to reject old packets
+and callbacks. The worker replaces its Planner, drops queued old-generation messages
+and ignores stale acknowledgements. It never starts another goroutine. Queued resets
+coalesce; a bounded validation already in progress completes before the reset is
+handled. Generation exhaustion rejects; sequence exhaustion stops the worker rather
+than reusing a token. The native adapter must still satisfy old in-flight lifetime
+obligations before allocating against the new residency budget.
+
+`Close()` cancels work without waiting for native acknowledgement. Wait on `Done()`
+outside GUI/render callbacks to join the worker and drop queued borrows. Native-held
+CPU buffers still have their independent immutable lifetime. Queue bounds count
+messages and references, not total caller-owned snapshot bytes or driver overhead.
+Bound concurrent scene preparation and snapshots separately.
+
+The fixed-scene viewer uses generation checks, an initial native completion drain
+on recreation, and its existing 8 ms GUI timer for frame pumping. Camera changes
+coalesce while a native batch is busy. It does not yet send live Store updates or
+solve transform/placement handoff across changing tile targets.
+
+Worker verification (kata **qfkf**): headless transition, rollback/retry, supersession,
+reset, stale sequence/generation, mailbox bounds, errors, concurrent producers and
+shutdown tests pass, including 386 and v1 race. Retained package coverage is **99.7%**;
+the state-level exhaustion guard is covered, while the worker-loop return forwarding
+that guard is not driven through 2^64 actual packets. Store and Planner coverage
+remain 100%. Qt integration tests exercise basic/threaded Vulkan and OpenGL paths.

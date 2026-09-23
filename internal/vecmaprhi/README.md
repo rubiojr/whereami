@@ -32,11 +32,11 @@ frames reuse both scene resource selection and resident allocations.
 
 Inputs are validated immutable scenes prepared off-thread. These private adapter
 operations do not duplicate the shared engine's input/resource-budget validation.
-The current viewer still synchronizes all missing resources for a changed scene;
-it does not yet execute bounded `retained.Planner` batches. Resource allocation is
+The ordinary `New` path synchronizes all missing resources for a changed scene.
+The fixture viewer now uses `BatchRenderer` and `retained.Worker`. Resource allocation is
 transactional, not the entire frame: the existing automatic prepare/pipeline error
 path still resets renderer resources. The separate `BatchRenderer` below executes
-worker-planned batches; the viewer continues to use `New` and whole-scene uploads.
+worker-planned batches.
 
 ## Retirement and acknowledgements
 
@@ -98,6 +98,13 @@ the Planner in a rendering callback.
    or together with, the next retirement batch. The adapter preserves exact selected
    revisions and activates staged resources without another upload.
 
+Before executing its first batch, each new BatchRenderer also waits for one prepared
+frame to end and drains in the next prepare. This startup barrier handles replacement
+nodes using the same QRhi: their predecessor's deferred releases must finish before
+new Planner-owned allocations are made. White/uniform backend overhead may be created
+during this barrier. `Stats.PrepareTime` covers the entire batch prepare callback,
+including allocation/recording and blocking startup/completion drains.
+
 **Keep requesting frames until the callback arrives**, even when Current is nil or
 empty. Hidden/suspended windows may delay completion; there is no timeout-based
 optimistic acknowledgement. This executor requires normal QQuickWindow frame-end
@@ -129,9 +136,12 @@ support is a follow-up for repeated node recreation in a long-lived window.
 
 White texture, uniforms, bindings and pipelines remain backend overhead outside the
 Planner's logical byte/resource limits. The executor performs no extra geometry or
-bitmap conversion. A live worker mailbox, GUI wakeup/coalescing, automatic recovery,
-threaded-loop integration and replacement of the blocking drain remain subsequent
-integration work. The production renderer/scheduler is unchanged.
+bitmap conversion. The fixture viewer now supplies a `retained.Worker`, generation-
+tagged packets/results, timer-driven GUI frame pumping, camera coalescing and native
+node recreation. Its fixed document shares transform slots across generations.
+Changing live targets needs its own scene/frame mapping and placement handoff.
+Replacement of the blocking drain remains subsequent work. The production
+renderer/scheduler is unchanged.
 
 ## Verification
 
@@ -168,5 +178,13 @@ native device/drain and prepare failure guards remain partly uncovered. Tests ke
 the old scene during bounded partial uploads, retry failed multi-resource allocations,
 supersede partial targets, publish new transform slots, move the camera without
 uploads, retire after native completion and invalidate a pending batch at teardown.
-A cross-thread signal probe checks direct delivery. Full worker transport/threaded
-render-loop integration and nonblocking retirement are subsequent work.
+A cross-thread signal probe checks direct delivery.
+
+The worker-viewer checkpoint (**qfkf**) additionally runs the real viewer transport
+in separate basic and threaded Qt processes on Vulkan and OpenGL, including 2×/v1
+race checks. Tests recreate native resources while idle and after upload recording
+but before acknowledgement, ignore old-epoch callbacks, preserve camera-only pixels
+without uploads, reject an undersized budget, and cancel workers at teardown. These
+are explicit resource-release/reset tests, not injected physical GPU device loss.
+The initial native drain protects old namespace retirement on same-context resets.
+The window's inert signal registrations still persist until window destruction.

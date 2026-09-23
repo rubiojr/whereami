@@ -20,6 +20,7 @@ import (
 	qt "github.com/mappu/miqt/qt6"
 	rhi "github.com/rubiojr/whereami/internal/qtrhi"
 	"github.com/rubiojr/whereami/internal/vecmaprhi"
+	"github.com/rubiojr/whereami/pkg/vecmap/retained"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 )
 
@@ -31,8 +32,10 @@ func main() {
 	screenshot := flag.String("screenshot", "", "save a PNG before exiting")
 	foreground := flag.Bool("foreground", false, "keep the benchmark window on top and request activation")
 	diagnostics := flag.Bool("diagnostics", false, "report timer delivery and window state around pacing gaps")
+	uploadBytes := flag.Uint64("upload-bytes", 32<<20, "maximum geometry/index/RGBA bytes per upload batch (resources are indivisible)")
+	uploadResources := flag.Int("upload-resources", 2, "maximum resource operations per upload or retirement batch")
 	flag.Parse()
-	if err := run(*path, benchmarkOptions{*duration, *animate, *screenshot, *foreground, *diagnostics}); err != nil {
+	if err := run(*path, benchmarkOptions{duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -43,6 +46,7 @@ type benchmarkOptions struct {
 	animate                 bool
 	screenshot              string
 	foreground, diagnostics bool
+	budget                  retained.Budget
 }
 
 func run(path string, options benchmarkOptions) error {
@@ -72,6 +76,11 @@ func readDocument(path string) (scene.Document, error) {
 
 func display(document scene.Document, options benchmarkOptions) error {
 	duration, animate, screenshot := options.duration, options.animate, options.screenshot
+	worker, err := retained.NewWorker(retained.ResidencyLimits{}, options.budget)
+	if err != nil {
+		return fmt.Errorf("upload budget: %w", err)
+	}
+	defer func() { worker.Close(); <-worker.Done() }()
 	app := qt.NewQApplication([]string{"vecmap-rhi"})
 	defer app.Delete()
 	item := rhi.NewQQuickItem()
@@ -79,20 +88,16 @@ func display(document scene.Document, options benchmarkOptions) error {
 	item.SetFlag(rhi.QQuickItem__ItemHasContents)
 	var frame atomic.Pointer[scene.Frame]
 	frame.Store(&scene.Frame{Scene: &document.Scene, Transforms: document.Transforms, DevicePixelRatio: 1})
-	var renderer *vecmaprhi.Renderer
 	var mu sync.Mutex
 	var samples frameSamples
 	var pacing pacingSamples
+	var status streamStatus
+	stream := &viewerStream{worker: worker, target: &document.Scene,
+		observe: func(stats vecmaprhi.Stats) { mu.Lock(); defer mu.Unlock(); samples.add(stats) },
+		report:  func(value streamStatus) { mu.Lock(); defer mu.Unlock(); status = value },
+	}
 	item.OnUpdatePaintNode(func(_ func(*rhi.QSGNode, *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode, old *rhi.QSGNode, _ *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode {
-		if old == nil {
-			renderer = vecmaprhi.New(item, func(stats vecmaprhi.Stats) {
-				mu.Lock()
-				defer mu.Unlock()
-				samples.add(stats)
-			})
-		}
-		renderer.Sync(*frame.Load())
-		return renderer.Node.QSGNode
+		return stream.sync(item, old, *frame.Load())
 	})
 	engine, err := createBenchmarkWindow(document, item, options)
 	if err != nil {
@@ -103,6 +108,13 @@ func display(document scene.Document, options benchmarkOptions) error {
 	timer := qt.NewQTimer()
 	var screenshotError error
 	timer.OnTimeout(func() {
+		mu.Lock()
+		currentStatus := status
+		mu.Unlock()
+		if currentStatus.Err != nil {
+			qt.QCoreApplication_Quit()
+			return
+		}
 		if options.diagnostics {
 			state := windowState{Visible: window.IsVisible(), Active: window.IsActive(), Exposed: window.IsExposed()}
 			swaps := engine.RootObjects()[0].Property("swapCount")
@@ -113,7 +125,9 @@ func display(document scene.Document, options benchmarkOptions) error {
 		}
 		elapsed := time.Since(start)
 		if duration > 0 && elapsed >= duration {
-			if screenshot != "" {
+			if !currentStatus.Ready {
+				screenshotError = fmt.Errorf("scene uploads did not become ready before the duration elapsed")
+			} else if screenshot != "" {
 				image := item.Window().GrabWindow()
 				if image.IsNull() || !image.Save(screenshot) {
 					screenshotError = fmt.Errorf("save screenshot %q", screenshot)
@@ -130,6 +144,9 @@ func display(document scene.Document, options benchmarkOptions) error {
 	timer.Start(8)
 	qt.QApplication_Exec()
 	timer.Delete()
+	mu.Lock()
+	finalStatus := status // teardown invalidates native readiness
+	mu.Unlock()
 	engine.Delete()
 	mu.Lock()
 	defer mu.Unlock()
@@ -139,6 +156,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 		pacing.report()
 	}
 	fmt.Printf("scene draws=%d labels=%d missing_fonts=%q\n", len(document.Scene.Draws), document.Labels, document.MissingFonts)
+	fmt.Printf("upload_budget_bytes=%d upload_budget_resources=%d planner_ready=%t native_generation=%d batch_failures=%d\n", options.budget.Bytes, options.budget.Resources, finalStatus.Ready, finalStatus.Generation, finalStatus.BatchFailures)
 	fmt.Printf("backend=%s device=%s\n", latest.Backend, latest.Device)
 	fmt.Printf("frames=%d mesh_uploads=%d texture_uploads=%d uploaded_bytes=%d live_meshes=%d live_textures=%d\n", latest.Frames, latest.MeshUploads, latest.TextureUploads, latest.UploadedBytes, latest.LiveMeshes, latest.LiveTextures)
 	for name, values := range map[string][]time.Duration{"prepare_cpu": samples.prepare, "submit_cpu": samples.submit, "gpu_previous_frame": samples.gpu, "render_callback_interval": samples.cadence} {
@@ -149,6 +167,12 @@ func display(document scene.Document, options benchmarkOptions) error {
 	}
 	if latest.Error != "" {
 		return fmt.Errorf("renderer: %s", latest.Error)
+	}
+	if finalStatus.Err != nil {
+		return fmt.Errorf("upload worker: %w", finalStatus.Err)
+	}
+	if !finalStatus.Ready {
+		return fmt.Errorf("scene uploads incomplete")
 	}
 	if latest.Frames == 0 {
 		return fmt.Errorf("renderer produced no frames")
@@ -163,6 +187,9 @@ type frameSamples struct {
 }
 
 func (s *frameSamples) add(stats vecmaprhi.Stats) {
+	if stats.Frames < s.latest.Frames {
+		s.lastFrame = time.Time{}
+	}
 	if stats.Frames > s.latest.Frames {
 		if stats.Frames > 30 && len(s.prepare) < 60000 {
 			s.prepare = append(s.prepare, stats.PrepareTime)
