@@ -29,6 +29,11 @@ fallback coverage, recompute label placement, or fix pattern world-wrap phases.
 Keep those policies in the producer/selector. Material fields and clips are copied
 exactly. Repeated ranges/instances share the fragment's resource identities.
 
+The [tiles compositor](../tiles/README.md) is now one such producer: it combines
+prepared per-tile scenes with explicit layer/candidate/pattern metadata, the shared
+fallback selector, world instances and collision placement. Store's lower-level
+contract remains independent of those map policies.
+
 ## Resource identities
 
 Input IDs are local to each fragment. Mesh ID 1 and texture ID 1 in multiple input

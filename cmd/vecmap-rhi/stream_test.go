@@ -23,7 +23,7 @@ import (
 )
 
 func TestViewerStream(t *testing.T) {
-	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}} {
+	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}, {"basic", "tiles"}, {"threaded", "tiles"}} {
 		t.Run("test"+scenario.loop+"-"+scenario.name, func(t *testing.T) {
 			binary, err := os.Executable()
 			require.NoError(t, err)
@@ -50,6 +50,10 @@ func TestViewerStreamProcess(t *testing.T) {
 	}
 	app := qt.NewQApplication([]string{"vecmap-stream-test"})
 	defer app.Delete()
+	if os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO") == "tiles" {
+		testTileComposition(t)
+		return
+	}
 	guiThread := qt.QThread_CurrentThreadId()
 	document := scene.Document{Width: 160, Height: 120, Transforms: []scene.Affine{{M11: 1, M22: 1}}, Scene: scene.Scene{
 		Meshes:   []scene.Mesh{{ID: 1, Revision: 1, Vertices: []scene.Vertex{{X: 0, Y: 0}, {X: 100, Y: 0}, {X: 0, Y: 80}, {X: 100, Y: 0}, {X: 100, Y: 80}, {X: 0, Y: 80}}}},

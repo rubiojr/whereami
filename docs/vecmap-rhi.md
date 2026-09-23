@@ -2231,6 +2231,75 @@ cover/order/wrap and placement policy, then measure tile-arrival bursts alongsid
 camera traces. The production renderer remains separate. Neither asynchronous GPU
 completion nor MapLibre parity is claimed.
 
+### Retained tile coverage, ordering, wraps and placement
+
+Committed live scene-associated targets as **03c33d5**, then continued with **9g4n**.
+The new [`tiles`](../pkg/vecmap/tiles/README.md) package composes prepared tile scenes
+over retained.Store. It is single-owner, toolkit-neutral and has no I/O or goroutines.
+The original scheduler's sibling/parent/continuity selection moved into shared
+`view.GroupTiles` / `SelectCover`; the production scheduler delegates to those helpers
+while retaining its own loading, cancellation, budgeting and rendering paths.
+
+The compositor adds the producer policy that Store intentionally lacks:
+
+- Atomic bounded tile admission with copied layer/candidate/metric metadata and
+  borrowed immutable geometry/pixels. Store still owns IDs and revisions.
+- Explicit eligible continuity from acknowledged Current. A generated/queued
+  snapshot never becomes continuity implicitly. A ready parent survives partial
+  requested-sibling preparation; the Worker then preserves old Current through
+  partial GPU uploads of the replacement cover.
+- Stable layer-major composition with selected-tile/wrap/source-draw order inside
+  each layer. World instances share resource versions and have scene-associated
+  TileSpaces. Pattern phase uses original float64 periods, not reconstructed
+  float32 material values.
+- Cross-tile placement using the existing ProjectSymbol/SelectSymbols behavior,
+  including reverse-candidate tie order, optional/overlap flags and metric-versus-
+  atlas readiness. Per-candidate draw metadata filters icons and text passes.
+- Identical snapshot pointers for camera-only changes that preserve coverage,
+  wraps and acceptance. Placement still performs bounded CPU work; this is not a
+  claim of zero-cost camera motion.
+
+Bounds include the existing Store envelope, 10,000 candidates per tile, 100,000
+incoming/stored/instanced candidate limits, pre-filter instanced draw limits and
+the shared collision-work ceiling. Select failures return no partial snapshot.
+Producer-owned strings, concurrent preparation and caller-held old snapshots retain
+their separate lifetime/memory obligations.
+
+Prepared input needs one metadata record per draw, with no coalescing across layer
+or candidate boundaries. The flattened fixture cannot recover that provenance.
+Its pinned test therefore uses real solid base draws with explicit source-order
+metadata, checking payload sharing and revision isolation without claiming generic
+compilation or multi-tile label parity. A generic compiler emitting this metadata
+is the next step before bounded network loading and producer scheduling.
+
+Verification:
+
+- Tiles package coverage **98.8%**; only defensive Store.Snapshot error propagation
+  remains uncovered after input preflight. New shared cover-selection helpers are
+  **100%** covered; the broader view package is **89.2%**.
+- Tests cover requested-sibling refinement, deep/mixed-depth continuity, overlap
+  exclusion, draw ordering, exact wrap phases, shared payloads, cross-tile priority,
+  icon/text readiness, no-draw collision reservations, atomic rejection, old snapshot
+  lifetime, resource revisions and the Worker/Planner/native-ack contract.
+- Headless 386 and v1 race pass. Composition fuzzing completed **68,283 executions**
+  in the configured 20-second run with no failure.
+- Basic/threaded Vulkan and OpenGL viewer processes pass. New pixel tests preserve
+  a red parent through single-child preparation and the first child upload, then
+  display the green/blue children together. OpenGL passes at 2× scale with v1 race.
+- Full v4 module coverage with pinned fixtures, targeted staticcheck and default,
+  headless and tagged viewer builds pass. Shared Go diagnostics are clean; native
+  test metadata remains unavailable in untagged gopls. Default staticcheck retains
+  generated ST1006 findings; GO-2026-5024 remains the earlier vulnerability baseline.
+- Complexity review retains explicit metadata/admission guards (maximum 16 in
+  preflight); the extracted cover branches are 13 each instead of the old combined
+  selection function's 27. No rendering logic moved into C++ or binding templates.
+
+Coverage: `/tmp/opencode/vecmap-tile-composition-coverage.out`. Build artifacts:
+`/tmp/opencode/{whereami,vecmap-fixture,vecmap-rhi}-tile-composition`. No new full-map
+screenshot or performance measurement was made. The checked GPU drains and
+asynchronous-completion audit remain in force. Production renderer migration and
+MapLibre parity still require realistic compiled-tile workloads and comparison gates.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

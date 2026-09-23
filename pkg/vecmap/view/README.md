@@ -21,6 +21,18 @@ The cover preserves the existing scheduler policy: a one-tile prefetch ring,
 maximum source zoom 14, and at most 8x8 canonical tiles, ordered nearest first.
 Provider-specific cover policies remain a future extension.
 
+`GroupTiles` and `SelectCover` now share the production scheduler's fallback policy:
+requested siblings refine together, detailed previous coverage survives zoom-out,
+and missing targets can use an immediate parent or eligible ancestor/descendant
+continuity. Selection is canonical and nonoverlapping; world instancing remains
+separate. Ready/continuity state belongs to the caller. The helpers take trusted,
+bounded canonical inputs at source zoom <=14 and do no I/O or native work.
+
+The [tiles compositor](../tiles/README.md) supplies validated bounds, retained scenes,
+layer/wrap assembly and cross-tile placement. It takes continuity explicitly from
+the acknowledged Current rather than remembering its last queued target. The
+production scheduler also delegates its existing selection to these shared helpers.
+
 Run all camera and cover regressions without Qt:
 
 ```sh

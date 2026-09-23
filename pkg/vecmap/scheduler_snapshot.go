@@ -44,14 +44,14 @@ func (s *tileSchedulerState) relevantFailures() (int, string) {
 	}
 	for _, group := range s.targetGroups() {
 		missingTarget := false
-		for _, tile := range group.targets {
+		for _, tile := range group.Targets {
 			if s.loaded[tile] == nil {
 				missingTarget = true
 			}
 			add(tile)
 		}
-		if group.hasParent && missingTarget {
-			add(group.parent)
+		if group.HasParent && missingTarget {
+			add(group.Parent)
 		}
 	}
 	return count, lastError

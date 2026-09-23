@@ -208,9 +208,15 @@ updates and Planner validation stay off GUI/render callbacks. Resource residency
 or indivisible-upload budget errors still stop the benchmark. At a timed exit,
 the latest sampled target must be ready before a screenshot is accepted.
 
-This supplies a live document-replacement harness. Live network tile loading,
-cover/order/wrap selection and cross-tile placement remain the next producer work.
-The checked submission and retirement drains remain in use.
+This supplies a live document-replacement harness. The checked submission and
+retirement drains remain in use.
+
+The subsequent [tiles checkpoint](../../pkg/vecmap/tiles/README.md) supplies headless
+prepared-tile coverage, layer/wrap assembly and cross-tile placement. Native viewer
+tests feed its snapshots through the existing document/Worker handoff: a parent
+stays visible through partial CPU preparation and partial child uploads, then both
+children appear together. The file-reload command still loads complete documents;
+generic tile compilation and live loading are the remaining producer boundaries.
 
 ## Verification
 
