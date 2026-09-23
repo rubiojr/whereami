@@ -37,27 +37,26 @@ type BatchRenderer struct {
 	batchError                error
 	meshFactory               func(scene.Mesh) (gpuMesh, error)
 	textureFactory            func(scene.Texture) (gpuTexture, error)
+	finish                    func(*rhi.QRhi) rhi.QRhi__FrameOpResult
+	frameEnd                  *rhi.SignalConnection
 }
 
 // NewBatchRenderer installs a native end-of-frame acknowledgement callback. The
-// current correctness path drains QRhi for each batch, including failed allocation
-// cleanup. It is deliberately conservative and may stall the render thread.
-// The caller must keep requesting frames until notify runs: submission is observed
-// at afterFrameEnd and the drain takes place in the following prepare callback.
+// correctness path explicitly submits uploads with an in-frame QRhi finish and
+// drains retirement/rollback after a frame boundary. It may stall the render thread.
+// The caller must keep requesting frames until notify runs in a following prepare.
+// afterFrameEnd is a boundary only: Qt emits it even when frame submission fails.
 func NewBatchRenderer(item *rhi.QQuickItem, observe func(Stats), notify func(BatchResult)) *BatchRenderer {
 	r := newRenderer(item, observe)
-	b := &BatchRenderer{r: r, Node: r.Node, notify: notify, meshFactory: r.createMesh, textureFactory: r.createTexture, warming: true}
+	b := &BatchRenderer{r: r, Node: r.Node, notify: notify, meshFactory: r.createMesh, textureFactory: r.createTexture, finish: (*rhi.QRhi).Finish, warming: true}
 	r.executor = b
 	r.Node.OnPrepare(func(func()) { b.prepare() })
-	// The signal connection lives until the window dies; sever its Go reference
-	// when the node dies so repeated node recreation cannot retain scene payloads.
-	live := b
-	r.window.OnAfterFrameEnd(func() {
-		if live != nil {
-			live.afterFrame()
-		}
-	})
-	r.onDestroy = func() { b.invalidate(fmt.Errorf("render node destroyed")); live = nil }
+	b.frameEnd = r.window.OnAfterFrameEnd(b.afterFrame)
+	r.onDestroy = func() {
+		b.frameEnd.Disconnect()
+		b.frameEnd = nil
+		b.invalidate(fmt.Errorf("render node destroyed"))
+	}
 	return b
 }
 
@@ -126,6 +125,12 @@ func (b *BatchRenderer) prepare() {
 		return
 	}
 	if b.warming {
+		// afterFrameEnd is emitted even when Qt's endFrame fails. Explicitly
+		// submit backend-owned white/uniform uploads while they are still in
+		// this command buffer; a later idle drain cannot prove they ran.
+		if !b.prepared && !b.drain(b.r.context) {
+			return
+		}
 		b.prepared = true
 		return
 	}
@@ -160,6 +165,11 @@ func (b *BatchRenderer) uploadBatch(batch *retained.Batch) error {
 	updates := b.r.context.NextResourceUpdateBatch()
 	b.r.recordResources(stage, updates)
 	b.r.Node.CommandBuffer().ResourceUpdate(updates)
+	if !b.drain(b.r.context) {
+		// Submission errors invalidate the namespace, never acknowledge a
+		// partially/uncertainly submitted batch as an ordinary allocation failure.
+		return fmt.Errorf("upload submission failed")
+	}
 	return nil
 }
 
@@ -218,8 +228,9 @@ func (b *BatchRenderer) afterFrame() {
 		return
 	}
 	context := b.r.context
-	// afterFrameEnd is emitted on the rendering thread after endFrame. Never
-	// substitute afterRendering, which precedes native submission.
+	// Qt also emits this signal on failed beginFrame/endFrame. It establishes
+	// a frame boundary, not submission success; uploads were explicitly submitted
+	// with a checked in-frame finish before reaching here.
 	if context == nil || context.IsRecordingFrame() || context.IsDeviceLost() {
 		b.invalidate(fmt.Errorf("frame did not complete on a healthy context"))
 		return
@@ -227,18 +238,21 @@ func (b *BatchRenderer) afterFrame() {
 	b.submitted = true
 }
 
-// Drain in the next prepare, outside any render pass. In Qt 6.11.2 OpenGL
+// Complete in the next prepare, outside any render pass. In Qt 6.11.2 OpenGL
 // finish() outside a frame does nothing; beginFrame first processes deferred
 // deletions and finish() inside the frame then actually calls glFinish.
 func (b *BatchRenderer) complete() {
 	context := b.r.window.Rhi()
-	if context == nil || b.r.context == nil || context.UnsafePointer() != b.r.context.UnsafePointer() || !context.IsRecordingFrame() {
+	if context == nil || b.r.context == nil || context.UnsafePointer() != b.r.context.UnsafePointer() || !context.IsRecordingFrame() || context.IsDeviceLost() {
 		b.invalidate(fmt.Errorf("native completion context changed"))
 		return
 	}
-	if context.IsDeviceLost() || context.Finish() != rhi.QRhi__FrameOpSuccess || context.IsDeviceLost() {
-		b.invalidate(fmt.Errorf("native completion drain failed"))
-		return
+	// Successful uploads already completed an explicit in-frame submission.
+	// Only retirement/rollback/startup cleanup needs another post-boundary drain.
+	if b.warming || b.batchError != nil || len(b.pending.Releases) > 0 {
+		if !b.drain(context) {
+			return
+		}
 	}
 	b.submitted, b.prepared = false, false
 	if b.warming {
@@ -252,6 +266,18 @@ func (b *BatchRenderer) complete() {
 	if b.notify != nil {
 		b.notify(result)
 	}
+}
+
+func (b *BatchRenderer) drain(context *rhi.QRhi) bool {
+	start := time.Now()
+	result := b.finish(context)
+	b.r.stats.CompletionDrains++
+	b.r.stats.CompletionDrainTime += time.Since(start)
+	if result != rhi.QRhi__FrameOpSuccess || context.IsDeviceLost() {
+		b.invalidate(fmt.Errorf("native completion drain failed: %d", result))
+		return false
+	}
+	return true
 }
 
 func (b *BatchRenderer) invalidate(err error) {

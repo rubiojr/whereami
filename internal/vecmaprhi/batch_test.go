@@ -77,13 +77,21 @@ Window { visible:true; width:160; height:120; color:"black"
 	}
 	image := grab()
 	image.Delete()
+	deadline = time.Now().Add(5 * time.Second)
+	for renderer.warming && time.Now().Before(deadline) {
+		item.Update()
+		qt.QCoreApplication_ProcessEvents()
+		time.Sleep(time.Millisecond)
+	}
+	require.False(t, renderer.warming)
 	// Exercise signal delivery from a different emitting thread. An Auto/queued
 	// connection would run later on the GUI thread and cannot serve as a native
-	// frame-lifetime boundary in Qt's threaded render loop.
+	// frame-lifetime boundary in Qt's threaded render loop. The renderer is idle,
+	// so its callback returns before touching thread-affine QRhi state.
 	threadIDs := make(chan unsafe.Pointer, 1)
 	emitProbe := true
 	frameEnds := 0
-	window.OnAfterFrameEnd(func() {
+	connection := window.OnAfterFrameEnd(func() {
 		if emitProbe {
 			threadIDs <- qt.QThread_CurrentThreadId()
 			return
@@ -94,6 +102,7 @@ Window { visible:true; width:160; height:120; color:"black"
 			assert.Empty(t, results, "DeleteLater/endFrame alone cannot reclaim capacity")
 		}
 	})
+	defer connection.Disconnect()
 	emitter := make(chan unsafe.Pointer, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -132,6 +141,7 @@ Window { visible:true; width:160; height:120; color:"black"
 			frame.Transforms = append(frame.Transforms, scene.Affine{M11: 1, M22: 1})
 		}
 		before := renderer.r.stats
+		alreadyWarm := !renderer.warming
 		image := grab()
 		deadline := time.Now().Add(5 * time.Second)
 		for len(results) == 0 && time.Now().Before(deadline) {
@@ -146,6 +156,9 @@ Window { visible:true; width:160; height:120; color:"black"
 		assert.Equal(t, batch.Ticket, result.Ticket)
 		assert.Equal(t, success, result.Success)
 		assert.LessOrEqual(t, renderer.r.stats.UploadedBytes-before.UploadedBytes, budget.Bytes)
+		if alreadyWarm {
+			assert.Equal(t, before.CompletionDrains+1, renderer.r.stats.CompletionDrains, "one checked drain per upload, rollback or release; no duplicate upload drain")
+		}
 		require.NoError(t, planner.Acknowledge(result.Ticket, result.Success))
 		return image
 	}
@@ -162,6 +175,7 @@ Window { visible:true; width:160; height:120; color:"black"
 	checkPixel(t, image, 5, 5, 0, 255, 0)
 	image.Delete()
 	// A failed native allocation preserves current and every preceding batch.
+	assert.Equal(t, uint64(4), renderer.r.stats.CompletionDrains, "two startup drains and two upload submissions")
 	require.NoError(t, planner.SetTarget(replacement))
 	failure := errors.New("injected batch texture failure")
 	budget.Resources = 2
@@ -226,14 +240,33 @@ Window { visible:true; width:160; height:120; color:"black"
 	assert.Len(t, renderer.r.textures, 1)
 	assert.Positive(t, checks)
 	assert.Positive(t, frameEnds)
-	// Teardown with a pending CPU batch invalidates the namespace, not just its
-	// ticket; an old Planner must never be reused with a newly created renderer.
+	// Submission failure invalidates the namespace, not just its ticket; an old
+	// Planner must never be reused with a newly created renderer.
 	require.NoError(t, planner.SetTarget(first))
 	pending, err := planner.Next(budget)
 	require.NoError(t, err)
 	require.NotNil(t, pending)
 	require.NoError(t, renderer.Sync(frame, pending))
+	// A native submission result failure is a namespace reset, never a normal
+	// failed-batch acknowledgement. The underlying driver remains healthy here.
+	renderer.finish = func(context *rhi.QRhi) rhi.QRhi__FrameOpResult {
+		assert.Equal(t, rhi.QRhi__FrameOpSuccess, context.Finish())
+		if indexed {
+			return rhi.QRhi__FrameOpDeviceLost
+		}
+		return rhi.QRhi__FrameOpError
+	}
+	item.Update()
+	qt.QCoreApplication_ProcessEvents()
+	image = window.GrabWindow()
+	image.Delete()
+	require.True(t, renderer.dead)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Reset)
+	assert.False(t, results[0].Success)
+	assert.ErrorContains(t, results[0].Err, "drain failed")
 	engine.Delete()
+	assert.Nil(t, renderer.frameEnd, "node destruction disconnects its frame signal")
 	require.Len(t, results, 1)
 	assert.True(t, results[0].Reset)
 	assert.Error(t, renderer.Sync(frame, nil))

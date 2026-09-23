@@ -159,6 +159,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	fmt.Printf("upload_budget_bytes=%d upload_budget_resources=%d planner_ready=%t native_generation=%d batch_failures=%d\n", options.budget.Bytes, options.budget.Resources, finalStatus.Ready, finalStatus.Generation, finalStatus.BatchFailures)
 	fmt.Printf("backend=%s device=%s\n", latest.Backend, latest.Device)
 	fmt.Printf("frames=%d mesh_uploads=%d texture_uploads=%d uploaded_bytes=%d live_meshes=%d live_textures=%d\n", latest.Frames, latest.MeshUploads, latest.TextureUploads, latest.UploadedBytes, latest.LiveMeshes, latest.LiveTextures)
+	fmt.Printf("completion_drains=%d completion_drain_cpu=%s\n", latest.CompletionDrains, latest.CompletionDrainTime)
 	for name, values := range map[string][]time.Duration{"prepare_cpu": samples.prepare, "submit_cpu": samples.submit, "gpu_previous_frame": samples.gpu, "render_callback_interval": samples.cadence} {
 		if len(values) > 0 {
 			slices.Sort(values)

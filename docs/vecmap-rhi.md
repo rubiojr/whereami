@@ -2050,6 +2050,99 @@ disconnection for long-lived repeated recreation, then integrate live Store targ
 with scene-associated transforms, coverage/order/wrap and placement policy. No
 MapLibre parity or production migration claim follows from this checkpoint.
 
+### Checked submission and scoped frame-end subscriptions
+
+Committed worker/viewer integration as **82729a3**, then continued with kata **z3cc**.
+Source inspection found a gap in the preceding native completion proof: Qt 6.11.2's
+[basic](https://github.com/qt/qtdeclarative/blob/v6.11.2/src/quick/scenegraph/qsgrenderloop.cpp)
+and [threaded](https://github.com/qt/qtdeclarative/blob/v6.11.2/src/quick/scenegraph/qsgthreadedrenderloop.cpp)
+render loops emit `afterFrameEnd` even after failed beginFrame/endFrame operations.
+Checking only IsDeviceLost does not distinguish a general FrameOpError. A later
+successful idle drain cannot prove that an earlier frame's uploads were submitted.
+This supersedes the upload-submission assumption in the qfmf/qfkf chronology above.
+
+The batch executor now calls and checks **QRhi::finish in the producing prepare**,
+after recording resource updates and before Qt closes that command buffer. Initial
+white/uniform uploads get the same explicit submission check. Submission failures
+reset the entire native/Planner namespace rather than acknowledging an uncertain
+batch as an ordinary allocation failure. This uses QRhi's supported in-frame,
+outside-a-pass API and keeps all rendering policy in Go.
+
+Frame-end observation remains a lifetime boundary. In the following prepare, a
+successful upload can be acknowledged without a duplicate finish, because its
+submission/completion was already checked. Releases and allocation rollback still
+drain after the boundary before reclaiming Planner capacity. Startup now has two
+finish calls: initialization submission, then previous-namespace retirement cleanup.
+This remains a blocking correctness baseline. A future nonblocking path needs an
+asynchronous completion mechanism with safe result ownership through cancellation
+and context reset; frame-end signals alone cannot replace the proof.
+
+`Stats.CompletionDrains` and `CompletionDrainTime` count native finish calls (including
+failed attempts) and accumulate their render-thread wall time, including GPU waiting.
+The CLI prints both. They cover startup/upload stalls even when the existing first-
+30-frame filter omits those frames from prepare/submit percentile samples. Stats are
+still scoped to the latest native renderer instance, not cumulative across resets.
+
+Generated direct-signal subscriptions now return an explicitly owned
+`*qtrhi.SignalConnection`. Disconnect removes only that subscriber and deletes its
+native QMetaObject::Connection copy. Qt's functor owns the Go callback handle through
+shared native lifetime storage, including a local reference across an active callback.
+Explicit disconnect, self-disconnect and sender destruction therefore release the
+callback safely; there is no separate sender-lifetime cleanup connection to accumulate.
+BatchRenderer disconnects on node destruction, eliminating the inert per-node callbacks
+left on long-lived windows by the previous checkpoints. The connection copy must still
+be disposed after sender destruction. No cleanup depends on a Go finalizer.
+
+The signal adapter is generic generated binding/lifetime code, not a C++ rendering
+algorithm. Only the QQuickWindow binding triplet was regenerated; generator inputs
+and reproduction tests are checked in. `internal/qtrhi/connection.go` uses the existing
+MIQT QObject disconnect API. No dependency, shader or asset changed.
+
+Verification on Qt 6.11.2 / Mesa 26.2.2:
+
+- Binding tests create/disconnect **1,000 subscriptions on a live window**, preserve
+  independent listeners, self-disconnect, destroy the sender before disposing the
+  connection copy, and verify captured Go objects become collectible using weak
+  probes. This checks callback-handle release before window destruction as well as
+  signal delivery suppression.
+- Native tests inject FrameOpError/FrameOpDeviceLost results after real submissions
+  and require namespace reset with no successful/ordinary failed-ticket ack. They
+  check exactly one finish per ordinary batch and two during startup, disconnection
+  on node destruction, allocation rollback, old pixels during partial uploads,
+  activation without reupload and retirement. Physical GPU loss is not injected.
+- Desktop Vulkan tests and basic/threaded viewer process tests pass. OpenGL under
+  Xvfb passes at 2× scale with v1 race, including the binding/lifetime tests.
+- Native renderer coverage is **91.0%**. SignalConnection helpers and the checked
+  drain helper have 100% coverage; native device/context and creation guards remain
+  partly uncovered. Profile: `/tmp/opencode/vecmap-submission-coverage.out`.
+- Full v4 module coverage with pinned fixtures, binding reproduction, tagged
+  staticcheck and builds pass. Default staticcheck retains generated ST1006 findings;
+  gopls still lacks native build-tag metadata. GO-2026-5024 remains the baseline.
+  Targeted staticcheck caught an unused test-probe padding field; an equivalent
+  fixed array keeps it outside Go's tiny allocator without an unused field.
+- Complexity review retains the explicit prepare/complete lifecycle guards at 12
+  each and the generator rewrite at 12. No map algorithm was moved into bindings.
+
+Both expanded/direct full-fixture threaded Vulkan PNGs remain byte-identical to old
+references, using one-resource batches, 45 draws, 62 labels and complete fonts.
+Uploads remain 19,045,116 expanded bytes or 11,834,328 direct bytes. Each reports
+**seven finish calls**: two startup calls and five planned upload batches. Live caches
+are empty at teardown. Artifacts: `/tmp/opencode/vecmap-rhi-submission` and
+`vecmap-{direct,expanded}-submission.png`.
+
+The two-second static smokes below are not controlled performance comparisons. Drain
+time is a cumulative synchronous native-call measurement; warm callback percentiles
+are not presentation timestamps, nor a cold preparation/upload latency measurement.
+
+| Capture | Frames | Finish calls | Total finish wall ms | Prepare µs p95 | Submit µs p95 | Previous Qt GPU ms p95 | Callback ms p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Direct checked submission | 121 | 7 | 2.915842 | 56.396 | 129.584 | 0.866806 | 17.105972 |
+| Expanded checked submission | 123 | 7 | 2.920187 | 56.527 | 129.204 | 0.871896 | 17.093158 |
+
+Next is asynchronous native completion with explicit failure/result lifetimes, then
+live retained targets and scene-associated transform/coverage/order/wrap/placement
+handoff. This checkpoint makes no frame-time or MapLibre parity claim.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

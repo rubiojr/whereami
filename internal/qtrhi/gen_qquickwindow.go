@@ -108,8 +108,8 @@ func (this *QQuickWindow) Rhi() *QRhi {
 func (this *QQuickWindow) AfterFrameEnd() {
 	C.qtrhi_QQuickWindow_afterFrameEnd(this.h)
 }
-func (this *QQuickWindow) OnAfterFrameEnd(slot func()) {
-	C.qtrhi_QQuickWindow_connect_afterFrameEnd(this.h, C.intptr_t(cgo.NewHandle(slot)))
+func (this *QQuickWindow) OnAfterFrameEnd(slot func()) *SignalConnection {
+	return newSignalConnection(unsafe.Pointer(C.qtrhi_QQuickWindow_connect_afterFrameEnd(this.h, C.intptr_t(cgo.NewHandle(slot)))))
 }
 
 //export qtrhi_miqt_exec_callback_QQuickWindow_afterFrameEnd

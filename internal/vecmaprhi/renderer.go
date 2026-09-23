@@ -47,11 +47,15 @@ type gpuTexture struct {
 // tracked explicitly; Go allocation measurements do not include GPU resources.
 // Live counts describe cache entries, excluding DeleteLater/in-flight retirements.
 // Upload counters count recorded commands, not planner acknowledgements.
+// Completion drains count explicit finish calls (including failures); their time
+// is render-thread wall time, including native submission and GPU waiting.
 type Stats struct {
 	Frames, Draws, MeshUploads, TextureUploads, UploadedBytes uint64
 	LiveMeshes, LiveTextures                                  int
 	PrepareTime, SubmitTime                                   time.Duration
 	GPUTime                                                   time.Duration
+	CompletionDrains                                          uint64
+	CompletionDrainTime                                       time.Duration
 	Error                                                     string
 	Backend, Device                                           string
 }

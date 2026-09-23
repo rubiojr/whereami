@@ -113,12 +113,15 @@ func patchGenerator(name, text string) string {
 		text = strings.ReplaceAll(text, `log.Printf("clangfilter:`, `rhiLog("clangfilter:`)
 		text = strings.Replace(text, "\t\"log\"\n", "", 1)
 	case "emitcabi.go":
-		// Render signals must run on the emitting thread, not the window's GUI
-		// thread. Tie each Go signal handle to the sender's native lifetime.
-		text = strings.ReplaceAll(text, `signalCode +
-						"\t});\n" +`, `signalCode +
-						"\t}, Qt::DirectConnection);\n" +
-						"\tQObject::connect(self, &QObject::destroyed, [slot]() { qtrhi_callback_released(slot); });\n" +`)
+		// A signal subscription returns an owned QMetaObject::Connection copy.
+		// The functor owns its Go handle, including during self-disconnection;
+		// sender destruction and explicit disconnect both release that ownership.
+		text = strings.ReplaceAll(text, `m.ReturnType.RenderTypeCabi(), cabiConnectName(c, m)`, `"void*", cabiConnectName(c, m)`)
+		text = strings.ReplaceAll(text, "`void ` + cabiConnectName(c, m)", "`void* ` + cabiConnectName(c, m)")
+		text = strings.ReplaceAll(text, `paramArgs := []string{"slot"}`, `paramArgs := []string{"*qtrhi_call_lifetime"}`)
+		text = strings.ReplaceAll(text, `"\t" + className + `+"`::connect(self, ` + exactSignal + `, self, [=](`", `"\tauto qtrhi_lifetime = std::shared_ptr<intptr_t>(new intptr_t(slot), [](intptr_t *p) { qtrhi_callback_released(*p); delete p; });\n" + "\tauto connection = " + className + `+"`::connect(self, ` + exactSignal + `, self, [qtrhi_lifetime](`")
+		text = regexp.MustCompile(`signalCode \+\n\s*"\\t\}\);\\n" \+`).ReplaceAllString(text,
+			`"\t\tconst auto qtrhi_call_lifetime = qtrhi_lifetime;\n" + signalCode + "\t}, Qt::DirectConnection);\n" + "\treturn new QMetaObject::Connection(connection);\n" +`)
 		text = strings.Replace(text, `return preamble, nameprefix + "_QPair"`, `if p.Pointer { return preamble, "&" + nameprefix + "_QPair" }; return preamble, nameprefix + "_QPair"`, 1)
 		// Generic lifecycle notifications: release callback handles when Qt
 		// destroys a generated subclass, including non-QObject subclasses.
@@ -127,6 +130,7 @@ func patchGenerator(name, text string) string {
 			className := cabiClassName(c.ClassName)`, 1)
 		text = strings.Replace(text, `"\tvirtual ~" + subclassName + "() override = default;\n"`, `"\tvirtual ~" + subclassName + "() override { qtrhi_native_destroyed(this); " + rhiReleaseHandles(virtualMethods) + " }\n"`, 1)
 	case "emitgo.go":
+		text = strings.ReplaceAll(text, "`(slot ` + goCbType + `) {\n\t\t\t\t\tC.` + cabiConnectName(c, m) + `(this.h, C.intptr_t(cgo.NewHandle(slot)) )", "`(slot ` + goCbType + `) *SignalConnection {\n\t\t\t\t\treturn newSignalConnection(unsafe.Pointer(C.` + cabiConnectName(c, m) + `(this.h, C.intptr_t(cgo.NewHandle(slot)) )))")
 		text = strings.ReplaceAll(text, `ok := C.`+"` + cabiOverrideVirtualName(c, m) + `"+`(unsafe.Pointer(this.h), C.intptr_t(cgo.NewHandle(slot)) )`, `handle := cgo.NewHandle(slot)
 			ok := C.`+"` + cabiOverrideVirtualName(c, m) + `"+`(unsafe.Pointer(this.h), C.intptr_t(handle) )`)
 		text = strings.ReplaceAll(text, `panic("miqt: can only override virtual methods for directly constructed types")`, `handle.Delete(); panic("miqt: can only override virtual methods for directly constructed types")`)
@@ -224,6 +228,9 @@ func rewriteGenerated(name, text, version string, names []string) (string, error
 	}
 	text = strings.ReplaceAll(text, `"../libmiqt/libmiqt.h"`, `"../../vendor/github.com/mappu/miqt/libmiqt/libmiqt.h"`)
 	if strings.HasSuffix(name, ".cpp") {
+		if strings.Contains(text, "std::shared_ptr") {
+			text = "#include <memory>\n" + text
+		}
 		text = regexp.MustCompile(`(if \(self_cast == nullptr\) \{\n\s*return false;\n\s*\}\n\n\s*)(self_cast->handle__([A-Za-z0-9_]+) = slot;)`).ReplaceAllString(text, "${1}if (self_cast->handle__${3} != 0) return false;\n\t${2}")
 		text = regexp.MustCompile(`#include <QRhi[^>]*>`).ReplaceAllString(text, "#include <rhi/qrhi.h>")
 		text = strings.ReplaceAll(text, "#include <qrhi.h>", "#include <rhi/qrhi.h>")

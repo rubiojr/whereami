@@ -44,7 +44,7 @@ worker-planned batches.
 requires C++ wrappers referenced by current-frame commands to survive until
 `endFrame`. Resident buffers, textures, bindings, pipelines, uniforms and samplers
 therefore use the already-generated `DeleteLater` method when retired. Qt deletes
-the wrappers after frame submission and defers underlying native destruction
+the wrappers at the frame-end boundary and defers underlying native destruction
 further until in-flight GPU use is safe. Fresh, unrecorded allocation failures can
 be destroyed immediately.
 
@@ -87,23 +87,29 @@ the Planner in a rendering callback.
    Allocation/recording uses only the batch resources. No automatic scene-selection
    eviction occurs. Releases are preflighted in full against selected resources,
    duplicate versions and missing handles before any destruction is scheduled.
-4. `afterFrameEnd`, connected with **Qt::DirectConnection**, observes frame submission
-   on the render thread. It does not acknowledge residency. The following prepare,
-   outside any render pass, checks the same healthy context and calls `QRhi::finish`.
-   Only then does `notify(BatchResult)` report success or a rolled-back allocation
-   failure. A failure result retains earlier successful batches and allows a fresh
-   Planner ticket. The renderer continues drawing Current throughout partial uploads.
+4. Upload commands are explicitly submitted with a checked **in-frame QRhi::finish**
+   while they still belong to the current command buffer. `afterFrameEnd`, connected
+   with **Qt::DirectConnection**, then observes the frame boundary. It is not proof
+   of submission: Qt also emits it on failed beginFrame/endFrame. The following
+   prepare checks the same healthy context and reports the already-completed upload
+   without another drain. Retirement and rolled-back allocation batches instead
+   drain in that following prepare, before reporting completion. Allocation failure
+   retains earlier successful batches and permits a fresh ticket; submission/drain
+   failure resets the entire namespace. Current stays selected during partial uploads.
 5. The callback must enqueue its result without blocking or reentering the renderer.
    The worker acknowledges the ticket and publishes the new Current frame before,
    or together with, the next retirement batch. The adapter preserves exact selected
    revisions and activates staged resources without another upload.
 
-Before executing its first batch, each new BatchRenderer also waits for one prepared
-frame to end and drains in the next prepare. This startup barrier handles replacement
-nodes using the same QRhi: their predecessor's deferred releases must finish before
-new Planner-owned allocations are made. White/uniform backend overhead may be created
-during this barrier. `Stats.PrepareTime` covers the entire batch prepare callback,
-including allocation/recording and blocking startup/completion drains.
+Before executing its first batch, each new BatchRenderer explicitly submits its
+white/uniform initialization, waits for that frame to end, then drains retirement
+in the next prepare. These **two startup finish calls** prove initialization and
+handle replacement nodes using the same QRhi: their predecessor's deferred releases
+must finish before new Planner-owned allocations are made. `Stats.PrepareTime`
+covers the entire batch prepare callback. `CompletionDrains` counts explicit finish
+calls, including failed attempts; `CompletionDrainTime` accumulates their render-thread
+wall time, including submission and GPU waiting. The viewer prints these cumulative
+values even though its warm-frame timing samples exclude the first 30 frames.
 
 **Keep requesting frames until the callback arrives**, even when Current is nil or
 empty. Hidden/suspended windows may delay completion; there is no timeout-based
@@ -119,7 +125,12 @@ baseline, **not a nonblocking upload scheduler or a performance result**. On Qt
 6.11.2 Vulkan, `finish` waits for the queue and drains deferred releases. OpenGL's
 implementation does nothing outside a frame: its next `beginFrame` processes deferred
 deletions, then `finish` inside the frame calls `glFinish`. This is why acknowledging
-from `afterFrameEnd` using an out-of-frame finish would be incorrect. Source evidence:
+from `afterFrameEnd` using an out-of-frame finish would be incorrect. A later idle
+drain also cannot recover uploads from an earlier failed endFrame; upload submission
+must be checked in its producing frame. Qt's
+[basic](https://github.com/qt/qtdeclarative/blob/v6.11.2/src/quick/scenegraph/qsgrenderloop.cpp)
+and [threaded](https://github.com/qt/qtdeclarative/blob/v6.11.2/src/quick/scenegraph/qsgthreadedrenderloop.cpp)
+loops emit the signal after error results too. Other source evidence:
 [Vulkan](https://github.com/qt/qtbase/blob/v6.11.2/src/gui/rhi/qrhivulkan.cpp),
 [OpenGL](https://github.com/qt/qtbase/blob/v6.11.2/src/gui/rhi/qrhigles2.cpp),
 [QRhi contract](https://doc.qt.io/qt-6/qrhi.html#finish).
@@ -129,10 +140,8 @@ one `Reset` result and permanently invalidates the instance. Reset is **not** a 
 batch acknowledgement: discard the old Planner and recreate the renderer/node and
 Planner together. Tag transport messages with the renderer instance/generation and
 ignore old results after recreation. General native/device failures do not promise
-old-frame recovery. Signal handles are released on window destruction; destroyed
-nodes sever the signal's Go reference to their renderer and borrowed payloads.
-Inert per-node registrations remain until window destruction; explicit disconnect
-support is a follow-up for repeated node recreation in a long-lived window.
+old-frame recovery. Signal subscriptions are explicitly disconnected on node
+destruction, so recreating nodes does not accumulate inert window-lifetime callbacks.
 
 White texture, uniforms, bindings and pipelines remain backend overhead outside the
 Planner's logical byte/resource limits. The executor performs no extra geometry or
@@ -142,6 +151,19 @@ node recreation. Its fixed document shares transform slots across generations.
 Changing live targets needs its own scene/frame mapping and placement handoff.
 Replacement of the blocking drain remains subsequent work. The production
 renderer/scheduler is unchanged.
+
+### Signal subscription ownership
+
+The regenerated `OnAfterFrameEnd` returns a `*qtrhi.SignalConnection`. Its owner must
+call `Disconnect` on the owning thread before dropping it, even if the sender has
+already died. Disconnect is idempotent, can run from its own callback, and affects
+only that subscription. The native connection copy uses explicit deletion, not a
+Go finalizer. Do not copy the Go wrapper or use it concurrently.
+
+The generated Qt functor owns the Go callback handle through shared native lifetime
+storage. Disconnect or sender destruction releases it after any in-progress callback
+returns. No separate sender-destruction subscription is needed. This is generic Qt
+callback ownership in the generator; all rendering and upload policy remains Go.
 
 ## Verification
 
@@ -154,7 +176,7 @@ sh scripts/qt-rhi-env.sh go test -count=1 -tags 'vecmap_rhi integration' \
 QT_RHI_INCLUDE=/path/to/QtGui/6.11.2/QtGui \
 QT_SCALE_FACTOR=2 QSG_RHI_BACKEND=opengl GOAMD64=v1 \
 xvfb-run -a sh scripts/qt-rhi-env.sh go test -race -count=1 \
-  -tags 'vecmap_rhi integration' ./internal/vecmaprhi
+  -tags 'vecmap_rhi integration' ./internal/qtrhi ./internal/vecmaprhi ./cmd/vecmap-rhi
 ```
 
 Tests run with Qt's basic render loop on the QApplication's locked OS thread. They
@@ -187,4 +209,11 @@ but before acknowledgement, ignore old-epoch callbacks, preserve camera-only pix
 without uploads, reject an undersized budget, and cancel workers at teardown. These
 are explicit resource-release/reset tests, not injected physical GPU device loss.
 The initial native drain protects old namespace retirement on same-context resets.
-The window's inert signal registrations still persist until window destruction.
+The later **z3cc** checkpoint adds scoped signal disconnection and checked submission.
+Native renderer coverage is **91.0%**. Tests exercise submission result failures as
+namespace resets, exactly one finish per ordinary batch (two for startup), and
+disconnection on node destruction. Binding tests disconnect 1,000 subscriptions
+while retaining the window, preserve independent listeners, self-disconnect, destroy
+the sender first, and use weak Go probes to verify callback handles release captured
+objects. Submission failures are injected API results with a healthy native device,
+not physical GPU-device-loss tests.

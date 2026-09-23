@@ -34,7 +34,7 @@ double qtrhi_QQuickWindow_effectiveDevicePixelRatio(const QQuickWindow* self);
 void qtrhi_QQuickWindow_setGraphicsConfiguration(QQuickWindow* self, QQuickGraphicsConfiguration* config);
 QRhi* qtrhi_QQuickWindow_rhi(const QQuickWindow* self);
 void qtrhi_QQuickWindow_afterFrameEnd(QQuickWindow* self);
-void qtrhi_QQuickWindow_connect_afterFrameEnd(QQuickWindow* self, intptr_t slot);
+void* qtrhi_QQuickWindow_connect_afterFrameEnd(QQuickWindow* self, intptr_t slot);
 
 
 #ifdef __cplusplus

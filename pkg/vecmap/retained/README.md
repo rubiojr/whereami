@@ -181,8 +181,10 @@ err = planner.Acknowledge(batch.Ticket, success)
 - Replacement revisions must coexist with the old revision of the same resource
   ID. Backend maps must key by **kind, ID and revision**, not just ID. QRhi now has
   separate revision-keyed mesh/texture caches and transactional allocation staging.
-  Its opt-in `BatchRenderer` executes these batches, with end-of-frame observation
-  followed by a conservative native drain before acknowledgement. The fixture viewer
+  Its opt-in `BatchRenderer` explicitly submits uploads with a checked in-frame
+  finish, then acknowledges across the frame boundary. Retirement/rollback drains
+  remain separate; Qt's afterFrameEnd signal alone does not prove submission success.
+  The fixture viewer
   uses the Worker transport described below. See the
   [native adapter contract](../../../internal/vecmaprhi/README.md).
 - Target supersession is accepted between batches. Successfully uploaded resources

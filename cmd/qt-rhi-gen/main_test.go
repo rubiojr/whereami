@@ -45,5 +45,9 @@ func TestGeneratedCallbacksRetainOwnership(t *testing.T) {
 	window, err := os.ReadFile(filepath.Join("..", "..", "internal", "qtrhi", "gen_qquickwindow.cpp"))
 	require.NoError(t, err)
 	assert.Contains(t, string(window), "}, Qt::DirectConnection);")
-	assert.Contains(t, string(window), "QObject::connect(self, &QObject::destroyed, [slot]() { qtrhi_callback_released(slot); });")
+	assert.Contains(t, string(window), "std::shared_ptr<intptr_t>")
+	assert.Contains(t, string(window), "qtrhi_callback_released(*p); delete p;")
+	assert.Contains(t, string(window), "const auto qtrhi_call_lifetime = qtrhi_lifetime;")
+	assert.Contains(t, string(window), "return new QMetaObject::Connection(connection);")
+	assert.NotContains(t, string(window), "&QObject::destroyed", "do not accumulate a second sender-lifetime cleanup connection")
 }
