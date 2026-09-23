@@ -13,6 +13,7 @@ import "C"
 
 import (
 	"github.com/mappu/miqt/qt6"
+	"runtime/cgo"
 	"unsafe"
 )
 
@@ -102,4 +103,21 @@ func (this *QQuickWindow) SetGraphicsConfiguration(config *QQuickGraphicsConfigu
 
 func (this *QQuickWindow) Rhi() *QRhi {
 	return newQRhi(C.qtrhi_QQuickWindow_rhi(this.h))
+}
+
+func (this *QQuickWindow) AfterFrameEnd() {
+	C.qtrhi_QQuickWindow_afterFrameEnd(this.h)
+}
+func (this *QQuickWindow) OnAfterFrameEnd(slot func()) {
+	C.qtrhi_QQuickWindow_connect_afterFrameEnd(this.h, C.intptr_t(cgo.NewHandle(slot)))
+}
+
+//export qtrhi_miqt_exec_callback_QQuickWindow_afterFrameEnd
+func qtrhi_miqt_exec_callback_QQuickWindow_afterFrameEnd(cb C.intptr_t) {
+	gofunc, ok := cgo.Handle(cb).Value().(func())
+	if !ok {
+		panic("miqt: callback of non-callback type (heap corruption?)")
+	}
+
+	gofunc()
 }

@@ -271,10 +271,13 @@ QRhiBuffer* qtrhi_QRhi_newBuffer(QRhi* self, int type, int usage, uint32_t size)
 QRhiTexture* qtrhi_QRhi_newTexture(QRhi* self, int format, QSize* pixelSize);
 QRhiTexture* qtrhi_QRhi_newTexture2(QRhi* self, int format, int width, int height, int depth);
 QRhiSampler* qtrhi_QRhi_newSampler(QRhi* self, int magFilter, int minFilter, int mipmapMode, int addressU, int addressV);
+bool qtrhi_QRhi_isRecordingFrame(const QRhi* self);
+int qtrhi_QRhi_finish(QRhi* self);
 QRhiResourceUpdateBatch* qtrhi_QRhi_nextResourceUpdateBatch(QRhi* self);
 int qtrhi_QRhi_ubufAlignment(const QRhi* self);
 int qtrhi_QRhi_ubufAligned(const QRhi* self, int v);
 bool qtrhi_QRhi_isYUpInFramebuffer(const QRhi* self);
+bool qtrhi_QRhi_isDeviceLost(const QRhi* self);
 QRhiTexture* qtrhi_QRhi_newTexture3(QRhi* self, int format, QSize* pixelSize, int sampleCount);
 QRhiTexture* qtrhi_QRhi_newTexture4(QRhi* self, int format, QSize* pixelSize, int sampleCount, int flags);
 QRhiTexture* qtrhi_QRhi_newTexture5(QRhi* self, int format, int width, int height, int depth, int sampleCount);

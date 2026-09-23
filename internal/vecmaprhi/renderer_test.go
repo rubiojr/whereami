@@ -27,6 +27,8 @@ func TestRenderer(t *testing.T) {
 	}
 	testResourceStaging(t, false)
 	testResourceStaging(t, true)
+	testBatchExecution(t, false)
+	testBatchExecution(t, true)
 }
 
 func testRendererLifetime(t *testing.T, indexed bool) {

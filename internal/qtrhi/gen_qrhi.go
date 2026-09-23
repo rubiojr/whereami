@@ -2338,6 +2338,14 @@ func (this *QRhi) NewSampler(magFilter QRhiSampler__Filter, minFilter QRhiSample
 	return newQRhiSampler(C.qtrhi_QRhi_newSampler(this.h, (C.int)(magFilter), (C.int)(minFilter), (C.int)(mipmapMode), (C.int)(addressU), (C.int)(addressV)))
 }
 
+func (this *QRhi) IsRecordingFrame() bool {
+	return (bool)(C.qtrhi_QRhi_isRecordingFrame(this.h))
+}
+
+func (this *QRhi) Finish() QRhi__FrameOpResult {
+	return (QRhi__FrameOpResult)(C.qtrhi_QRhi_finish(this.h))
+}
+
 func (this *QRhi) NextResourceUpdateBatch() *QRhiResourceUpdateBatch {
 	return newQRhiResourceUpdateBatch(C.qtrhi_QRhi_nextResourceUpdateBatch(this.h))
 }
@@ -2352,6 +2360,10 @@ func (this *QRhi) UbufAligned(v int) int {
 
 func (this *QRhi) IsYUpInFramebuffer() bool {
 	return (bool)(C.qtrhi_QRhi_isYUpInFramebuffer(this.h))
+}
+
+func (this *QRhi) IsDeviceLost() bool {
+	return (bool)(C.qtrhi_QRhi_isDeviceLost(this.h))
 }
 
 func (this *QRhi) NewTexture3(format QRhiTexture__Format, pixelSize *qt6.QSize, sampleCount int) *QRhiTexture {

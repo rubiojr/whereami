@@ -113,6 +113,12 @@ func patchGenerator(name, text string) string {
 		text = strings.ReplaceAll(text, `log.Printf("clangfilter:`, `rhiLog("clangfilter:`)
 		text = strings.Replace(text, "\t\"log\"\n", "", 1)
 	case "emitcabi.go":
+		// Render signals must run on the emitting thread, not the window's GUI
+		// thread. Tie each Go signal handle to the sender's native lifetime.
+		text = strings.ReplaceAll(text, `signalCode +
+						"\t});\n" +`, `signalCode +
+						"\t}, Qt::DirectConnection);\n" +
+						"\tQObject::connect(self, &QObject::destroyed, [slot]() { qtrhi_callback_released(slot); });\n" +`)
 		text = strings.Replace(text, `return preamble, nameprefix + "_QPair"`, `if p.Pointer { return preamble, "&" + nameprefix + "_QPair" }; return preamble, nameprefix + "_QPair"`, 1)
 		// Generic lifecycle notifications: release callback handles when Qt
 		// destroys a generated subclass, including non-QObject subclasses.

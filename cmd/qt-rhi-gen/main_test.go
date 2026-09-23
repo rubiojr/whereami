@@ -42,4 +42,8 @@ func TestGeneratedCallbacksRetainOwnership(t *testing.T) {
 	goSource, err := os.ReadFile(filepath.Join("..", "..", "internal", "qtrhi", "gen_qrhi.go"))
 	require.NoError(t, err)
 	assert.NotContains(t, string(goSource), "_goptr.GoGC()", "native value copies must be explicitly released on the owning thread")
+	window, err := os.ReadFile(filepath.Join("..", "..", "internal", "qtrhi", "gen_qquickwindow.cpp"))
+	require.NoError(t, err)
+	assert.Contains(t, string(window), "}, Qt::DirectConnection);")
+	assert.Contains(t, string(window), "QObject::connect(self, &QObject::destroyed, [slot]() { qtrhi_callback_released(slot); });")
 }

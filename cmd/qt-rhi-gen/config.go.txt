@@ -36,7 +36,7 @@ func ProcessLibraries(clangBin, outDir, _ string) {
 
 var rhiMethods = map[string]string{
 	"QShader":                    "isValid fromSerialized",
-	"QRhi":                       "newBuffer newTexture newSampler newGraphicsPipeline newShaderResourceBindings nextResourceUpdateBatch ubufAligned ubufAlignment backendName isYUpInFramebuffer driverInfo",
+	"QRhi":                       "newBuffer newTexture newSampler newGraphicsPipeline newShaderResourceBindings nextResourceUpdateBatch ubufAligned ubufAlignment backendName isYUpInFramebuffer driverInfo finish isRecordingFrame isDeviceLost",
 	"QRhiDriverInfo":             "",
 	"QRhiResource":               "deleteLater destroy setName",
 	"QRhiBuffer":                 "create size",
@@ -63,7 +63,7 @@ var rhiMethods = map[string]string{
 	"QSGRenderNode":                           "prepare render releaseResources flags changedStates commandBuffer renderTarget projectionMatrix matrix inheritedOpacity",
 	"QSGRenderNode::RenderState":              "scissorRect scissorEnabled stencilValue stencilEnabled",
 	"QSGNode":                                 "",
-	"QQuickWindow":                            "rhi grabWindow effectiveDevicePixelRatio setGraphicsConfiguration",
+	"QQuickWindow":                            "rhi grabWindow effectiveDevicePixelRatio setGraphicsConfiguration afterFrameEnd",
 	"QQuickGraphicsConfiguration":             "setTimestamps",
 	"QQuickItem":                              "window width height setFlag setWidth setHeight update updatePaintNode",
 	"QQuickItem::UpdatePaintNodeData":         "",

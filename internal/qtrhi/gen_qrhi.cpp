@@ -740,6 +740,15 @@ QRhiSampler* qtrhi_QRhi_newSampler(QRhi* self, int magFilter, int minFilter, int
 	return self->newSampler(static_cast<QRhiSampler::Filter>(magFilter), static_cast<QRhiSampler::Filter>(minFilter), static_cast<QRhiSampler::Filter>(mipmapMode), static_cast<QRhiSampler::AddressMode>(addressU), static_cast<QRhiSampler::AddressMode>(addressV));
 }
 
+bool qtrhi_QRhi_isRecordingFrame(const QRhi* self) {
+	return self->isRecordingFrame();
+}
+
+int qtrhi_QRhi_finish(QRhi* self) {
+	QRhi::FrameOpResult _ret = self->finish();
+	return static_cast<int>(_ret);
+}
+
 QRhiResourceUpdateBatch* qtrhi_QRhi_nextResourceUpdateBatch(QRhi* self) {
 	return self->nextResourceUpdateBatch();
 }
@@ -754,6 +763,10 @@ int qtrhi_QRhi_ubufAligned(const QRhi* self, int v) {
 
 bool qtrhi_QRhi_isYUpInFramebuffer(const QRhi* self) {
 	return self->isYUpInFramebuffer();
+}
+
+bool qtrhi_QRhi_isDeviceLost(const QRhi* self) {
+	return self->isDeviceLost();
 }
 
 QRhiTexture* qtrhi_QRhi_newTexture3(QRhi* self, int format, QSize* pixelSize, int sampleCount) {

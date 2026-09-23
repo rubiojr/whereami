@@ -123,6 +123,30 @@ func recordTexture(updates *rhi.QRhiResourceUpdateBatch, t stagedTexture) {
 // destruction further until in-flight GPU use is finished. This does not signal
 // completed release to an upload planner or reclaim its residency budget yet.
 func (r *Renderer) selectResources(s *scene.Scene) {
+	r.selectDrawKeys(s)
+	meshes := make(map[resourceKey]bool, len(s.Meshes))
+	textures := map[resourceKey]bool{{}: true}
+	for _, m := range s.Meshes {
+		meshes[resourceKey{m.ID, m.Revision}] = true
+	}
+	for _, t := range s.Textures {
+		textures[resourceKey{t.ID, t.Revision}] = true
+	}
+	for key, m := range r.meshes {
+		if !meshes[key] {
+			m.retire()
+			delete(r.meshes, key)
+		}
+	}
+	for key, t := range r.textures {
+		if !textures[key] {
+			r.deleteTexture(t)
+			delete(r.textures, key)
+		}
+	}
+}
+
+func (r *Renderer) selectDrawKeys(s *scene.Scene) {
 	meshes := make(map[uint64]resourceKey, len(s.Meshes))
 	textures := make(map[uint64]resourceKey, len(s.Textures)+1)
 	textures[0] = resourceKey{}
@@ -135,18 +159,6 @@ func (r *Renderer) selectResources(s *scene.Scene) {
 	r.drawKeys = make([]drawResourceKeys, len(s.Draws))
 	for i, d := range s.Draws {
 		r.drawKeys[i] = drawResourceKeys{meshes[d.Mesh], textures[d.Material.Texture]}
-	}
-	for key, m := range r.meshes {
-		if meshes[key.id] != key {
-			m.retire()
-			delete(r.meshes, key)
-		}
-	}
-	for key, t := range r.textures {
-		if textures[key.id] != key {
-			r.deleteTexture(t)
-			delete(r.textures, key)
-		}
 	}
 }
 

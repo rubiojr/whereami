@@ -53,8 +53,9 @@ visual quality. Flatpak gives us control over the Qt/QRhi dependency version.
   draws inline with Qt Quick through `QSGRenderNode` and `QRhi`. It handles parent
   scissor/stencil clipping, inherited opacity, resize, resource replacement, and
   render-thread cleanup. Revision-keyed caches and allocation staging allow old/new
-  versions to coexist; planner batch execution is not yet wired. Glyph offsets stay
-  in screen pixels during camera motion.
+  versions to coexist. An opt-in batch executor consumes worker-planned uploads
+  with conservative native completion drains; the viewer still uses whole-scene
+  uploads. Glyph offsets stay in screen pixels during camera motion.
 - `internal/qtrhi`: a focused, generated Qt adapter. Native virtual callbacks and
   lifetime notifications are generated; rendering logic is Go. Returned native
   value copies require explicit `Delete`; GPU ownership never relies on finalizers.
@@ -1866,6 +1867,89 @@ These are not actual presentation timestamps or MapLibre parity evidence. Final
 artifacts: `/tmp/opencode/vecmap-rhi-staging`, `vecmap-{direct,expanded}-staging.png`
 and `vecmap-native-staging-final-coverage.out`. Live map scheduling and production
 renderer migration remain outside this checkpoint.
+
+### Bounded native batch execution and completion drains
+
+Committed revision-aware resource staging as **bff8a97**, then continued with kata
+**qfmf**. `NewBatchRenderer` now provides a separate native execution path for
+`retained.Planner` batches. `Sync` consumes a packet containing a validated frame
+for Planner.Current and at most one batch. The worker owns the Planner and deep
+validation; native callbacks never call it or rescan geometry/pixels. The existing
+viewer still uses the ordinary renderer. Worker mailbox/wakeup integration is next.
+
+Selection is separate from retirement. The batch renderer requires selected versions
+to be resident, uploads only the resources in its accepted batch and retires only
+explicit release descriptors. It validates the whole release list before touching
+handles. Old pixels and their transform slots remain selected during partial uploads;
+activation uses the new Current frame and transforms without another geometry upload.
+Allocation failure rolls back all fresh objects in that batch while preserving prior
+successful batches and the selected frame. New tickets permit retry and supersession.
+
+The completion sequence is intentionally conservative:
+
+1. Prepare records a bounded upload batch, or schedules explicit `DeleteLater`
+   retirements. Neither operation acknowledges the Planner.
+2. A generated **direct** `QQuickWindow::afterFrameEnd` connection observes submission
+   on the emitting render thread. It still does not reclaim residency.
+3. The following prepare checks the same healthy native context and calls
+   `QRhi::finish`, outside a render pass. Only then is the result queued to the worker.
+   Failed allocations also drain before reporting failure so retries cannot accumulate
+   discarded native allocations outside Planner accounting.
+
+Qt 6.11.2 source inspection matters here. Vulkan finish waits for the graphics queue
+and executes deferred releases. **OpenGL finish outside a frame does nothing**; its
+next beginFrame processes deferred deletions, then an in-frame finish calls glFinish.
+An afterFrameEnd-only drain would therefore be insufficient. This implementation
+blocks and may submit other already-recorded preparation commands on the same QRhi.
+It is a lifetime-correct baseline, not evidence of bounded elapsed frame time or
+MapLibre-class performance. A nonblocking completion strategy remains future work.
+
+Callers must keep requesting frames while a batch is outstanding. Hidden/suspended
+windows delay completion; grabWindow alone does not pump afterFrameEnd. Sync rejects
+updates while busy, so camera changes must currently be coalesced between batches.
+Reset signals invalidate the entire renderer/Planner namespace and require new
+instances; they must not be interpreted as ordinary failed-ticket acknowledgements.
+Signal handles live until window destruction, while node destruction severs the Go
+reference to scene payloads. Inert per-node signal registrations can persist until
+the window dies; explicit disconnection is a follow-up for repeated node recreation.
+White texture and uniform/binding/pipeline allocations remain outside Planner budgets.
+
+Bindings for afterFrameEnd, finish, isRecordingFrame and isDeviceLost were regenerated
+with `cmd/qt-rhi-gen`. The generic signal adapter uses DirectConnection and frees its
+Go callback handle when the sender dies. No generated files were hand-edited, no
+rendering algorithm was added to generator templates and no module dependency changed.
+
+Verification on Qt 6.11.2 / Mesa **26.2.2**:
+
+- Desktop Vulkan on Radeon 860M / RADV KRACKAN1 passes expanded/indexed native tests.
+- Xvfb OpenGL/llvmpipe passes, including 2× scale and GOAMD64=v1 race. Tests exercise
+  per-batch byte/count bounds, no early acknowledgement, old pixels during partial
+  uploads, multi-allocation rollback, retries, supersession, new transform-slot
+  publication, camera-only retention, activation without reupload, empty selection,
+  retirement and teardown with a pending batch. A cross-thread signal probe verifies
+  direct delivery on the emitting OS thread; full threaded-render-loop integration
+  remains a following transport test.
+- Native renderer coverage is **90.1%**; upload/release execution, ticket guards,
+  selected-resource checks, frame-end observation and invalidation are 100% covered.
+  Completion/device-loss and native initialization/pipeline failure guards remain
+  partially uncovered. Final profile: `/tmp/opencode/vecmap-batch-final-coverage.out`.
+- Full v4 module coverage with pinned fixtures and binding reproduction passes, as
+  do generated lifecycle/pair tests, viewer tests, tagged targeted staticcheck, default
+  application build, tagged v1 viewer build and CGO_ENABLED=0 fixture build.
+- Default staticcheck retains only the pre-existing generated ST1006 findings.
+  Gopls cannot obtain metadata for the opt-in integration file; tagged checks provide
+  validation. Vulnerability baseline remains GO-2026-5024. Complexity review leaves
+  explicit native prepare/pipeline/resource/render guards at 15/14/14/11; new batch
+  implementation functions are all <=10.
+- The first desktop Vulkan run had black-pixel failures in an existing lifetime
+  case; subsequent runs passed. Cause remains unconfirmed. The initial new test
+  incorrectly assumed grabWindow would emit frame-end; it now pumps real window
+  frames. A race build exceeded its initial 120-second timeout compiling Qt and
+  passed with a longer timeout. Existing Qt/GCC QChar warnings remain environmental.
+
+No new full-fixture screenshot or presentation/performance comparison is claimed in
+this checkpoint. The native adapter README specifies transport/lifetime obligations
+for the next worker-mailbox integration.
 
 ## Flatpak integration
 

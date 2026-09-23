@@ -13,6 +13,7 @@
 extern "C" {
 #endif
 
+void qtrhi_miqt_exec_callback_QQuickWindow_afterFrameEnd(intptr_t);
 #ifdef __cplusplus
 } /* extern C */
 #endif
@@ -37,4 +38,15 @@ void qtrhi_QQuickWindow_setGraphicsConfiguration(QQuickWindow* self, QQuickGraph
 
 QRhi* qtrhi_QQuickWindow_rhi(const QQuickWindow* self) {
 	return self->rhi();
+}
+
+void qtrhi_QQuickWindow_afterFrameEnd(QQuickWindow* self) {
+	self->afterFrameEnd();
+}
+
+void qtrhi_QQuickWindow_connect_afterFrameEnd(QQuickWindow* self, intptr_t slot) {
+	QQuickWindow::connect(self, static_cast<void (QQuickWindow::*)()>(&QQuickWindow::afterFrameEnd), self, [=]() {
+		qtrhi_miqt_exec_callback_QQuickWindow_afterFrameEnd(slot);
+	}, Qt::DirectConnection);
+	QObject::connect(self, &QObject::destroyed, [slot]() { qtrhi_callback_released(slot); });
 }

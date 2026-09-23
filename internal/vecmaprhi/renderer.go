@@ -75,6 +75,8 @@ type Renderer struct {
 	stats      Stats
 	observe    func(Stats)
 	ready      bool
+	executor   *BatchRenderer
+	onDestroy  func()
 }
 
 // New is called from updatePaintNode. Qt owns the returned node; its generated
@@ -99,6 +101,9 @@ func newRenderer(item *rhi.QQuickItem, observe func(Stats)) *Renderer {
 	})
 	rhi.OnDestroyed(r.Node.UnsafePointer(), func() {
 		r.release()
+		if r.onDestroy != nil {
+			r.onDestroy()
+		}
 		if r.observe != nil {
 			r.observe(r.stats)
 		}
@@ -235,12 +240,23 @@ func (r *Renderer) prepareResources(updates *rhi.QRhiResourceUpdateBatch) error 
 		r.uniforms = r.uniforms[:length]
 	}
 	if r.resident != s {
-		stage, err := r.allocateResources(s, r.createMesh, r.createTexture)
+		source := s
+		if r.executor != nil {
+			if err := r.requireResident(s); err != nil {
+				return err
+			}
+			source = &scene.Scene{} // only backend-owned white may be implicit
+		}
+		stage, err := r.allocateResources(source, r.createMesh, r.createTexture)
 		if err != nil {
 			return err
 		}
 		r.recordResources(stage, updates)
-		r.selectResources(s)
+		if r.executor == nil {
+			r.selectResources(s)
+		} else {
+			r.selectDrawKeys(s)
+		}
 		r.resident = s
 	}
 	return r.prepareBindings()
@@ -452,6 +468,9 @@ func (r *Renderer) deleteTexture(texture gpuTexture) {
 }
 
 func (r *Renderer) release() {
+	if r.executor != nil && r.context != nil {
+		r.executor.invalidate(fmt.Errorf("native residency reset"))
+	}
 	for _, pipeline := range r.pipelines {
 		if pipeline != nil {
 			pipeline.DeleteLater()
