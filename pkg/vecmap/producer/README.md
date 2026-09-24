@@ -73,9 +73,12 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   its owner handles the next request. Compatible camera updates do not discard
   useful compilation; changed source/style/assets or obsolete tiles do. No decoding,
   tessellation, shaping or composition runs in Submit, Next or native callbacks.
-- Raw MVT remains cached alongside reusable Prepared data. A style change reparses
-  and recompiles cached bytes; an asset change calls Build without Prepare. A source
-  change reloads bytes. Old immutable fragments survive through their leases.
+- Raw MVT remains cached alongside optional reusable Prepared data. A style change
+  reparses/recompiles cached bytes; asset refresh reuses Prepared when available.
+  Admission pressure evicts least-recently-built Prepared objects, or omits incoming
+  preparation after packing. It never evicts pinned fragments. A later asset refresh
+  reparses retained raw bytes if needed; camera-only updates do not rebuild geometry.
+  A source change reloads bytes. Old immutable fragments survive through their leases.
 - A published cover must have a coherent source/style/asset epoch. While a refresh
   is incomplete, the native consumer keeps its acknowledged Current. It must not
   replace Current with a partially refreshed cover or pair it with target slots.
@@ -84,8 +87,8 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   publishing or queueing a CPU snapshot does not advance it.
 - Transient transport errors get at most three attempts, separated by RetryDelay
   (default 250 ms). One ticker handles all retries. Missing/permanent responses,
-  writer overflow, decode/build failures and admission errors are not retried in
-  that workload. A changed cover/style/assets request resets failure state;
+  writer overflow and decode/build failures are not retried in that workload.
+  A changed cover/style/assets request resets failure state;
   camera-only updates within the same cover do not.
 - Missing is not blank: `ErrMissing` retains fallback/continuity; a successfully
   decoded valid empty tile is ready coverage. A zero-byte response is malformed
@@ -95,8 +98,13 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
 `Status.LastError` is the most recent bounded error text, not an event log or a
 readiness flag. It remains latched after recovery. Cache/count failures are explicit;
 the producer does not enlarge limits or evict pinned continuity to admit new work.
-If an admission failed after work started, another workload request is needed to
-retry it. Work waiting for cache capacity can resume when leases/Current release it.
+Cache-capacity rejection records a required headroom threshold. It retries only
+after enough raw/fragment/profile storage has actually left the cache, normally
+after acknowledged Current/lease retirement. Prepared storage was already excluded
+from the failed minimum charge: reclaiming it alone cannot trigger a retry. There
+is no polling retry loop, enlarged limit or optimistic retirement credit. Inputs
+that cannot fit remain explicit failures. LastError stays latched after recovery;
+use Pending/Failed and bridge readiness to judge current progress.
 
 ## Storage ledger
 
@@ -119,22 +127,26 @@ The ledger covers separate lifetimes:
 2. **Cache:** successful responses are compacted to exact-length owned buffers
    before cache admission. Full-capacity responses transfer without copying. Each
    tile charges twice its compact raw capacity (response plus possible
-   decoded string backing), Prepared storage, and twice Fragment storage (including
-   Set metadata copies). Complete style/asset profiles referenced by cache entries
-   are charged once per distinct pointer, including old epochs. This accounts for
-   hidden backing behind borrowed strings or sprite subimages without duplicating
-   every string/pixel buffer.
-3. **Publication:** each lease charges the snapshot independently, plus each distinct
-   backing asset profile in its cover. Shared geometry/pixels are deliberately
-   charged again. Holding old leases therefore cannot escape the snapshot budget.
+   decoded string backing), retained Prepared storage, Fragment storage and Set's
+   copied metadata. `Fragment.SetCopyBytes`/`retained.CopyBytes` match exact-length
+   metadata copies and logical map entries; borrowed payload is not charged twice
+   within the cache. Complete referenced style profiles are charged once per distinct
+   pointer, including old epochs, to cover candidate string backing.
+3. **Publication:** each lease charges its snapshot independently. The producer uses
+   `BuildOwned`: sprite pixels are copied into compact owned buffers after a bounded
+   aggregate RGBA preflight; glyph atlas RGBA was already owned and is not recopied.
+   Thus fragments and snapshots retain no asset maps, callbacks or hidden image
+   backing. Shared geometry/pixels are still charged independently for each lease.
+   Holding old leases therefore cannot escape the snapshot budget.
    One additional logical snapshot slot is reserved for Set's internal selection
-   cache. `SelectBounded` rejects oversized logical snapshots before caching them;
-   producer publication also checks borrowed asset backing.
+   cache. `SelectBounded` rejects oversized logical snapshots before caching them.
 4. **Request handoff:** reserve three ProfileBytes allowances for owner, latest and
    one in-transfer profile pair. Jobs retain a copied source name, not old profiles.
 5. **Temporary work:** reserve one compiler/compositor working set and one
    compaction buffer of at most RawBytes in addition to
-   these retained budgets. MVT decode, triangulation, candidates, glyph layout/atlas,
+   these retained budgets. Owned sprite copies have an aggregate CacheBytes ceiling
+   for the one in-progress Build; source assets stay charged to input profiles.
+   MVT decode, triangulation, candidates, glyph layout/atlas,
    packing, projection and collision retain their existing byte/count/work ceilings.
    Lower PrepareOptions and Store limits for the application's scratch policy.
    Admission occurs after bounded preparation; CacheBytes is not a peak heap cap.
@@ -148,8 +160,11 @@ Store/Planner admission and indivisible upload budgets still apply independently
 Status exposes current and peak job/cache/lease counts and logical byte charges,
 plus load/prepare/build/rejected-result counters. Pending includes unfinished work
 and mailboxes; Failed counts terminal failures still relevant to desired coverage.
-Old leases retain their original asset charge when a smaller replacement profile
-arrives. Current lease counts remain accurate when callers release after Close.
+Old leases retain their own pixel storage and charge through asset refresh. Current
+lease counts remain accurate when callers release after Close. PreparationEvictions
+and PreparationBytesFreed count cached preparation reclaimed under pressure;
+UncachedPreparations counts incoming objects omitted after Build. CapacityRetries
+counts admission retries triggered by sufficient actual cache headroom.
 
 `CacheUsage` splits raw/backing, prepared geometry, fragments/Set copies and unique
 profiles. `PeakCache` records the breakdown at the largest total cache charge; its
@@ -299,9 +314,13 @@ Madrid trace contains 71 immutable source tiles. Its static 800×600/z10 cover r
 complete cover, even after compaction. The same budget now admits more work, but
 native batch success must not be mistaken for complete CPU coverage.
 
-The next gate is **7vqy**: inspect distinct payload ownership, discardable prepared
-caches and refinement headroom under the existing limits. The moving trace also
-exposes repeated Prepare/Build work at style-zoom boundaries. See
+Checkpoint **7vqy** resolves that CPU admission gate with the ownership and reclaim
+rules above. The same static cover reaches all 42 tiles, and the moved cover reaches
+all 20, without changing budgets or labels. A captured-corpus regression also settles
+the full first cover before zooming out, covering capacity rejection followed by
+retirement-driven retry. The moving trace still exposes repeated Prepare/Build work
+and serial native publication latency. See
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full commands, corpus paths,
-observed costs and the failed-settlement results. Dynamic glyph demand follows that
-admission gate rather than adding more retained assets to an already full cache.
+observed costs and both earlier failures and current results. **3a38** tracks native
+target latency: llvmpipe moving replay can finish CPU admission yet miss the unchanged
+native settlement deadline. Dynamic glyph demand remains a separate next step.

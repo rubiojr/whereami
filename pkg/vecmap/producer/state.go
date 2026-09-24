@@ -20,12 +20,14 @@ type entry struct {
 	style, assets uint64 // owner epochs, never native generations
 	usage         CacheUsage
 	styleSnapshot *Style
-	assetSnapshot *Assets
+	preparedUse   uint64
 }
 
 type failure struct {
-	attempts int
-	retryAt  time.Time
+	attempts              int
+	retryAt               time.Time
+	capacity              bool
+	fixedAt, maximumFixed uint64
 }
 
 type state struct {
@@ -85,6 +87,7 @@ func (p *Producer) run(set *tiles.Set) {
 		s.inputs()
 		s.refine()
 		s.evict()
+		s.retryCapacity()
 		s.publish()
 		s.report()
 		// Drain completed loads before compiling another tile. No worker can be
@@ -315,11 +318,11 @@ func (s *state) loaded(r result) {
 		next = *old
 	}
 	next.raw, next.prepared, next.style = nil, nil, 0
-	next.usage = entryUsage(&next)
+	next.usage = entryUsage(tile, &next)
 	next.usage.Raw = 2 * uint64(len(r.data))
-	if s.cacheCharge(tile, &next) > s.p.limits.CacheBytes {
+	if !s.admitPrepared(tile, &next) {
 		s.errorAt("cache/raw", ErrLimit)
-		s.failures[tile] = failure{attempts: 3}
+		s.failCapacity(tile, &next)
 		return
 	}
 	next.raw = compactResponse(r.data)
@@ -339,15 +342,14 @@ func compactResponse(data []byte) []byte {
 	return compact
 }
 
-func entryUsage(e *entry) CacheUsage {
+func entryUsage(tile view.TileID, e *entry) CacheUsage {
 	// In addition to the response, reserve its entire size for decoded string
 	// backing that an evaluated candidate can borrow through a short substring.
-	return CacheUsage{Raw: 2 * uint64(cap(e.raw)), Prepared: e.prepared.RetainedBytes(), Fragments: 2 * e.fragment.RetainedBytes()}
+	return CacheUsage{Raw: 2 * uint64(cap(e.raw)), Prepared: e.prepared.RetainedBytes(), Fragments: e.fragment.RetainedBytes() + e.fragment.SetCopyBytes(tile)}
 }
 
-// Charge complete immutable profiles once per cache, including obsolete epochs
-// still backing continuity fragments. This bounds hidden substring/callback-image
-// backing without copying every borrowed style string or sprite image.
+// Charge complete immutable style profiles once per cache, including obsolete
+// epochs still backing candidate strings. BuildOwned eliminates asset backing.
 func (s *state) cacheCharge(tile view.TileID, replacement *entry) uint64 {
 	return s.cacheUsage(tile, replacement).Total()
 }
@@ -363,7 +365,6 @@ func (s *state) recordCache(tile view.TileID, replacement *entry) {
 
 func (s *state) cacheUsage(tile view.TileID, replacement *entry) CacheUsage {
 	styles := make(map[*Style]bool)
-	assets := make(map[*Assets]bool)
 	var total CacheUsage
 	add := func(e *entry) {
 		if e == nil {
@@ -374,10 +375,6 @@ func (s *state) cacheUsage(tile view.TileID, replacement *entry) CacheUsage {
 		total.Fragments += e.usage.Fragments
 		if profile := e.styleSnapshot; profile != nil && !styles[profile] {
 			styles[profile] = true
-			total.Profiles += profile.Bytes
-		}
-		if profile := e.assetSnapshot; profile != nil && !assets[profile] {
-			assets[profile] = true
 			total.Profiles += profile.Bytes
 		}
 	}
@@ -391,15 +388,9 @@ func (s *state) cacheUsage(tile view.TileID, replacement *entry) CacheUsage {
 }
 
 func (s *state) snapshotCharge(snapshot *tiles.Snapshot) uint64 {
-	total := snapshot.RetainedBytes()
-	assets := make(map[*Assets]bool)
-	for _, tile := range snapshot.Cover {
-		if e := s.entries[tile]; e != nil && e.assetSnapshot != nil && !assets[e.assetSnapshot] {
-			assets[e.assetSnapshot] = true
-			total += e.assetSnapshot.Bytes
-		}
-	}
-	return total
+	// BuildOwned makes all texture backing self-contained. Input assets live in
+	// the separately reserved owner/latest/transfer profiles, never in a lease.
+	return snapshot.RetainedBytes()
 }
 
 func (s *state) compile() bool {
@@ -437,7 +428,7 @@ func (s *state) build(tile view.TileID, old *entry) {
 		stage = "build"
 		var built *tiles.BuildResult
 		started := time.Now()
-		built, err = next.prepared.Build(s.request.Assets.Value)
+		built, err = next.prepared.BuildOwned(s.request.Assets.Value, s.p.limits.CacheBytes)
 		s.stats.Building.observe(time.Since(started))
 		s.stats.Builds++
 		if err == nil {
@@ -453,9 +444,10 @@ func (s *state) build(tile view.TileID, old *entry) {
 	}
 	if err == nil {
 		stage = "cache/compiled"
-		next.usage = entryUsage(&next)
-		next.styleSnapshot, next.assetSnapshot = s.request.Style, s.request.Assets
-		if s.cacheCharge(tile, &next) > s.p.limits.CacheBytes {
+		next.preparedUse = s.stats.Builds
+		next.usage = entryUsage(tile, &next)
+		next.styleSnapshot = s.request.Style
+		if !s.admitPrepared(tile, &next) {
 			err = ErrLimit
 		}
 	}
@@ -465,7 +457,11 @@ func (s *state) build(tile view.TileID, old *entry) {
 	}
 	if err != nil {
 		s.errorAt(stage, err)
-		s.failures[tile] = failure{attempts: 3}
+		if stage == "cache/compiled" {
+			s.failCapacity(tile, &next)
+		} else {
+			s.failures[tile] = failure{attempts: 3}
+		}
 		return
 	}
 	next.style, next.assets = s.style, s.assets

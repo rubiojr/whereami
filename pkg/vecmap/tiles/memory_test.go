@@ -16,9 +16,12 @@ func TestCPUStorageChargeAndSelectionAdmission(t *testing.T) {
 	assert.Zero(t, (*Snapshot)(nil).RetainedBytes())
 	f := baseFragment(0)
 	before := f.RetainedBytes()
+	copies := f.SetCopyBytes(testTile)
 	// A short slice does not hide a large retained backing array.
 	f.Scene.Meshes[0].Vertices = make([]scene.Vertex, 3, 100)
 	assert.Equal(t, before+97*24, f.RetainedBytes())
+	assert.Equal(t, copies, f.SetCopyBytes(testTile), "Set copies metadata, not payload capacity")
+	assert.Zero(t, (*Fragment)(nil).SetCopyBytes(testTile))
 	p, err := Prepare(preparePBF(), prepareStyle(t), PrepareOptions{Tile: testTile, Zoom: 3, Indexed: true})
 	require.NoError(t, err)
 	charge := p.RetainedBytes()

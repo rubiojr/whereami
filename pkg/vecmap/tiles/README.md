@@ -63,6 +63,15 @@ maps/pixels must be immutable; callbacks must be synchronous and do no I/O. Prep
 objects are immutable and support concurrent Builds if callbacks are safe, but the
 caller still bounds concurrent jobs and their memory.
 
+`Prepared.BuildOwned(assets, maximumTextureBytes)` is the producer ownership variant.
+It preserves Build's geometry, provenance, metrics and draw order, but copies sprite
+RGBA into compact owned arrays. Glyph atlas RGBA is already owned and is not copied
+again. Aggregate output RGBA is checked before sprite copies against the supplied
+positive ceiling (at most 1 GiB). Errors remain atomic. Owned fragments can outlive
+and release the supplied asset maps/callbacks and hidden backing behind subimages;
+candidate strings still follow the style/source lifetime contract. Ordinary Build
+retains its immutable sprite-borrow contract.
+
 Every potentially drawable candidate is packed **before camera-dependent
 placement**. `compiler.FragmentBuilder` emits layer/candidate/part metadata without
 cross-boundary draw merging and preserves exact pattern periods. All symbol passes
@@ -232,8 +241,11 @@ backing-array capacities, value metadata and string lengths, with shared storage
 counted repeatedly. Allocator/map overhead and hidden borrowed backing are separate
 producer obligations. `SelectBounded` limits that snapshot charge before caching or
 publication, preserving the prior cache on rejection. Composition scratch retains
-the existing resource/instance bounds. The producer additionally charges complete
-borrowed style/asset profiles and explicitly leased old snapshots.
+the existing resource/instance bounds. `Fragment.SetCopyBytes(tile)` charges only
+Set/Store's additional metadata: geometry, indices, pixels and candidate string
+backing are borrowed, not copied. Set metadata copies have exact-length capacity.
+The producer uses owned textures, charges retained style profiles separately, and
+keeps independent charges for every leased old snapshot.
 
 ## Verification and scope
 

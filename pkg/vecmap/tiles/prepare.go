@@ -139,6 +139,22 @@ func (p *Prepared) Limits() []mvt.LayerLimits { return slices.Clone(p.limits) }
 // pixels. It does not retain asset maps. Errors return nil without altering p or
 // previously built fragments. Empty output is a valid ready blank tile.
 func (p *Prepared) Build(assets Assets) (*BuildResult, error) {
+	return p.build(assets, 0)
+}
+
+// BuildOwned retains the same geometry, provenance and placement metrics as Build,
+// but owns compact sprite pixel buffers instead of borrowing asset backing. Glyph
+// atlas RGBA is already owned and is not copied again. maximumTextureBytes bounds
+// aggregate output RGBA before sprite copies (positive, at most 1 GiB). This lets
+// producers drop obsolete asset snapshots while retaining immutable fragments.
+func (p *Prepared) BuildOwned(assets Assets, maximumTextureBytes uint64) (*BuildResult, error) {
+	if maximumTextureBytes == 0 || maximumTextureBytes > 1<<30 {
+		return nil, ErrLimit
+	}
+	return p.build(assets, maximumTextureBytes)
+}
+
+func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResult, error) {
 	if p == nil || !p.valid {
 		return nil, ErrInput
 	}
@@ -163,6 +179,22 @@ func (p *Prepared) Build(assets Assets) (*BuildResult, error) {
 	packed, sources, err := packing.Finish()
 	if err != nil {
 		return nil, err
+	}
+	if maximumTextureBytes != 0 {
+		var bytes uint64
+		for _, texture := range packed.Textures {
+			if uint64(len(texture.RGBA)) > maximumTextureBytes-bytes {
+				return nil, ErrLimit
+			}
+			bytes += uint64(len(texture.RGBA))
+		}
+		for i, texture := range packed.Textures {
+			if texture.ID != atlasID {
+				pixels := make([]byte, len(texture.RGBA))
+				copy(pixels, texture.RGBA)
+				packed.Textures[i].RGBA = pixels
+			}
+		}
 	}
 	fragment := &Fragment{Scene: packed, Draws: sources, Symbols: p.metrics(layouts, assets)}
 	return &BuildResult{Fragment: fragment, MissingFonts: missing, Limits: p.Limits()}, nil

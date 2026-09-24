@@ -2,7 +2,6 @@ package retained
 
 import (
 	"math"
-	"slices"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 )
@@ -18,7 +17,7 @@ func remap(input *scene.Scene, old *fragment, nextID *uint64) (*fragment, error)
 		oldMeshes, oldTextures = old.meshes, old.textures
 	}
 	p := &fragment{revision: revision, scene: scene.Scene{
-		Meshes: slices.Clone(input.Meshes), Textures: slices.Clone(input.Textures), Draws: slices.Clone(input.Draws)},
+		Meshes: copyMetadata(input.Meshes), Textures: copyMetadata(input.Textures), Draws: copyMetadata(input.Draws)},
 		meshes: make(map[uint64]uint64, len(input.Meshes)), textures: make(map[uint64]uint64, len(input.Textures))}
 	for i := range p.scene.Meshes {
 		m := &p.scene.Meshes[i]

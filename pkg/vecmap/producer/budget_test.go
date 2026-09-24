@@ -277,7 +277,7 @@ func TestUsefulLoadsSurviveCoverAndAssetUpdates(t *testing.T) {
 	assert.Zero(t, p.Status().Rejected)
 }
 
-func TestEpochRefreshPublishesCoherentCoverAndChargesOldAssets(t *testing.T) {
+func TestEpochRefreshPublishesCoherentCoverWithoutBorrowedAssets(t *testing.T) {
 	limits := DefaultLimits()
 	limits.Workers = 1
 	limits.RawBytes = 128
@@ -293,9 +293,9 @@ func TestEpochRefreshPublishesCoherentCoverAndChargesOldAssets(t *testing.T) {
 	old := nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == 2 })
 	require.True(t, p.Current(1, 1, old))
 	status := waitStatus(t, p, func(s Status) bool { return s.Cached == 2 })
-	assert.Less(t, status.CacheBytes, uint64((1<<20)+20000), "shared asset profile is charged once in the cache")
+	assert.Less(t, status.CacheBytes, uint64(20000), "owned fragments do not borrow the asset profile")
 	oldCharge := old.bytes
-	assert.Greater(t, oldCharge, uint64(1<<20))
+	assert.Less(t, oldCharge, uint64(1<<20))
 	layers, err := style.Parse([]byte(`{"version":8,"layers":[{"id":"background","type":"background","paint":{"background-color":"#00ff00"}},{"id":"icon","type":"symbol","source-layer":"labels","layout":{"icon-image":"dot"}}]}`))
 	require.NoError(t, err)
 	newStyle := *r.Style
@@ -335,13 +335,13 @@ func TestEpochRefreshPublishesCoherentCoverAndChargesOldAssets(t *testing.T) {
 	for _, draw := range fresh.Snapshot.Scene.Draws {
 		assert.Equal(t, [4]float32{0, 1, 0, 1}, draw.Material.Color)
 	}
-	assert.Equal(t, oldCharge, old.bytes, "old leased asset backing cannot be charged at the new smaller size")
+	assert.Equal(t, oldCharge, old.bytes, "owned old snapshots retain their original charge")
 	status = waitStatus(t, p, func(s Status) bool { return s.Builds == 5 })
 	assert.GreaterOrEqual(t, status.LeaseBytes, oldCharge+fresh.bytes)
 	assert.Less(t, status.CacheBytes, uint64(20000), "old profile is no longer cached after all fragments refresh")
 }
 
-func TestAssetBackingCanRejectOtherwiseSmallSnapshot(t *testing.T) {
+func TestUnusedAssetBackingDoesNotChargeOwnedSnapshot(t *testing.T) {
 	limits := DefaultLimits()
 	limits.RawBytes = 128
 	limits.SnapshotBytes = 8192
@@ -351,10 +351,11 @@ func TestAssetBackingCanRejectOtherwiseSmallSnapshot(t *testing.T) {
 	_, err := p.Submit(r)
 	require.NoError(t, err)
 	nextCall(t, c).reply <- answer{data: tilePBF()}
-	status := waitStatus(t, p, func(s Status) bool { return s.Builds == 1 && s.LastError == ErrLimit.Error() })
-	assert.Greater(t, status.CacheBytes, uint64(1<<20))
-	_, ok := p.Next()
-	assert.False(t, ok, "small scene cannot hide oversized borrowed asset backing")
+	l := nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == 1 })
+	status := waitStatus(t, p, func(s Status) bool { return s.Builds == 1 })
+	assert.Empty(t, status.LastError)
+	assert.Less(t, status.CacheBytes, uint64(1<<20))
+	assert.Equal(t, l.Snapshot.RetainedBytes(), l.bytes)
 }
 
 func TestErrorMailboxBoundsAndGenerationExhaustion(t *testing.T) {

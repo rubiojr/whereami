@@ -2706,6 +2706,126 @@ and parent/refinement headroom while preserving all acknowledged/leased fragment
 Do not increase limits or reduce label/geometry quality to hide the failure. Bounded
 dynamic glyph demand follows this admission work.
 
+### Complete real-cover admission at fixed budgets
+
+Committed the preceding producer/viewer/workload checkpoints as **d29f523**,
+`feat: add bounded live tile production and QRhi viewer`, then continued with
+**7vqy**. This checkpoint completes the captured Madrid CPU cover under the same
+limits and quality settings. It changes storage ownership and reclaim policy,
+not the style, geometry, labels, resource upload budget or GPU completion proof.
+
+Three ownership changes are material:
+
+1. **Charge actual metadata copies.** Store/Set borrow immutable geometry, indices
+   and RGBA. `retained.CopyBytes` and `Fragment.SetCopyBytes` count their additional
+   owned metadata and logical map entries. Metadata copies use exact-length slice
+   capacity. The cache charges the fragment payload once plus those copies instead
+   of charging the entire fragment twice. Runtime/allocator overhead remains outside
+   this logical ledger, with metadata cardinalities separately bounded.
+2. **Own sprite backing.** `Prepared.BuildOwned` preserves ordinary Build output but
+   copies sprite pixels into compact owned buffers after aggregate RGBA preflight.
+   Glyph atlas RGBA was already owned and is not recopied. Fragments and snapshots
+   therefore retain neither asset maps/callbacks nor hidden sprite subimage backing.
+   Asset profiles remain charged to the existing owner/latest/in-transfer input
+   allowances, rather than being borrowed again by every cache entry and lease.
+   Style profiles still cover retained candidate strings. Ordinary Build retains
+   its original immutable-borrow contract.
+3. **Reclaim optional preparation.** Cache pressure can evict least-recently-built
+   Prepared objects or omit an incoming one after Build. Raw responses remain for
+   reconstruction. Fragments, Set identity and all acknowledged/leased snapshots
+   remain intact. Camera-only updates still reuse geometry; a later asset update
+   reparses raw data only if its preparation was evicted. This trades preparation
+   reuse for space and is reported by explicit counters.
+
+An intermediate experiment with metadata accounting and Prepared reclaim alone
+still failed publication at `snapshot/backing`: whole asset-profile charges pinned
+the old native cover. Owned sprite pixels remove that actual lifetime dependency;
+the asset allowance is not silently ignored while borrowed pixels survive.
+
+A stricter captured-corpus regression also found sticky capacity failures. Settling
+the full first view and then zooming out left rejected tiles marked failed even
+after old content retired and the cache fell to about 138 MiB. Cache failures now
+record the required **non-reconstructible headroom** and retry only after that much
+raw/fragment/profile storage actually leaves the cache. Prepared was already excluded
+from the failed minimum charge, so dropping it cannot trigger a retry. There is no
+polling loop, speculative retirement credit or automatic limit increase. Historical
+LastError remains latched after successful recovery; Pending/Failed report current
+work. Indivisible or unrecoverable failures remain explicit errors.
+
+#### Verification
+
+- Headless tests prove Set/Store payload sharing versus exact metadata copies,
+  optional preparation eviction with pinned Current, camera-only reuse, asset
+  reconstruction without another load, and headroom-gated retries without spinning.
+- A weak-reference test uses a four-byte sprite slice backed by a 1 MiB allocation.
+  Its original backing is collected after asset refresh while an old lease still
+  renders the copied red pixel. New tests also cover aggregate copy limits and
+  atomic failure.
+- Pinned expanded/indexed rendering comparisons with full/partial/no fonts match
+  borrowed and owned builds exactly: ordered vertex bits, materials, pixels,
+  provenance and candidate metrics. No rendering-quality limit changed.
+- `TestCapturedMadridAdmission`, enabled with `WHEREAMI_VECTOR_WORKLOAD_CACHE`,
+  uses the 71-tile checksummed cache and a checked fake native backend. It settles
+  the **42-tile / 130-label** initial view, then the **20-tile / 95-label** final
+  camera of the five-second trace, retaining old Current until replacement and
+  retirement. Upload batches remain 32 MiB / two resources; all logical cache and
+  lease bounds are asserted.
+- Full pinned v4 tests, captured-corpus headless 386/v1 race, and the complete
+  OpenGL 2× race adapter/viewer suite pass. Real Vulkan static/moving replays below
+  use the checked native adapter. No native completion mechanism changed.
+- Final pinned race coverage is producer **96.7%**, tiles **98.7%**, retained
+  **99.8%**; profile `/tmp/opencode/vecmap-admission-coverage.out`. Tagged targeted
+  staticcheck and shared diagnostics pass. Default staticcheck retains generated
+  ST1006 findings and the vulnerability baseline remains GO-2026-5024. Complexity
+  review keeps reclaim admission at 11, producer Build at 14 and owned packing at
+  13; the captured-corpus test's explicit fake-backend protocol is 21.
+
+#### Final real replay observations
+
+Commands retain the preceding camera/corpus, 800×600 logical viewport, scale 1,
+256 MiB cache, 32 MiB / two-resource native batches, five-second trace and ten-second
+settlement tail. Static uses one loader; moving uses four. The binary is
+`/tmp/opencode/vecmap-rhi-admission`.
+
+| Metric | Vulkan static | Vulkan moving | OpenGL/llvmpipe static | OpenGL/llvmpipe moving |
+| --- | ---: | ---: | ---: | ---: |
+| Final CPU requested / selected tiles | 42 / 42 | 20 / 20 | 42 / 42 | 20 / 20 |
+| Final CPU pending / failed | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| Final CPU fallbacks | 0 | 0 | 0 | 0 |
+| Final native target ready | yes | yes | yes | **no** |
+| Displayed draws / labels | 978 / 130 | 600 / 95 | 978 / 130 | 748 / 126 (older Current) |
+| Peak cache charge | 268,397,027 | 268,427,931 | 268,397,027 | 268,404,248 |
+| Peak leased snapshots | 4 | 4 | 4 | 4 |
+| Prepare / Build attempts | 58 / 58 | 257 / 257 | 58 / 58 | 189 / 189 |
+| Cached preparation evictions | 40 | 133 | 26 | 118 |
+| Incoming preparations omitted | 0 | 3 | 0 | 0 |
+| Capacity retries | 0 | 29 | 0 | 0 |
+| Recorded upload bytes | 186,976,560 | 389,167,804 | 158,344,292 | 231,730,952 |
+| Drains / drain wall ms | 167 / 139.08 | 400 / 381.81 | 132 / 30.65 | 127 / 41.71 |
+| Elapsed seconds | 5.98 | 14.36 | 13.97 | 15.29 |
+| Process RSS peak, KiB | 659,300 | 1,006,604 | 921,548 | 1,221,068 |
+| Exit status | 0 | 0 | 0 | **1** |
+
+The final static Vulkan cache held 7,777,322 raw/backing bytes, 17,212,076 prepared
+bytes, 134,163,374 fragment/Set bytes and 4,194,304 style-profile bytes. Prepare/Build/
+Select totals were 311.69 / 295.90 / 661.07 ms. Moving Vulkan totals were 2.149 /
+1.533 / 1.294 seconds. Reclamation and additional complete covers can increase
+rebuilds, uploads and RSS; these are not equal-work memory or speed comparisons
+against the earlier incomplete scenes.
+
+Vulkan previous-frame GPU p95 was 3.90 ms static and 3.62 ms moving; callback p95
+was 18.78 and 18.62 ms. Moving llvmpipe GPU p95 was 74.35 ms, and its serial native
+queue missed the unchanged settlement deadline even though CPU admission completed.
+All runs had zero native batch failures. Different callback cadence, arrivals and
+coalescing select different intermediate targets; these observations do not establish
+MapLibre parity or presentation pacing.
+
+Next: **3a38**, bound accepted-target latency while retaining explicit lease and
+native retirement proofs. The moving Vulkan case is close to the settlement deadline,
+and the software OpenGL case exposes the next queue/throughput limit. Do not extend
+deadlines, raise upload limits or remove checked drains to hide that cost. Dynamic
+glyph-range demand remains later work through the supplied asset boundary.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

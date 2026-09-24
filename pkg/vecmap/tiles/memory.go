@@ -4,7 +4,9 @@ import (
 	"unsafe"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
+	"github.com/rubiojr/whereami/pkg/vecmap/retained"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
+	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
 
 // RetainedBytes charges backing-array capacities, value metadata and string
@@ -73,6 +75,28 @@ func sceneBytes(s *scene.Scene) uint64 {
 		n += arrayBytes(t.RGBA)
 	}
 	return n
+}
+
+// SetCopyBytes charges only the additional owned metadata created by Set.Apply.
+// Payload buffers and candidate string backing remain borrowed from the fragment.
+// Like RetainedBytes, this excludes runtime/allocator overhead and assumes valid
+// bounded input. Lease snapshots are charged independently by their owner.
+func (f *Fragment) SetCopyBytes(tile view.TileID) uint64 {
+	if f == nil {
+		return 0
+	}
+	key := tileKey(tile)
+	return retained.CopyBytes(key, f.Scene) + uint64(unsafe.Sizeof(fragment{})+unsafe.Sizeof(tile)) + uint64(len(key)) +
+		uint64(len(f.Draws))*uint64(unsafe.Sizeof(Draw{})) + uint64(len(f.Symbols))*uint64(unsafe.Sizeof(Symbol{}))
+}
+
+func copyValues[T any](values []T) []T {
+	if values == nil {
+		return nil
+	}
+	result := make([]T, len(values))
+	copy(result, values)
+	return result
 }
 
 func symbolStrings(s placement.Symbol) uint64 {

@@ -71,13 +71,14 @@ type Request struct {
 }
 
 // Limits are explicit positive budgets; DefaultLimits supplies an initial policy.
-// CacheBytes covers raw/backing capacity, prepared, twice fragment charges (including
-// Set's copies), and unique borrowed style/asset profiles. SnapshotBytes covers each
-// lease (including its asset backing) AND one internal logical selection slot.
+// CacheBytes covers raw/backing capacity, optional preparation, fragment payload
+// plus Set's metadata copies, and unique borrowed style profiles. Fragments own
+// texture pixels. SnapshotBytes covers each lease and one internal selection slot.
 // RawBytes*Workers reserves running and pending-result buffers. ProfileBytes
 // reserves each style+asset pair; three pairs can coexist during request handoff.
 // Compiler scratch is separately bounded by MVT/PrepareOptions and one compiler.
 // One additional <=RawBytes scratch copy compacts a completed response for caching.
+// Sprite copying is bounded by CacheBytes for the one in-progress BuildOwned job.
 type Limits struct {
 	Workers, Tiles, Leases, RawBytes        int
 	CacheBytes, SnapshotBytes, ProfileBytes uint64
@@ -95,21 +96,24 @@ func DefaultLimits() Limits {
 // request consumed by the owner. ReservedRawBytes includes canceled jobs and
 // queued results until the owner consumes them. Peak fields are lifetime peaks.
 type Status struct {
-	CurrentGeneration, CurrentSequence       uint64 // native Current mailbox consumed by the owner
-	Revision, Generation                     uint64
-	Jobs, Cached, Leases                     int
-	Pending                                  int // desired unfinished tiles, plus unpublished/request-mailbox work
-	Failed                                   int // terminal failures still relevant to desired coverage
-	CacheBytes, LeaseBytes, ReservedRawBytes uint64
-	PeakJobs, PeakCached, PeakLeases         int
-	PeakCacheBytes, PeakLeaseBytes           uint64
-	Loads, Prepares, Builds, Rejected        uint64
-	LastError                                string
-	LastErrorStage                           string
-	Cache, PeakCache                         CacheUsage
-	Loading, Preparing, Building, Selecting  PhaseTime
-	ResponseBytes, RawCapacityBytes          uint64 // completed responses, before cache admission
-	Requested, SelectedTiles, Fallbacks      int    // latest CPU target, not native Current
+	CapacityRetries                             uint64
+	UncachedPreparations                        uint64
+	PreparationEvictions, PreparationBytesFreed uint64
+	CurrentGeneration, CurrentSequence          uint64 // native Current mailbox consumed by the owner
+	Revision, Generation                        uint64
+	Jobs, Cached, Leases                        int
+	Pending                                     int // desired unfinished tiles, plus unpublished/request-mailbox work
+	Failed                                      int // terminal failures still relevant to desired coverage
+	CacheBytes, LeaseBytes, ReservedRawBytes    uint64
+	PeakJobs, PeakCached, PeakLeases            int
+	PeakCacheBytes, PeakLeaseBytes              uint64
+	Loads, Prepares, Builds, Rejected           uint64
+	LastError                                   string
+	LastErrorStage                              string
+	Cache, PeakCache                            CacheUsage
+	Loading, Preparing, Building, Selecting     PhaseTime
+	ResponseBytes, RawCapacityBytes             uint64 // completed responses, before cache admission
+	Requested, SelectedTiles, Fallbacks         int    // latest CPU target, not native Current
 }
 
 // Lease pins an immutable snapshot until Release. Keep it alive through every

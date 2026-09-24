@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
@@ -123,7 +122,7 @@ func (s *Set) Apply(changes []Change) error {
 		if change.Fragment == nil {
 			delete(s.tiles, change.Tile)
 		} else {
-			s.tiles[change.Tile] = fragment{key: updates[i].Key, draws: slices.Clone(change.Fragment.Draws), symbols: slices.Clone(change.Fragment.Symbols)}
+			s.tiles[change.Tile] = fragment{key: updates[i].Key, draws: copyValues(change.Fragment.Draws), symbols: copyValues(change.Fragment.Symbols)}
 		}
 	}
 	if len(changes) > 0 {

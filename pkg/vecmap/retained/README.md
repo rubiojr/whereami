@@ -99,6 +99,13 @@ caller-owned memory budgets.
 
 ## Snapshots and ownership
 
+`CopyBytes(key, scene)` reports the logical metadata storage created by Apply for
+one validated fragment: exact-length scene metadata slices, identity-map key/value
+entries, fragment metadata and the copied key. It excludes borrowed vertex/index/
+pixel payload and runtime map/allocator overhead. Higher-level producers can charge
+their input payload once plus these copies, rather than pretending Store duplicates
+the payload. Snapshot and native residency charges still have separate lifetimes.
+
 The store owns copied keys and mesh/texture/draw metadata. It borrows immutable
 vertex, index and RGBA buffers. Keep these buffers immutable from the beginning of
 `Apply` until both the store and **all** referencing snapshots are gone. Inputs and
