@@ -41,3 +41,38 @@ func BenchmarkTileTransform(b *testing.B) {
 		TileTransform(camera, tile, 0)
 	}
 }
+
+func TestRootWorldCopyCoversViewport(t *testing.T) {
+	for _, longitude := range []float64{-180, -179.9, -90, 0, 90, 179.9} {
+		for _, zoom := range []float64{0, 2, 10} {
+			for _, bearing := range []float64{0, 37, 90, 225} {
+				for _, size := range [][2]float64{{256, 256}, {1300, 800}} {
+					camera := NewCamera(Coordinate{Longitude: longitude}, zoom, bearing, size[0], size[1])
+					transform := TileTransform(camera, TileID{}, 0)
+					center := transform.MapPoint(ScreenPoint{128, 128})
+					want := camera.FromCoordinate(Coordinate{})
+					assert.InDelta(t, want.X, center.X, 1e-6)
+					assert.InDelta(t, want.Y, center.Y, 1e-6)
+					wraps := WorldWraps(camera)
+					for _, x := range []float64{0, size[0] / 2, size[0]} {
+						for _, y := range []float64{0, size[1] / 2, size[1]} {
+							dx, dy := x-transform.DX, y-transform.DY
+							det := transform.M11*transform.M22 - transform.M12*transform.M21
+							localX := (dx*transform.M22 - dy*transform.M12) / det
+							localY := (dy*transform.M11 - dx*transform.M21) / det
+							if localY < 0 || localY > TileSize {
+								continue
+							} // beyond Mercator's poles
+							covered := false
+							for _, wrap := range wraps {
+								wrapped := localX - float64(wrap)*TileSize
+								covered = covered || (wrapped >= -1e-6 && wrapped <= TileSize+1e-6)
+							}
+							assert.True(t, covered, "lon=%g zoom=%g bearing=%g viewport=%v point=(%g,%g) wraps=%v", longitude, zoom, bearing, size, x, y, wraps)
+						}
+					}
+				}
+			}
+		}
+	}
+}

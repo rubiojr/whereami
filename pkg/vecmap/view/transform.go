@@ -10,13 +10,13 @@ func (t Affine) MapPoint(point ScreenPoint) ScreenPoint {
 }
 
 // TileTransform maps a canonical tile into a normalized camera's viewport.
-// Wrap zero chooses the nearest world copy; other wraps offset that copy.
+// Wrap zero chooses the nearest tile center's world copy; other wraps offset it.
 func TileTransform(camera Camera, tile TileID, wrap int) Affine {
 	worldSize := TileSize * math.Exp2(float64(tile.Z))
 	centerX, centerY := mercatorWorldPoint(camera.Center, worldSize)
 	deltaX := float64(tile.X)*TileSize - centerX
 	if worldSize > 0 {
-		deltaX -= math.Round(deltaX/worldSize) * worldSize
+		deltaX -= math.Round((deltaX+TileSize/2)/worldSize) * worldSize
 	}
 	deltaY := float64(tile.Y)*TileSize - centerY
 	scale := math.Exp2(camera.Zoom - float64(tile.Z))
@@ -53,7 +53,24 @@ func PatternPhase(tile TileID, wrap int, width, height float64) (float64, float6
 func WorldWraps(camera Camera) []int {
 	worldPixels := TileSize * math.Exp2(camera.Zoom)
 	diagonal := math.Hypot(camera.Width, camera.Height)
-	if worldPixels <= 0 || worldPixels > diagonal*2 {
+	if worldPixels <= 0 {
+		return []int{0}
+	}
+	if worldPixels > diagonal*2 {
+		// A coarse root fallback can straddle the antimeridian even when a
+		// narrow viewport needs just one copy of each detailed tile. Keep the
+		// adjacent root copy rather than leaving half of that fallback blank.
+		centerX, _ := mercatorWorldPoint(camera.Center, worldPixels)
+		delta := worldPixels/2 - centerX
+		delta -= math.Round(delta/worldPixels) * worldPixels
+		sin, cos := math.Sincos(camera.Bearing * math.Pi / 180)
+		half := (math.Abs(cos)*camera.Width + math.Abs(sin)*camera.Height) / 2
+		if delta-worldPixels/2 > -half {
+			return []int{-1, 0}
+		}
+		if delta+worldPixels/2 < half {
+			return []int{0, 1}
+		}
 		return []int{0}
 	}
 	maximumWrap := min(int(math.Ceil(diagonal/worldPixels))+1, 8)

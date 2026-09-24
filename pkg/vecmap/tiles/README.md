@@ -102,6 +102,8 @@ again when the producer's style-zoom/epoch changes.
   Choose lower compilation limits for the application's memory/upload policy.
 
 Loading, retries, cancellation, cache/style epochs and scheduling remain caller work.
+The headless [`producer`](../producer/README.md) now supplies one bounded owner of
+that work with an injected transport and supplied immutable style/asset snapshots.
 
 ## Prepared fragment contract
 
@@ -225,6 +227,14 @@ byte limits retain Store/Planner's logical accounting. Bound producer jobs and o
 snapshot lifetimes separately. Neither Set nor Store may be copied or used
 concurrently; published snapshots and everything reachable from them are immutable.
 
+`Prepared`, `Fragment` and `Snapshot` expose `RetainedBytes` logical CPU charges:
+backing-array capacities, value metadata and string lengths, with shared storage
+counted repeatedly. Allocator/map overhead and hidden borrowed backing are separate
+producer obligations. `SelectBounded` limits that snapshot charge before caching or
+publication, preserving the prior cache on rejection. Composition scratch retains
+the existing resource/instance bounds. The producer additionally charges complete
+borrowed style/asset profiles and explicitly leased old snapshots.
+
 ## Verification and scope
 
 ```sh
@@ -272,7 +282,9 @@ old references byte-for-byte; a direct OpenGL 2× capture also equals its ordina
 fixture capture. The retained captures use 150 draws and retain more vertices than
 the 45-draw fixture because they preserve candidate boundaries and unselected data.
 
-Next is bounded loading and live producer scheduling. The viewer's file reload path
-still consumes whole scene documents. These checkpoints add no network loader or
-new GPU completion mechanism and make no MapLibre performance or general visual-
-parity claim.
+The subsequent **c801** checkpoint adds bounded headless loading and live producer
+scheduling in [`producer`](../producer/README.md). Its deterministic loaders exercise
+arrivals, cancellation, refresh and leased snapshot publication through the existing
+Worker contract. **hxzf** subsequently connects its leased targets and shared HTTP
+transport to the opt-in live viewer. These checkpoints add no new GPU
+completion mechanism and make no MapLibre performance or general visual-parity claim.

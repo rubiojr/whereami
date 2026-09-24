@@ -2401,6 +2401,311 @@ scheduling feeding prepared fragments into Set and WorkerWithData. Use those liv
 workloads to measure draw/upload/placement costs before changing the checked native
 completion baseline. The production renderer remains separate.
 
+### Bounded headless live tile producer
+
+Following committed compiler checkpoint **959ff8e**, checkpoint **c801** adds
+[`producer`](../pkg/vecmap/producer/README.md). One goroutine owns Set, raw/prepared/
+fragment caches and composition; up to four fixed workers perform injected transport.
+Preparation concurrency is one. The loader writes into a fixed response buffer and
+has no compilation or native ownership. Supplied immutable style/font/sprite profiles
+keep provider transport and dynamic asset fetching outside this first checkpoint.
+
+`view.LoadOrder` now shares the existing scheduler's immediate-parent-first priority.
+Useful loads survive overlapping cover updates and asset refresh. Obsolete loads
+are canceled but remain charged until they actually return; an ignored cancellation
+cannot spawn replacement workers. Source/style changes invalidate old jobs, and late
+results cannot restore obsolete state. A single ticker handles bounded retries.
+
+The producer reuses cached bytes on style-zoom changes and Prepared geometry on
+asset refresh. A replacement cover must have coherent source/style/asset epochs;
+partial refresh keeps the native consumer's old Current. Requested siblings refine
+together through the shared selector. Acknowledged Current and outstanding target
+leases pin continuity fragments until their owners release them.
+
+CPU storage has separate raw-job, cache, profile and snapshot budgets. Cache charges
+include complete borrowed profiles once per distinct pointer, so old epoch backing
+cannot disappear from accounting while fragments retain it. Each output lease keeps
+its own snapshot and asset-backing charge until explicit Release. Producer mailboxes
+coalesce requests and native Current reports without retaining a scene history.
+`tiles.RetainedBytes` and `Set.SelectBounded` add logical CPU storage admission;
+compiler scratch, runtime overhead and transport-private buffers retain separate
+bounded-input/owner obligations. These charges are not a peak RSS or VRAM meter.
+
+Lease ownership is deliberately explicit. A bridge cannot release a superseded
+target merely because a newer target was submitted: final-upload acknowledgement
+may have promoted it to Current, and Planner/native retirement may still borrow old
+resources. The next viewer checkpoint must track those bounded owners. Native reset
+uses `ResetCurrent` with a fresh native generation while useful producer jobs can
+continue. Close/Done joins producer workers without waiting for native acknowledgement.
+
+Verification:
+
+- Controlled loaders and small valid MVT exercise parent-first dispatch, partial
+  refinement, zoom-out continuity, pan supersession, useful-job survival, ignored
+  cancellation, retries/missing/invalid/oversized input, source/style/asset epochs,
+  coherent refresh, immutable old snapshots, byte/count pressure and joined shutdown.
+- A headless real Worker test preserves scene-associated transforms and old Current
+  through partial uploads, then closes the producer with a Worker packet outstanding.
+- The supplied pinned Liberty/font fixture retains **62 labels / 782,409 selected
+  elements**. This is compiler/producer correctness evidence, not a live GPU capture
+  or performance comparison. Fixture inputs were explicitly supplied, not skipped.
+- Full pinned v4 module coverage, headless 386, pinned v1 race and shared diagnostics
+  pass. Targeted staticcheck passes; default staticcheck retains only the existing
+  generated ST1006 findings. The vulnerability baseline remains **GO-2026-5024**.
+- Producer coverage is **97.3%**, tiles **98.6%**, and the extracted LoadOrder is
+  **100%** covered. Remaining branches include defensive token/removal guards and
+  scheduler interleavings, plus the prior defensive tile error forwarding. Coverage
+  profile: `/tmp/opencode/vecmap-producer-coverage.out`.
+- Complexity review retains explicit input/protocol guards: validation 24, request
+  handling 21, owner loop 19, publication 15. The parent setCover drops from its prior
+  duplicate parent-order loop to the shared helper. No dependency or binding changes.
+
+The tests also exposed a pre-existing shared transform issue (**p5nh**): for a
+root tile at camera longitude 0 / zoom 2 / 256-square viewport, local center projects
+to x=1152 rather than x=128, and WorldWraps selects only zero. A standalone headless
+probe confirms it; the producer asset-refresh test uses longitude -1 to isolate its
+own behavior. Coarse fallback/world-copy correctness needs that separate fix before
+the live viewer's coverage can be treated as verified.
+
+Next: connect leased targets and acknowledged Current to the opt-in viewer, reuse/
+extract provider transport/cache, and verify live arrival/camera/replacement traces
+on basic/threaded Vulkan and OpenGL. This checkpoint does not run new native
+transitions or change the checked GPU completion baseline. Production migration,
+dynamic assets, pacing evidence and MapLibre parity remain later gates.
+
+### Live viewer, leased targets and shared transport
+
+Checkpoint **hxzf** connects headless producer **c801** to the opt-in viewer.
+Live mode uses the pinned
+Liberty style/sprites and supplied Noto Sans Regular/Bold/Italic range-0 files:
+
+```sh
+QT_RHI_INCLUDE=/tmp/opencode/qt-rhi-6.11.2/usr/include/qt6/QtGui/6.11.2/QtGui \
+QSG_RHI_BACKEND=vulkan GOAMD64=v1 \
+sh scripts/qt-rhi-env.sh go run -tags vecmap_rhi ./cmd/vecmap-rhi \
+  -live -glyph-dir /tmp/opencode/vecmap-glyphs -duration 5s -animate=false
+```
+
+`-tile-url` selects an immutable XYZ template; the default is the existing pinned
+OpenFreeMap snapshot. `-cache-dir` enables its checksum-pair disk cache. Latitude,
+longitude and zoom select the initial 800×600 camera. `-cpu-cache-bytes` sets the
+producer cache budget explicitly; existing upload byte/resource flags still apply.
+Live mode cannot be combined with scene-file/reload input. All fonts are loaded
+before QApplication starts; tile I/O and compilation run on bounded background
+owners. This first live mode does not fetch additional glyph ranges or sprites,
+compose Natural Earth rasters, or replace the application's production renderer.
+
+The camera trace freezes when duration elapses. Live mode then allows up to ten
+seconds for actual producer publication, upload and retirement to settle before
+accepting a screenshot. A failure/timeout returns an error; it never raises budgets
+or acknowledges work optimistically. GUI timer sampling and finish policy have
+separate helpers, keeping producer I/O/compilation outside GUI/render callbacks.
+
+`producer.Bridge` holds Current, the accepted target and one coalesced pending
+document, with a fourth producer output/in-transfer lease. It **serializes accepted
+targets through retirement**, trading supersession latency for an explicit bounded
+ownership proof. A new opt-in Worker constructor publishes a final acknowledged
+nil-batch Settled packet after resource retirement. Only settlement of the serial
+target permits old lease release. Ordinary Worker cadence remains unchanged.
+
+Native initialization remains separate from Planner settlement. In particular,
+an empty target after reset can settle in the Planner before Qt has drained the
+previous namespace. The viewer now waits for `BatchRenderer.Initialized()` before
+acknowledging nil-batch publications. Both existing startup drains, checked in-frame
+upload finish, retirement/rollback drains and generation checks remain intact.
+
+The new [`tileio`](../pkg/vecmap/tileio/README.md) package extracts the parent's
+bounded HTTP/file reads, redirect policy, checksums, pair writes, eviction and pinned
+source paths. Parent tile/raster/glyph loaders delegate to it. Cache scans gain a
+16,384-path cap; failed cache admission rolls back its new pair. HTTP producer loads
+retain source identity and cancellation and classify missing/permanent/retryable
+responses explicitly. Transport-private buffers/filesystem work remain separate
+from the producer's logical scene/cache/lease charges.
+
+The **p5nh** coarse-tile correction is also complete. Wrap zero chooses the nearest
+tile center, and narrow antimeridian views include the adjacent copy needed by a
+root fallback. Headless sampling covers multiple longitudes, zooms, rotations and
+viewport sizes. Native tests verify visible root coverage at the half-world boundary
+and across a rotated seam without geometry reupload. This conservative shared wrap
+policy can add off-screen instances near the seam; per-tile culling is later work.
+
+Verification:
+
+- Headless tests exercise settlement only after acknowledged retirement, failed
+  release retry, queued camera updates, leased-target coalescing, reset and joined
+  shutdown. HTTP tests use local servers for status/error classification, bounded
+  responses, cancellation, corruption recovery and source-separated cache paths.
+- Basic/threaded Vulkan and OpenGL live tests load small valid MVTs through HTTP.
+  Parent pixels survive partial CPU preparation and partial GPU upload; child
+  coverage, camera-only motion, upload-time reset, root seam coverage and empty
+  reset all pass. OpenGL also passes at 2× under the race detector.
+- Separate basic/threaded processes exercise the actual live command with supplied
+  fonts and a local tile server. The controlled background-only scene reports
+  **20 loads/prepares/builds, 16 uploaded meshes, 80 instanced draws, zero labels,
+  1,924 upload bytes including white, and three checked drains**. Observed peaks
+  are four loader jobs and two leases. These tiny synthetic scenes are correctness
+  evidence, not a real-provider performance measurement or MapLibre comparison.
+- The full pinned v4 suite, headless 386 and pinned v1 race checks pass. Targeted
+  shared/native-tag staticcheck passes; default staticcheck retains the existing
+  generated ST1006 baseline. GO-2026-5024 remains the vulnerability baseline.
+- The Vulkan adapter suite and viewer scenarios pass. Its initial full run exposed
+  the existing reload test's one-second timing assumption: only five frames had
+  occurred and the replacement was not uploaded. That test now allows five seconds,
+  retaining strict readiness and replacement-pixel assertions; both Vulkan retries
+  pass. The complete OpenGL 2× race suite passes. No new presentation-pacing claim
+  is made; **vx93** remains open.
+- Producer coverage is about **95%**, retained **99.7%**, tiles **98.6%**, tileio
+  **85.7%**, and view **92.0%**. Remaining transport branches largely forward
+  filesystem failures; several bridge protocol guards and owner interleavings
+  remain uncovered. Profile: `/tmp/opencode/vecmap-live-producer-coverage.out`.
+
+Next: measure real multi-tile arrival/camera traces and the serial-target latency
+tradeoff under fixed budgets, then add bounded dynamic glyph-range demand through
+the asset snapshot boundary. Improve accepted-target supersession only with an
+equally explicit CPU/native lifetime proof. The checked GPU completion baseline
+and exact Qt SDK/runtime packaging gate remain in force.
+
+### Real multi-tile admission and raw-cache compaction
+
+Checkpoint **4s9y** starts real-provider workload measurements after the controlled
+viewer tests. **The default Madrid workload does not settle within the existing CPU
+cache budget.** Native uploads complete correctly, but a ready native fallback is
+not evidence that the requested CPU cover was admitted.
+
+Inputs and controls:
+
+- Go v1 capture, Qt 6.11.2, the pinned OpenFreeMap `20260823_080002_pt` source,
+  supplied range-0 Noto Sans Regular/Bold/Italic, Liberty style/sprites.
+- Initial camera 40.4168, -3.7038, zoom 10, 800×600, scale factor 1. Five-second
+  static or built-in animated trace; failed settlement exits after the ten-second
+  tail. All rows below exited **1**, explicitly reporting incomplete production.
+- Unchanged **268,435,456-byte CPU cache**, **33,554,432-byte / two-resource upload
+  batches**, default residency/snapshot limits and rendering/preparation limits.
+- Static cover: **42 requested z10 tiles + 16 coarse parents**, 6,543,357 response
+  bytes. The union of the static cover and five-second trace sampled every 8 ms
+  contains **71 tiles / 8,599,046 bytes**. Cache pairs and a JSON manifest preserve
+  each tile's SHA-256. This is input capture, not a GPU-ready scene capture.
+
+Artifacts under `/tmp/opencode`:
+
+- `vecmap-real-workload-20260924/` — verified raw cache corpus.
+- `vecmap-real-workload-20260924-manifest.json` — camera, static targets and hashes.
+- `whereami-capture-cover.go` — bounded four-worker corpus capture script.
+- `vecmap-rhi-live` — pre-instrumentation viewer from the preceding checkpoint.
+- `vecmap-rhi-workload-baseline` — instrumented viewer before compaction.
+- `vecmap-rhi-workload` — compacting viewer with cache-only replay.
+
+The first network/cold OpenGL run stopped at 12 loads / 9 preparations with a
+265,834,412-byte cache peak, 349 draws / 93 labels in partial fallback, four active
+loaders, and no native batch failures. Its process RSS peak was 511,604 KiB.
+
+The ordered warm baseline used one transport worker to preserve load order. It
+completed nine responses totaling **1,693,316 bytes**, but cached their full
+**18,874,368-byte buffer capacity**. With the decoded-string backing allowance this
+alone charged **37,748,736 bytes**. The fixed transport reservation was being retained
+as cache storage even for small responses.
+
+The producer now admits responses by compact size and copies partial buffers into
+exact-length owned storage. Full-capacity responses transfer directly. One bounded
+compaction scratch buffer is reserved separately; running/canceled job slots remain
+charged until consumption. Failed replacement admission preserves the original
+raw/prepared entry atomically. Budgets, MVT limits, geometry, text and GPU completion
+are unchanged. Cache accounting still conservatively charges twice Fragment storage;
+this checkpoint does not relax that model.
+
+New bounded diagnostics split current/peak cache charges and report completed
+load/Prepare/Build/Select counts, aggregate and maximum wall times, raw response
+bytes/capacity, latest CPU selection and last failure stage. Parallel loading sums
+are not CPU time or elapsed runtime. Counters are sampled before shutdown and are
+not a complete history of every failure. `-tile-workers 1` supports ordered replay;
+`-cache-only` refuses missing/corrupt inputs instead of fetching replacements.
+
+#### Ordered static replay
+
+| Metric | Warm baseline, OpenGL | Compacted, OpenGL | Compacted, Vulkan |
+| --- | ---: | ---: | ---: |
+| Completed loads | 9 | 58 | 58 |
+| Prepare / Build attempts | 9 / 9 | 20 / 20 | 20 / 20 |
+| Selected coarse tiles | 8 | 11 | 11 |
+| Raw cache charge | 37,748,736 | 6,363,438 | 6,363,438 |
+| Prepared charge | 38,674,918 | 46,112,100 | 46,112,100 |
+| Fragment/Set charge | 122,301,894 | 148,819,586 | 148,819,586 |
+| Profile charge | 67,108,864 | 67,108,864 | 67,108,864 |
+| Total cache peak | 265,834,412 | 268,403,988 | 268,403,988 |
+| Pending / failed desired work at exit | 49 / 1 | 0 / 47 | 0 / 47 |
+| Recorded upload bytes | 52,507,080 | 63,891,864 | 63,891,864 |
+| Process RSS peak, KiB | 494,868 | 577,008 | 382,836 |
+
+Compaction admits more work under the same limit, so these are **not equal-work
+RSS or rendering speed comparisons**. The final scene remains incomplete: 398 draws
+and 93 labels, with 11 coarse fallback tiles rather than the 42 detailed targets.
+
+Vulkan's compacted static run spent 209.33 ms in Prepare, 191.83 ms in Build and
+50.30 ms in Select across the whole run. It recorded 31 drains totaling 16.09 ms,
+with no batch failures. Previous-frame GPU p95 was 2.27 ms and render-callback p95
+17.44 ms; the timer observed 715 active and 942 exposed ticks out of 943. This run
+had normal callback cadence, but callback intervals still are not presentation
+timestamps and the requested map cover was incomplete.
+
+#### Moving replay
+
+Four-worker replay of the existing five-second pan/zoom/bearing trace gives:
+
+| Metric | OpenGL / llvmpipe | Vulkan / Radeon 860M |
+| --- | ---: | ---: |
+| Loads / rejected results | 69 / 9 | 71 / 9 |
+| Prepare / Build attempts | 229 / 229 | 228 / 228 |
+| Prepare wall total | 2.847 s | 2.610 s |
+| Build wall total | 2.027 s | 1.948 s |
+| Select wall total | 339.32 ms | 366.68 ms |
+| Peak cache charge | 268,400,381 | 268,419,197 |
+| Peak held leases | 4 | 4 |
+| Pending / failed desired work at exit | 0 / 29 | 0 / 29 |
+| Recorded upload bytes | 174,730,024 | 103,349,320 |
+| Drains / total drain wall time | 127 / 44.06 ms | 60 / 32.53 ms |
+| Process RSS peak, KiB | 926,240 | 530,904 |
+
+Different callback cadence and serial-target coalescing select different intermediate
+targets, so these rows are not a matched backend speed comparison. The Vulkan run
+ended with 20 requested tiles and an older incomplete current scene (392 draws,
+90 labels). Its previous-frame GPU p95 was 4.85 ms and callback p95 17.64 ms, despite
+only 123 active ticks out of 938; 937 ticks were exposed. The dominant observed
+correctness gate is CPU admission; style-zoom preparation churn is also measurable.
+These data do not justify removing checked GPU drains.
+
+Example replay, using the captured corpus:
+
+```sh
+QSG_RHI_BACKEND=vulkan /usr/bin/time -v /tmp/opencode/vecmap-rhi-workload \
+  -live -glyph-dir /tmp/opencode/vecmap-glyphs \
+  -cache-dir /tmp/opencode/vecmap-real-workload-20260924 -cache-only \
+  -duration 5s -animate=false -foreground -diagnostics -tile-workers 1 \
+  -upload-bytes 33554432 -upload-resources 2 -cpu-cache-bytes 268435456
+```
+
+Use `-animate=true -tile-workers 4` for the moving trace. Expected outcome at this
+checkpoint is a nonzero exit for incomplete CPU production, not a successful map
+benchmark. The input manifest covers this trace/camera; other locations or longer
+traces require their own captured corpus.
+
+Tests verify exact compaction ownership, small-cache admission despite a large
+transport reservation, failure rollback/source reversion, cache accounting and
+phase counters. Offline tests verify missing/corrupt entries never fall back to
+HTTP. Pinned headless 386/v1 race and native controlled live transitions pass.
+The full pinned v4 suite and tagged targeted staticcheck pass; shared diagnostics
+are clean. Producer coverage is **95.3%**, with compaction, cache breakdown helpers
+and phase counters at **100%**. The existing generated ST1006 and GO-2026-5024
+baselines remain. Coverage profile: `/tmp/opencode/vecmap-workload-coverage.out`.
+Complexity review retains explicit admission/identity guards (loaded 12, build 13)
+and transport branches (source loader 20); no new scheduler or rendering algorithm
+was introduced for this measurement checkpoint.
+
+Next gate: **7vqy**, complete refinement within the fixed CPU budgets. Inspect
+distinct retained payloads versus metadata copies, discardable preparation state
+and parent/refinement headroom while preserving all acknowledged/leased fragments.
+Do not increase limits or reduce label/geometry quality to hide the failure. Bounded
+dynamic glyph demand follows this admission work.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

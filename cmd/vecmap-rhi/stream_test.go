@@ -23,7 +23,7 @@ import (
 )
 
 func TestViewerStream(t *testing.T) {
-	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}, {"basic", "tiles"}, {"threaded", "tiles"}} {
+	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}, {"basic", "tiles"}, {"threaded", "tiles"}, {"basic", "live"}, {"threaded", "live"}, {"basic", "live-command"}, {"threaded", "live-command"}} {
 		t.Run("test"+scenario.loop+"-"+scenario.name, func(t *testing.T) {
 			binary, err := os.Executable()
 			require.NoError(t, err)
@@ -48,8 +48,16 @@ func TestViewerStreamProcess(t *testing.T) {
 		testViewerReload(t)
 		return
 	}
+	if os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO") == "live-command" {
+		testViewerLiveCommand(t)
+		return
+	}
 	app := qt.NewQApplication([]string{"vecmap-stream-test"})
 	defer app.Delete()
+	if os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO") == "live" {
+		testLiveProducer(t)
+		return
+	}
 	if os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO") == "tiles" {
 		testTileComposition(t)
 		return

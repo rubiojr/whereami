@@ -52,6 +52,21 @@ func (s *Snapshot) Frame(camera view.Camera) scene.Frame {
 // are unchanged since the last Apply, it returns the same snapshot for camera-only
 // updates, avoiding resource validation/upload planning on every camera tick.
 func (s *Set) Select(targets, previous []view.TileID, camera view.Camera, workLimit int) (*Snapshot, error) {
+	return s.selectBounded(targets, previous, camera, workLimit, 0)
+}
+
+// SelectBounded additionally limits Snapshot.RetainedBytes before caching or
+// publishing a new snapshot. An oversized selection leaves the prior cache
+// intact. Composition scratch remains bounded by Set's resource/instance limits;
+// this is retained-storage admission, not a transient allocation limit.
+func (s *Set) SelectBounded(targets, previous []view.TileID, camera view.Camera, workLimit int, maximumBytes uint64) (*Snapshot, error) {
+	if maximumBytes == 0 {
+		return nil, ErrLimit
+	}
+	return s.selectBounded(targets, previous, camera, workLimit, maximumBytes)
+}
+
+func (s *Set) selectBounded(targets, previous []view.TileID, camera view.Camera, workLimit int, maximumBytes uint64) (*Snapshot, error) {
 	if s.store == nil {
 		return nil, ErrInput
 	}
@@ -69,13 +84,20 @@ func (s *Set) Select(targets, previous []view.TileID, camera view.Camera, workLi
 		return nil, err
 	}
 	if old := s.cached; old != nil && old.Fallbacks == fallbacks && slices.Equal(old.Cover, cover) && slices.Equal(old.TileSpaces, spaces) && maps.Equal(old.Accepted, accepted) {
+		if maximumBytes != 0 && old.RetainedBytes() > maximumBytes {
+			return nil, ErrLimit
+		}
 		return old, nil
 	}
 	packed, err := s.compose(spaces, accepted)
 	if err != nil {
 		return nil, err
 	}
-	s.cached = &Snapshot{Scene: packed, Cover: cover, TileSpaces: spaces, Fallbacks: fallbacks, Accepted: accepted}
+	next := &Snapshot{Scene: packed, Cover: cover, TileSpaces: spaces, Fallbacks: fallbacks, Accepted: accepted}
+	if maximumBytes != 0 && next.RetainedBytes() > maximumBytes {
+		return nil, ErrLimit
+	}
+	s.cached = next
 	return s.cached, nil
 }
 

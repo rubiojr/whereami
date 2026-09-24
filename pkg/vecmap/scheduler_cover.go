@@ -25,22 +25,11 @@ func (s *tileSchedulerState) setCover(tiles []vectorTileID) {
 		order = append(order, tile)
 	}
 	desired := make(map[vectorTileID]struct{}, len(order)*2)
-	resourceOrder := make([]vectorTileID, 0, len(order)*2)
+	resourceOrder := view.LoadOrder(order)
 	// Load coarse fallback coverage before detailed targets so camera flights
 	// fill the viewport before refining it.
-	for _, tile := range order {
-		if parent, exists := tile.Parent(); exists {
-			if _, duplicate := desired[parent]; !duplicate {
-				desired[parent] = struct{}{}
-				resourceOrder = append(resourceOrder, parent)
-			}
-		}
-	}
-	for _, tile := range order {
-		if _, duplicate := desired[tile]; !duplicate {
-			desired[tile] = struct{}{}
-			resourceOrder = append(resourceOrder, tile)
-		}
+	for _, tile := range resourceOrder {
+		desired[tile] = struct{}{}
 	}
 	continuity := make(map[vectorTileID]struct{}, len(s.rendered))
 	for _, tile := range s.rendered {

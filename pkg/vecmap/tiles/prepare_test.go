@@ -243,6 +243,7 @@ func TestPreparedEmptyAndDegradation(t *testing.T) {
 	limits := p.Limits()
 	require.Len(t, limits, 1)
 	assert.Equal(t, 1, limits[0].Skipped)
+	assert.Greater(t, p.RetainedBytes(), uint64(len(limits[0].Name)+len(limits[0].Last.Error())), "degradation diagnostics are charged with prepared storage")
 	limits[0].Name = "changed"
 	built, err := p.Build(Assets{})
 	require.NoError(t, err)

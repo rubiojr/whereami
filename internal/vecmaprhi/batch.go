@@ -89,6 +89,11 @@ func (b *BatchRenderer) Sync(frame scene.Frame, batch *retained.Batch) error {
 	return nil
 }
 
+// Initialized reports that both checked startup submission and previous-namespace
+// retirement drains have completed. Render-thread-only; even empty publication
+// must wait for this boundary before releasing old CPU ownership after a reset.
+func (b *BatchRenderer) Initialized() bool { return !b.dead && !b.warming }
+
 func (r *Renderer) requireResident(s *scene.Scene) error {
 	for _, m := range s.Meshes {
 		if _, ok := r.meshes[resourceKey{m.ID, m.Revision}]; !ok {

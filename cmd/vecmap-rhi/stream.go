@@ -7,6 +7,7 @@ import (
 
 	rhi "github.com/rubiojr/whereami/internal/qtrhi"
 	"github.com/rubiojr/whereami/internal/vecmaprhi"
+	"github.com/rubiojr/whereami/pkg/vecmap/producer"
 	"github.com/rubiojr/whereami/pkg/vecmap/retained"
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 )
@@ -36,6 +37,7 @@ type viewerStream struct {
 	observe func(vecmaprhi.Stats)
 	report  func(streamStatus)
 	status  streamStatus
+	bridge  *producer.Bridge
 }
 
 func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, update streamUpdate) *rhi.QSGNode {
@@ -64,10 +66,20 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, update strea
 		s.report(s.status)
 	}
 	if e.pending != nil {
-		return old
+		if e.pending.Batch != nil || !e.renderer.Initialized() {
+			return old
+		}
+		s.acknowledge(e, *e.pending, true)
+		e.pending = nil
 	} // coalesce camera changes until completion
 	var batch *retained.Batch
 	if packet, ok := s.worker.Next(); ok && packet.Generation == e.generation {
+		if s.bridge != nil && !s.bridge.Consumed(packet) {
+			s.status.Err = fmt.Errorf("live Current mailbox rejected packet")
+			e.dead = true
+			s.report(s.status)
+			return old
+		}
 		if packet.Err != nil {
 			s.status.Err = packet.Err
 			s.acknowledge(e, packet, false)
@@ -79,11 +91,11 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, update strea
 	if err := e.renderer.Sync(update.camera.frame(e.current), batch); err != nil {
 		s.status.Err = err
 		e.dead = true
-	} else if e.pending != nil && batch == nil {
+	} else if e.pending != nil && batch == nil && e.renderer.Initialized() {
 		s.acknowledge(e, *e.pending, true)
 		e.pending = nil
 	}
-	s.status.Ready = e.current == s.target && !e.dead
+	s.status.Ready = e.current == s.target && !e.dead && e.renderer.Initialized()
 	s.status.Current = e.current
 	s.report(s.status)
 	return e.renderer.Node.QSGNode
@@ -100,6 +112,11 @@ func (s *viewerStream) recreate(item *rhi.QQuickItem, camera streamCamera) *rhi.
 	s.epoch = e
 	s.status.Generation, s.status.Ready = generation, false
 	s.status.Current = nil
+	if s.bridge != nil && !s.bridge.Restarted(generation) {
+		s.status.Err = fmt.Errorf("live Current reset rejected")
+		s.report(s.status)
+		return nil
+	}
 	e.renderer = vecmaprhi.NewBatchRenderer(item, s.observe, func(result vecmaprhi.BatchResult) {
 		s.complete(e, result)
 	})
@@ -135,6 +152,9 @@ func (s *viewerStream) complete(e *nativeEpoch, result vecmaprhi.BatchResult) {
 func (s *viewerStream) acknowledge(e *nativeEpoch, packet retained.PacketWithData[*scene.Document], success bool) {
 	if !s.worker.Acknowledge(e.generation, packet.Sequence, success) {
 		s.status.Err = fmt.Errorf("upload acknowledgement mailbox unavailable")
+		e.dead = true
+	} else if s.bridge != nil && !s.bridge.Completed(packet, success) {
+		s.status.Err = fmt.Errorf("live completion mailbox rejected packet")
 		e.dead = true
 	}
 }

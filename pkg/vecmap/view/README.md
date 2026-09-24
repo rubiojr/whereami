@@ -14,12 +14,16 @@ point := transform.MapPoint(view.ScreenPoint{X: 128, Y: 128})
 
 Coordinates use latitude/longitude in degrees; screen and tile-local positions
 use logical pixels. Tile size is 256 pixels at its native zoom. Transform wrap
-zero uses the world copy nearest the camera's center; additional wraps offset
+zero uses the tile-center world copy nearest the camera's center; additional wraps offset
 that copy. Normalize camera literals with `Normalized` before rendering.
 
 The cover preserves the existing scheduler policy: a one-tile prefetch ring,
 maximum source zoom 14, and at most 8x8 canonical tiles, ordered nearest first.
 Provider-specific cover policies remain a future extension.
+
+`LoadOrder` shares immediate-parent-first, deduplicated loading priority between
+the production scheduler and the headless producer. It preserves target order;
+transport completion order, cancellation and readiness remain caller-owned.
 
 `GroupTiles` and `SelectCover` now share the production scheduler's fallback policy:
 requested siblings refine together, detailed previous coverage survives zoom-out,
@@ -32,6 +36,12 @@ The [tiles compositor](../tiles/README.md) supplies validated bounds, retained s
 layer/wrap assembly and cross-tile placement. It takes continuity explicitly from
 the acknowledged Current rather than remembering its last queued target. The
 production scheduler also delegates its existing selection to these shared helpers.
+
+`StyleZoom` shares the production sixteenth-zoom preparation policy. Transforms
+still use continuous camera zoom. `WorldWraps` also retains an adjacent world copy
+for narrow antimeridian views, where a root fallback can otherwise leave half the
+viewport blank. This is a conservative shared policy, not per-tile instance culling.
+Headless viewport sampling and native pixel tests cover the **p5nh** correction.
 
 Run all camera and cover regressions without Qt:
 

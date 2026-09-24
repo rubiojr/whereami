@@ -23,6 +23,10 @@ type PacketWithData[T any] struct {
 	CurrentData          T
 	Batch                *Batch
 	Err                  error
+	// Settled means this packet has no batch/error and the accepted target is
+	// Current, with all obsolete residency already acknowledged released. It is
+	// not a GPU fence. The packet itself still requires consumption and ack.
+	Settled bool
 }
 
 type workerTarget[T any] struct {
@@ -47,16 +51,17 @@ type Worker = WorkerWithData[struct{}]
 // it neither interprets nor validates data. Data must stay immutable through all
 // queued packets and native borrows. Use RestartWithData and SetTargetWithData.
 type WorkerWithData[T any] struct {
-	mu         sync.Mutex
-	generation uint64
-	latest     *workerTarget[T]
-	closed     bool
-	wake       chan struct{}
-	stop, done chan struct{}
-	packets    chan PacketWithData[T]
-	acks       chan workerAck
-	limits     ResidencyLimits
-	budget     Budget
+	mu          sync.Mutex
+	generation  uint64
+	latest      *workerTarget[T]
+	closed      bool
+	wake        chan struct{}
+	stop, done  chan struct{}
+	packets     chan PacketWithData[T]
+	acks        chan workerAck
+	limits      ResidencyLimits
+	budget      Budget
+	emitSettled bool
 }
 
 func NewWorker(limits ResidencyLimits, budget Budget) (*Worker, error) {
@@ -64,6 +69,18 @@ func NewWorker(limits ResidencyLimits, budget Budget) (*Worker, error) {
 }
 
 func NewWorkerWithData[T any](limits ResidencyLimits, budget Budget) (*WorkerWithData[T], error) {
+	return newWorkerWithData[T](limits, budget, false)
+}
+
+// NewSettlingWorkerWithData additionally publishes an acknowledged nil-batch
+// packet when retirement settles. A serial-target owner can use this boundary
+// to release old CPU leases after native retirement. Ordinary workers retain
+// their existing packet cadence. New targets still coalesce under the same rules.
+func NewSettlingWorkerWithData[T any](limits ResidencyLimits, budget Budget) (*WorkerWithData[T], error) {
+	return newWorkerWithData[T](limits, budget, true)
+}
+
+func newWorkerWithData[T any](limits ResidencyLimits, budget Budget, settling bool) (*WorkerWithData[T], error) {
 	p, err := NewPlanner(limits)
 	if err != nil {
 		return nil, err
@@ -72,6 +89,7 @@ func NewWorkerWithData[T any](limits ResidencyLimits, budget Budget) (*WorkerWit
 		return nil, err
 	}
 	w := &WorkerWithData[T]{wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{}), packets: make(chan PacketWithData[T], 1), acks: make(chan workerAck, 1), limits: p.limits, budget: budget}
+	w.emitSettled = settling
 	go w.run()
 	return w, nil
 }
@@ -237,20 +255,21 @@ func (w *WorkerWithData[T]) run() {
 }
 
 type workerState[T any] struct {
-	planner              *Planner
-	generation, sequence uint64
-	ticket               uint64
-	desired, accepted    *workerTarget[T]
-	currentData          T
-	out, waiting         *PacketWithData[T]
-	lastCurrent          *scene.Scene
-	publish, blocked     bool
+	planner                  *Planner
+	generation, sequence     uint64
+	ticket                   uint64
+	desired, accepted        *workerTarget[T]
+	currentData              T
+	out, waiting             *PacketWithData[T]
+	lastCurrent              *scene.Scene
+	publish, blocked         bool
+	emitSettled, lastSettled bool
 }
 
 func (s *workerState[T]) target(w *WorkerWithData[T], target *workerTarget[T]) {
 	if target.generation != s.generation {
 		p, _ := NewPlanner(w.limits) // checked once by NewWorker
-		*s = workerState[T]{planner: p, generation: target.generation}
+		*s = workerState[T]{planner: p, generation: target.generation, emitSettled: w.emitSettled}
 		// Drop a queued old packet. A concurrently consumed one is rejected by
 		// the native owner's generation check instead.
 		select {
@@ -286,14 +305,16 @@ func (s *workerState[T]) advance(budget Budget) bool {
 		batch, err = s.planner.Next(budget)
 	}
 	current := s.planner.Current()
-	if batch == nil && err == nil && !s.publish && current == s.lastCurrent {
+	settled := batch == nil && err == nil
+	if settled && !s.publish && current == s.lastCurrent && (!s.emitSettled || s.lastSettled) {
 		return true
 	}
 	s.sequence++
 	if s.sequence == 0 {
 		return false
 	}
-	s.out = &PacketWithData[T]{Generation: s.generation, Sequence: s.sequence, Current: current, CurrentData: s.currentData, Batch: batch, Err: err}
+	s.out = &PacketWithData[T]{Generation: s.generation, Sequence: s.sequence, Current: current, CurrentData: s.currentData, Batch: batch, Err: err, Settled: settled}
+	s.lastSettled = settled
 	if batch != nil {
 		s.ticket = batch.Ticket
 	}

@@ -1,10 +1,10 @@
 package vecmap
 
 import (
-	"math"
 	"slices"
 
 	quick "github.com/rubiojr/whereami/internal/miqtquick"
+	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
 
 type retainedTileTransform struct {
@@ -58,7 +58,7 @@ func (i *Item) updatePaintNode(
 		createdRoot = true
 	}
 
-	styleZoom := math.Round(camera.Zoom*16) / 16
+	styleZoom := view.StyleZoom(camera.Zoom)
 	i.requestStyledTiles(tiles, styleZoom)
 	styled := i.styledTiles.Load()
 	scene := i.renderedScene

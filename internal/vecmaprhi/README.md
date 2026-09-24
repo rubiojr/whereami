@@ -223,6 +223,33 @@ Vulkan captures and a direct OpenGL 2× comparison match ordinary fixture pixels
 byte-for-byte. They retain extra candidate geometry and 150 selected draw records,
 so their upload/draw counts are deliberately different from the 45-draw reference.
 
+### Live tiles and CPU lease retirement
+
+`vecmap-rhi -live -glyph-dir /path/to/fonts` now connects the headless producer and
+its Bridge to this adapter. The Bridge supplies scene documents associated with
+bounded producer leases. It serializes accepted targets through retirement while
+coalescing newer CPU targets. All MVT preparation, glyph layout, placement and
+document construction remain off GUI/render callbacks.
+
+The optional settling Worker publishes an acknowledged nil-batch packet after
+retirement finishes. That permits the serial bridge to release old leases, provided
+the consumer has dropped its old packet/frame borrows. The viewer does this during
+updatePaintNode, when Qt blocks the GUI thread. It reports Current coverage back
+through the producer's bounded mailbox, separately from native batch completion.
+
+`BatchRenderer.Initialized()` exposes completion of both existing startup drains.
+The viewer now delays **all nil-batch acknowledgements** until this is true. This
+matters for an empty target after reset: Planner settlement alone does not prove
+the previous native namespace has finished. No finish call, failure check or signal
+lifetime rule is removed. Bridge shutdown joins after native window/item use stops.
+
+Basic/threaded tests on Vulkan and OpenGL (including OpenGL 2× race) use a local
+HTTP server and valid MVTs to verify parent/partial-child arrival, old pixels through
+partial uploads, camera-only motion, upload-time reset, rotated antimeridian root
+coverage and empty-target reset. A separate process exercises the actual live command
+with supplied fonts and a controlled server. These are correctness checks, not a
+MapLibre comparison or evidence of nonblocking completion. See checkpoint **hxzf**.
+
 ## Verification
 
 ```sh

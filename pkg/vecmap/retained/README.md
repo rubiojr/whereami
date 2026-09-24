@@ -358,3 +358,27 @@ Checkpoint **w8sf** verifies the final-ack/coalesced-target race, retry, rejecti
 same-scene data publication, clear/reset and weak-reference collection of abandoned
 mapping data. Headless 386 and v1 race tests pass. Package coverage remains **99.7%**;
 the new data association helpers have **100%** coverage.
+
+### Opt-in settlement publication
+
+`NewSettlingWorkerWithData[T]` adds a final nil-batch publication when all obsolete
+resource retirement has been acknowledged. Its `Packet.Settled` is true only when
+Next has no batch/error: accepted target is Current and no known retirement remains.
+That packet still requires consumption and acknowledgement. Ordinary Worker
+constructors retain their previous packet cadence; consumers may ignore the field.
+
+Settlement is a CPU Planner ownership boundary, not a new GPU-completion mechanism.
+The native acknowledgements must already satisfy the upload/retirement contract.
+After a namespace reset, an empty target can settle immediately in the Planner;
+the adapter must still finish old-namespace lifetime obligations before old CPU
+leases are reclaimed. The QRhi viewer waits for BatchRenderer.Initialized even for
+nil-batch packets, preserving both checked startup drains.
+
+The headless producer Bridge uses this boundary with **serial accepted targets**:
+new CPU targets coalesce outside the Worker until the current accepted target
+settles. It can then drop old leases without an unbounded scene history or guessing
+which target won a final-ack race. A generic superseding caller cannot infer that
+all arbitrary old external references are gone merely from a Settled flag. See
+[`producer`](../producer/README.md#serial-target-viewer-bridge) for ownership and
+the latency tradeoff. Failed retirement never produces settlement; tests cover
+retry and resetting with the final settlement packet still outstanding.
