@@ -2826,6 +2826,245 @@ and the software OpenGL case exposes the next queue/throughput limit. Do not ext
 deadlines, raise upload limits or remove checked drains to hide that cost. Dynamic
 glyph-range demand remains later work through the supplied asset boundary.
 
+### Bounded live-target supersession
+
+Checkpoint **3a38** replaces the bridge's upload-and-retirement serialization with
+an acknowledged target handoff. Four producer lease slots and all CPU/native budgets
+remain unchanged. Planner, Worker and bridge changes are toolkit-neutral Go. Native
+completion still uses the checked producing-frame finish and separate retirement,
+rollback and startup drains.
+
+The ownership proof has three parts:
+
+- Acknowledged Planner residency retains only version IDs and logical byte charges.
+  It no longer holds geometry or pixel slices from abandoned targets. Actual native
+  capacity is still reclaimed only after successful release acknowledgement.
+- Packets carry accepted `TargetData` alongside `CurrentData`. The bridge exposes
+  one unconfirmed target. Once a checked packet identifies that target, it can release
+  leases outside Current/accepted/pending and expose the newest pending document.
+  During handoff, an old target can occupy the fourth lease slot and pause producer
+  publication until ownership is confirmed. No historical target list is added.
+- The adapter must have dropped its previous CPU scene/batch borrows before bridge
+  completion. Batch completion already follows prepare. Nil-batch acknowledgements
+  now wait for `FrameSelected()`, including `Initialized()`: Sync only replaces the
+  frame header, while prepare still borrows the previous resident scene. Empty reset
+  targets continue waiting for both startup drains.
+
+The first cover must become Current before supersession starts, including after a
+reset. An initial experiment without this rule settled moving Vulkan in 6.70 seconds
+but could keep abandoning the initial cover throughout motion. That is not the
+accepted result. The final implementation establishes drawable continuity first.
+
+After the render owner submits a replacement, the Worker processes it after the
+one outstanding packet. It doesn't finish the obsolete target or all its retirement
+first. Needed resident versions survive supersession; obsolete ones still retire in
+bounded checked batches before further uploads. Hidden windows or stalled native
+callbacks can still delay progress: this is a bounded-work protocol, not a hard
+real-time guarantee from Qt.
+
+#### Replay evidence
+
+Replays use the same 71-tile captured corpus, supplied range-0 fonts, Liberty style,
+800×600 logical viewport, antialiasing, five-second trace and ten-second settlement
+tail. These runs explicitly set scale 1 and the threaded render loop. Static uses
+one transport worker, moving uses four. Go is pinned to v1; Qt is 6.11.2. The new
+binary is `/tmp/opencode/vecmap-rhi-latency`; the previous committed binary remains
+`/tmp/opencode/vecmap-rhi-admission`.
+
+```sh
+QT_RHI_INCLUDE=/tmp/opencode/qt-rhi-6.11.2/usr/include/qt6/QtGui/6.11.2/QtGui \
+GOAMD64=v1 sh scripts/qt-rhi-env.sh go build -tags vecmap_rhi \
+  -o /tmp/opencode/vecmap-rhi-latency ./cmd/vecmap-rhi
+
+QT_SCALE_FACTOR=1 QSG_RENDER_LOOP=threaded QSG_RHI_BACKEND=vulkan \
+/usr/bin/time -v /tmp/opencode/vecmap-rhi-latency \
+  -live -glyph-dir /tmp/opencode/vecmap-glyphs \
+  -cache-dir /tmp/opencode/vecmap-real-workload-20260924 -cache-only \
+  -duration 5s -animate=true -foreground -tile-workers 4 \
+  -upload-bytes 33554432 -upload-resources 2 -cpu-cache-bytes 268435456
+```
+
+OpenGL uses `QSG_RHI_BACKEND=opengl xvfb-run -a /usr/bin/time -v ...` with the same
+arguments. Static uses `-animate=false -tile-workers 1`. Fresh baseline moving runs
+use the admission binary under these exact command settings.
+
+| Replay | Elapsed seconds | First drawable Current, ms | Recorded upload bytes | Drains | Exit |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving, baseline | 14.55 | not instrumented | 403,791,588 | 407 | 0 |
+| Vulkan moving, new 1 | 6.96 | 330 | 353,648,696 | 178 | 0 |
+| Vulkan moving, new 2 | 7.30 | 367 | 311,348,736 | 194 | 0 |
+| Vulkan moving, new 3 | 7.37 | 354 | 302,758,432 | 196 | 0 |
+| llvmpipe moving, baseline | 15.28 | not instrumented | 209,767,840 | 143 | **1** |
+| llvmpipe moving, new 1 | 10.91 | 323 | 331,202,364 | 128 | 0 |
+| llvmpipe moving, new 2 | 8.77 | 230 | 352,154,020 | 152 | 0 |
+| llvmpipe moving, new 3 | 8.62 | 206 | 275,992,284 | 152 | 0 |
+| Vulkan static, new | 5.14 | 311 | 183,505,224 | 116 | 0 |
+| llvmpipe static, new | 9.44 | 303 | 154,261,424 | 112 | 0 |
+
+All new moving runs settle at **20/20 tiles, 600 draws and 95 labels**; static settles
+at **42/42 tiles, 978 draws and 130 labels**. Pending, failures and fallbacks finish
+at zero. Peak leases remain four, peak cache charge stays below 256 MiB, and every
+run has zero native batch failures. First drawable Current is bridge wall time to
+packet consumption, not a presentation timestamp or complete-cover readiness.
+
+The new moving Vulkan runs expose 37–38 targets, supersede 35–36 before settlement,
+and use 116–125 successful upload batches plus 60–69 release batches. Their drain
+wall totals are 141.63–160.43 ms, versus 340.43 ms in the fresh baseline. Moving
+llvmpipe exposes 24–32 targets and uses 91–103 upload plus 35–47 release batches;
+drain totals are 42.12–52.03 ms. Fewer serial packet/frame round trips matter more
+here than removing drain wall time. No drain was removed.
+
+The llvmpipe baseline timed out with `pending=1` in the deadline error. Its later
+teardown report already showed final Current ready and pending zero. That is still
+a failed settlement deadline, not a successful run. Status snapshots at different
+times must not be conflated.
+
+These are matched **input/settings** replays, not matched intermediate frame work.
+Coalescing and callback cadence select different intermediate covers. In particular,
+new llvmpipe can upload more bytes than the serial baseline while settling sooner.
+GPU p95 and RSS aren't normalized comparisons across those different scenes. No
+MapLibre parity, equal-frame speedup or presentation-pacing result is claimed.
+
+#### Verification and remaining work
+
+- Headless tests drive partial supersession, a queued C during B's final upload,
+  failed upload, remaining retirement after CPU lease release, and startup continuity.
+  A weak-reference test collects abandoned uploaded geometry while native residency
+  is still charged, including a failed retirement retry.
+- Basic/threaded Vulkan and OpenGL viewer tests retain old pixels during partial
+  uploads, supersede a style replacement, preserve draw-only world-wrap mapping,
+  reset during upload and reset to an empty target. OpenGL also passes at 2× with
+  the race detector. The nil-packet selection assertion excludes destruction reports
+  from an already-dead old epoch; those precede installation of the new generation.
+- Full pinned v4 tests, captured-corpus headless 386 and pinned v1 race pass. Final
+  race coverage is producer **96.8%**, tiles **98.7%**, retained **99.8%**; profile
+  `/tmp/opencode/vecmap-latency-coverage.out`. Bridge completion, handoff and progress
+  counters have 100% statement coverage. Existing constructor/mailbox guard gaps remain.
+- Shared gopls diagnostics and tagged targeted staticcheck pass. Default staticcheck
+  retains generated ST1006 findings. Tagged files still hit gopls package-metadata
+  limitations; native builds/tests provide that check. Vulnerability baseline remains
+  GO-2026-5024. Complexity review retains the explicit protocol branches in bridge
+  completion (15), Worker advance (17) and viewer Sync (21); no broad refactor was needed.
+
+CPU churn remains visible: the final moving replays perform **195–237 Prepare/Build
+attempts**, versus 58 in static. Bridge stats separate coalesced CPU publications,
+same-snapshot updates, target handoffs and successful batch progress. The new
+`overtaken_upload_bytes` counter marks uploads completed while a newer CPU document
+was waiting or exposed; it doesn't classify shared versions as wasted. Preparation
+reuse and publication demand are the next optimization boundary, tracked by **y9r4**.
+That work should measure visible Current age/detail during motion as well as final
+settlement. Dynamic glyph-range
+demand, asynchronous completion (**w47r**) and pacing (**vx93**) remain separate.
+
+### Bounded producer demand and exact-input reuse
+
+Checkpoint **y9r4** removes redundant producer work and instruments drawable Current
+progress. The preceding **3a38** changes remain in the same uncommitted working tree.
+No cache, lease, resource, upload, quality or deadline limit changes here.
+
+The owner now makes five demand decisions before doing expensive work:
+
+1. Native packet sequences always update progress, but only changed Current coverage
+   dirties continuity selection. Repeated upload/retirement acknowledgements no longer
+   create an identical CPU publication each time.
+2. The shared `view.SelectCover` policy checks selected fragment epochs before
+   projection, collision and composition. Mixed covers wait for work to finish.
+   Old installed fragments still count as ready; filtering them out would change
+   continuity and could manufacture a coarse publishable cover.
+3. Preparation observes newer input before packing. An obsolete style skips Build;
+   a compatible asset update can use the just-completed preparation with its latest
+   callbacks. Installation still rejects changes arriving during Build.
+4. Same-source raw loads survive style changes. Their original job tokens remain
+   registered, and compilation uses the newest style. Source changes and obsolete
+   tiles still cancel; ignored late results still consume only their fixed raw slot.
+5. Refresh currently selectable tiles before unfinished refinements. Within each
+   class, preserve LoadOrder. Installed siblings hide their fallback parent even
+   during an epoch refresh, so don't rebuild that unselectable parent first. Pinned
+   parent fragments remain intact for old Current and outstanding leases.
+
+There is also conservative exact-input reuse: if a tile wasn't rebuilt during an
+intervening style, returning to the same source, full PrepareOptions and immutable
+compiled-layer slice identity reuses its fragment and optional Prepared. No second
+style variant is retained. Original borrowed style backing remains charged. Reuse
+avoids Set.Apply, preserving resource IDs/revisions and the cached selection. Changed
+layer storage, zoom, topology or limits rejects reuse. Assets remain independent.
+This does not round or approximate the production sixteenth-zoom paint policy.
+
+#### Proof and verification
+
+Deterministic owner tests verify 98 unchanged-coverage Current acknowledgements do
+no new selection, mixed siblings reject before placement, detailed continuity is
+not replaced by a fresh coarse parent, selected refresh precedes unfinished siblings,
+hidden pinned parents survive, and queued style/source/clear changes skip packing.
+Asset changes between phases use only the new callbacks. Controlled loaders prove
+same-source style refresh paints the new color with one load, while source replacement
+still rejects ignored-cancel data. Returning-style and failed-source-rollback tests
+reuse the exact snapshot and original resource identities without Prepare/Build;
+subsequent asset refresh rebuilds from the reusable preparation.
+
+Full pinned v4 tests, headless 386 and pinned v1 race pass. Final race profile
+`/tmp/opencode/vecmap-churn-coverage.out` reports producer **97.3%**, tiles **98.7%**,
+retained **99.5%**. New coherence/identity/reuse helpers, compilation, phase boundaries
+and Current observation have 100% statement coverage. The retained variation from
+99.8% is worker-loop scheduling coverage; no retained code changed in this checkpoint.
+Basic/threaded Vulkan and OpenGL adapter/viewer suites pass, including supplied-font
+live commands, interrupted uploads, empty resets and OpenGL 2× race.
+
+Shared gopls diagnostics and tagged targeted staticcheck pass. An unused pre-phase
+assetEpoch initializer found by staticcheck was removed; affected tests were rerun.
+Default staticcheck retains generated ST1006 findings. The vulnerability baseline is
+still GO-2026-5024; there are no dependency changes. Complexity review keeps the owner
+transitions explicit: inputs 25, Build 17, compile 11 and publication 12.
+
+#### Replay observations
+
+Build `/tmp/opencode/vecmap-rhi-churn` with the preceding v1/Qt command and use the
+same replay arguments, corpus, five-second trace, ten-second tail, scale 1 and
+threaded loop. Static uses one loader, moving uses four. All listed runs exit 0
+with zero batch failures and zero final pending/failed/fallback counts. Moving ends
+at **20 tiles / 600 draws / 95 labels**; static at **42 / 978 / 130**. Peak leases
+remain four and logical cache stays within 256 MiB.
+
+| Replay | Elapsed s | Prepare / Build | Select calls / wall ms | First Current tiles / labels | Longest Current hold s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving 1 | 7.36 | 209 / 205 | 57 / 132.98 | 3 / 88 | 6.33 |
+| Vulkan moving 2 | 7.28 | 216 / 211 | 62 / 154.08 | 3 / 88 | 6.23 |
+| Vulkan moving 3 | 7.18 | 200 / 194 | 54 / 131.89 | 2 / 84 | 6.48 |
+| llvmpipe moving 1 | 11.22 | 196 / 192 | 33 / 77.14 | 2 / 80 | 9.64 |
+| llvmpipe moving 2 | 13.09 | 164 / 158 | 30 / 113.10 | 1 / 74 | 11.63 |
+| llvmpipe moving 3 | 14.98 | 160 / 156 | 24 / 72.63 | 2 / 80 | 12.03 |
+| Vulkan static | 5.15 | 58 / 58 | 24 / 59.87 | 1 / 74 | 3.89 |
+| llvmpipe static | 9.98 | 58 / 58 | 33 / 81.25 | 3 / 89 | 8.02 |
+
+The preceding 3a38 Vulkan moving series made 225–285 Select calls, totaling
+596–689 ms; static Vulkan made 124 calls / 373 ms and static llvmpipe 129 / 404 ms.
+Avoided work also has direct counters: final moving runs skip **4–6 Builds**, defer
+**71–121 mixed-epoch selections** before placement, and observe **103–187 unchanged
+Current updates** without reselecting. Exact-style reuse is proven by controlled
+tests, but its counter was **zero in these captured runs**. Do not attribute their
+results to that fast path or claim general cross-zoom geometry reuse.
+
+Timing conditions changed during the last llvmpipe series. Immediately afterward,
+host load average was **18.98**, with unrelated headless-browser and test processes
+consuming several cores. Those processes were left alone. These are loaded-host
+observations, not a matched latency improvement over 3a38; the 14.98-second pass has
+almost no deadline margin. Different intermediate scenes and scheduling also prevent
+normalizing Prepare/Build counts or GPU/RSS measurements as equal-work comparisons.
+
+The new bridge counters reveal a remaining visible-progress problem. All six moving
+runs consumed only **two drawable documents**: the first partial cover and final
+cover. First drawable Current arrived at 267–557 ms, but its document stayed selected
+throughout motion. LongestCurrentHold measures that unchanged-document interval,
+including any ongoing interval at observation. It is neither content age nor a
+presentation timestamp: camera reprojection continues, and a static complete scene
+can legitimately stay unchanged indefinitely. CurrentChanges counts document switches,
+not distinct rendered images. The first/final tile, fallback and label counts supply
+the corresponding detail context without retaining a history of scenes.
+
+**twd2** tracks coherent intermediate progress during continuous style changes and
+quiet-host replay confirmation. Final settlement alone is not that goal. Dynamic
+glyph demand, asynchronous native completion and MapLibre comparison remain separate.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

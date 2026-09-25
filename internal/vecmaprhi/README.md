@@ -227,20 +227,24 @@ so their upload/draw counts are deliberately different from the 45-draw referenc
 
 `vecmap-rhi -live -glyph-dir /path/to/fonts` now connects the headless producer and
 its Bridge to this adapter. The Bridge supplies scene documents associated with
-bounded producer leases. It serializes accepted targets through retirement while
-coalescing newer CPU targets. All MVT preparation, glyph layout, placement and
+bounded producer leases. It supersedes accepted targets at checked packet boundaries
+while coalescing newer CPU targets. All MVT preparation, glyph layout, placement and
 document construction remain off GUI/render callbacks.
 
-The optional settling Worker publishes an acknowledged nil-batch packet after
-retirement finishes. That permits the serial bridge to release old leases, provided
-the consumer has dropped its old packet/frame borrows. The viewer does this during
-updatePaintNode, when Qt blocks the GUI thread. It reports Current coverage back
-through the producer's bounded mailbox, separately from native batch completion.
+The Worker identifies its accepted target alongside Current in each packet. Planner
+residency no longer borrows uploaded CPU payloads. After the adapter drops its older
+CPU scene/batch borrows, the bridge can release superseded leases outside those two
+owners and its pending document. Native resources remain charged and retire through
+the same checked batches. See the [bridge ownership proof](../../pkg/vecmap/producer/README.md#bounded-superseding-viewer-bridge).
+The optional settling publication still determines final readiness. Current coverage
+goes through the producer's bounded mailbox, separately from native batch completion.
 
 `BatchRenderer.Initialized()` exposes completion of both existing startup drains.
-The viewer now delays **all nil-batch acknowledgements** until this is true. This
-matters for an empty target after reset: Planner settlement alone does not prove
-the previous native namespace has finished. No finish call, failure check or signal
+The viewer delays **all nil-batch acknowledgements** until `FrameSelected()`, which
+includes Initialized and proves prepare replaced the previous CPU resident-scene
+borrow with the Sync frame. Sync alone doesn't drop that old scene. This matters
+for draw-only publication and empty targets after reset: Planner settlement alone
+doesn't prove native selection or previous-namespace completion. No finish call, failure check or signal
 lifetime rule is removed. Bridge shutdown joins after native window/item use stops.
 
 Basic/threaded tests on Vulkan and OpenGL (including OpenGL 2× race) use a local

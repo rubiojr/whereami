@@ -152,8 +152,15 @@ func (s *state) inputs() {
 	}
 	p.mu.Unlock()
 	if ack.generation != s.current.generation || ack.sequence != s.current.sequence {
+		// Native packets advance sequence for every batch, but only changed
+		// coverage affects continuity selection. Don't feed uploads back into
+		// identical CPU publications and placement work.
+		if !slices.Equal(ack.cover, s.current.cover) {
+			s.dirty = true
+		} else {
+			s.stats.UnchangedCurrent++
+		}
 		s.current = ack
-		s.dirty = true
 	}
 	for _, tile := range s.current.cover {
 		pinned[tile] = true
@@ -184,6 +191,9 @@ func (s *state) inputs() {
 		}
 		clear(s.failures)
 	}
+	if styleChanged {
+		s.reuseStyle(r.Style)
+	}
 	s.request, s.revision, s.targets = r, revision, targets
 	s.order = view.LoadOrder(targets)
 	s.desired = make(map[view.TileID]bool, len(s.order))
@@ -191,11 +201,33 @@ func (s *state) inputs() {
 		s.desired[tile] = true
 	}
 	for tile, j := range s.running {
-		if styleChanged || !s.desired[tile] {
+		if j.key.Source != r.Style.Source || !s.desired[tile] {
 			j.cancel()
+		} else if styleChanged && j.ctx.Err() == nil {
+			s.stats.LoadStyleReuses++
 		}
 	}
 	s.dirty = true
+}
+
+// Epochs order requests; they aren't an input to compilation. A tile not rebuilt
+// during an intervening zoom can reuse its existing immutable fragment when the
+// exact preparation inputs return. Keep its original charged style backing and
+// resource identities. Different layer storage is conservatively treated as new.
+func (s *state) reuseStyle(style *Style) {
+	for _, e := range s.entries {
+		if e.fragment != nil && e.source == style.Source && samePreparation(e.styleSnapshot, style) {
+			e.style = s.style
+			s.stats.StyleReuses++
+		}
+	}
+}
+
+func samePreparation(a, b *Style) bool {
+	if a == nil || b == nil || a.Source != b.Source || a.Options != b.Options || len(a.Layers) != len(b.Layers) {
+		return false
+	}
+	return len(a.Layers) == 0 || &a.Layers[0] == &b.Layers[0]
 }
 
 func (s *state) evict() {
@@ -215,8 +247,10 @@ func (s *state) evict() {
 	}
 }
 
-// Stop requesting a fallback once all requested siblings are CPU-ready. Keep
-// its fragment while Current or any leased target can still require it.
+// Stop requesting a fallback once all requested siblings have installed fragments.
+// Set selects those siblings even during an epoch refresh, so rebuilding their
+// unselectable parent first only delays a coherent cover. Keep its old fragment
+// while Current or any leased target can still require it.
 func (s *state) refine() {
 	for _, group := range view.GroupTiles(s.targets) {
 		if !group.HasParent {
@@ -225,7 +259,7 @@ func (s *state) refine() {
 		ready := true
 		for _, tile := range group.Targets {
 			e := s.entries[tile]
-			if e == nil || e.fragment == nil || e.style != s.style || e.assets != s.assets {
+			if e == nil || e.fragment == nil {
 				ready = false
 				break
 			}
@@ -397,22 +431,28 @@ func (s *state) compile() bool {
 	if s.request == nil {
 		return false
 	}
-	for _, tile := range s.order {
-		if !s.desired[tile] {
-			continue
+	// Refresh the currently selectable cover before preparing refinements that
+	// cannot yet be published. Keep LoadOrder within each class. This does not
+	// turn a CPU target into continuity; coverage still uses acknowledged Current.
+	cover := s.selectedCover()
+	for _, selected := range []bool{true, false} {
+		for _, tile := range s.order {
+			if !s.desired[tile] || slices.Contains(cover, tile) != selected {
+				continue
+			}
+			e := s.entries[tile]
+			if e == nil || e.source != s.request.Style.Source || (e.style == s.style && e.assets == s.assets) || s.failures[tile].attempts >= 3 {
+				continue
+			}
+			s.build(tile, e)
+			return true
 		}
-		e := s.entries[tile]
-		if e == nil || e.source != s.request.Style.Source || (e.style == s.style && e.assets == s.assets) || s.failures[tile].attempts >= 3 {
-			continue
-		}
-		s.build(tile, e)
-		return true
 	}
 	return false
 }
 
 func (s *state) build(tile view.TileID, old *entry) {
-	styleEpoch, assetEpoch := s.style, s.assets
+	styleEpoch := s.style
 	next := *old
 	var err error
 	stage := "prepare"
@@ -424,6 +464,16 @@ func (s *state) build(tile view.TileID, old *entry) {
 		s.stats.Preparing.observe(time.Since(started))
 		s.stats.Prepares++
 	}
+	// Preparation and packing are separately bounded expensive phases. Observe
+	// newer demand between them, before allocating pixels for an obsolete style.
+	// Compatible asset refresh can use this preparation with the newest assets.
+	s.inputs()
+	if s.p.ctx.Err() != nil || s.style != styleEpoch || !s.desired[tile] {
+		s.stats.Rejected++
+		s.stats.SkippedBuilds++
+		return
+	}
+	assetEpoch := s.assets
 	if err == nil {
 		stage = "build"
 		var built *tiles.BuildResult
@@ -504,22 +554,17 @@ func (s *state) publish() {
 	if full {
 		return
 	}
+	if !s.coherentCover() {
+		s.stats.DeferredSelections++
+		s.dirty = false
+		return
+	}
 	started := time.Now()
 	snapshot, err := s.set.SelectBounded(s.targets, s.current.cover, s.request.Camera, 0, p.limits.SnapshotBytes)
 	s.stats.Selecting.observe(time.Since(started))
 	stage := "select"
 	var charge uint64
 	if err == nil {
-		// Old fragments remain available for acknowledged continuity, but a new
-		// target must not mix source/style/asset epochs. Native Current continues
-		// displaying its own immutable snapshot while this replacement is built.
-		for _, tile := range snapshot.Cover {
-			e := s.entries[tile]
-			if e.style != s.style || e.assets != s.assets || e.source != s.request.Style.Source {
-				s.dirty = false
-				return
-			}
-		}
 		charge = s.snapshotCharge(snapshot)
 		if charge > p.limits.SnapshotBytes {
 			err = ErrLimit
@@ -547,6 +592,29 @@ func (s *state) publish() {
 	p.output = l
 	s.stats.SelectedTiles, s.stats.Fallbacks = len(snapshot.Cover), snapshot.Fallbacks
 	s.dirty = false
+}
+
+// Use the same coverage policy and readiness as Set.SelectBounded, but reject
+// mixed epochs before projection, collision and composition. Entries with a
+// fragment are exactly the tiles installed in Set; obsolete fragments remain
+// ready for acknowledged continuity. This must not filter them out to manufacture
+// a smaller publishable cover. The single owner cannot mutate Set between checks.
+func (s *state) coherentCover() bool {
+	for _, tile := range s.selectedCover() {
+		e := s.entries[tile]
+		if e.style != s.style || e.assets != s.assets || e.source != s.request.Style.Source {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *state) selectedCover() []view.TileID {
+	cover, _ := view.SelectCover(s.targets, s.current.cover, func(tile view.TileID) bool {
+		e := s.entries[tile]
+		return e != nil && e.fragment != nil
+	})
+	return cover
 }
 
 func (s *state) report() {

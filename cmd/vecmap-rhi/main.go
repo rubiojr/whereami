@@ -197,6 +197,11 @@ func display(document scene.Document, options benchmarkOptions) error {
 		fmt.Printf("producer_requested=%d selected=%d fallbacks=%d error_stage=%q response_bytes=%d raw_capacity_bytes=%d\n", s.Requested, s.SelectedTiles, s.Fallbacks, s.LastErrorStage, s.ResponseBytes, s.RawCapacityBytes)
 		fmt.Printf("cache_raw=%d prepared=%d fragments=%d profiles=%d peak_raw=%d peak_prepared=%d peak_fragments=%d peak_profiles=%d\n", s.Cache.Raw, s.Cache.Prepared, s.Cache.Fragments, s.Cache.Profiles, s.PeakCache.Raw, s.PeakCache.Prepared, s.PeakCache.Fragments, s.PeakCache.Profiles)
 		fmt.Printf("preparation_evictions=%d preparation_bytes_freed=%d uncached_preparations=%d capacity_retries=%d\n", s.PreparationEvictions, s.PreparationBytesFreed, s.UncachedPreparations, s.CapacityRetries)
+		fmt.Printf("load_style_reuses=%d style_reuses=%d skipped_builds=%d deferred_selections=%d unchanged_current=%d\n", s.LoadStyleReuses, s.StyleReuses, s.SkippedBuilds, s.DeferredSelections, s.UnchangedCurrent)
+		b := options.live.bridge.Stats()
+		fmt.Printf("bridge_received=%d coalesced=%d same_snapshot=%d targets=%d superseded=%d settlements=%d first_visible_current=%s\n", b.Received, b.Coalesced, b.SameSnapshot, b.Targets, b.Superseded, b.Settlements, b.FirstVisibleCurrent)
+		fmt.Printf("bridge_upload_batches=%d upload_bytes=%d overtaken_upload_bytes=%d release_batches=%d released_resources=%d\n", b.UploadBatches, b.UploadBytes, b.OvertakenUploadBytes, b.ReleaseBatches, b.ReleasedResources)
+		fmt.Printf("bridge_current_changes=%d first_current_tiles=%d first_current_labels=%d current_tiles=%d current_fallbacks=%d longest_current_hold=%s\n", b.CurrentChanges, b.FirstCurrentTiles, b.FirstCurrentLabels, b.CurrentTiles, b.CurrentFallbacks, b.LongestCurrentHold)
 		for _, phase := range []struct {
 			name  string
 			value producer.PhaseTime

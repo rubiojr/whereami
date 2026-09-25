@@ -97,6 +97,8 @@ func testLiveProducer(t *testing.T) {
 	var status streamStatus
 	var stats vecmaprhi.Stats
 	var pause, pauseAfterUpload, reset, earlyReady atomic.Bool
+	var pauseAtUpload atomic.Uint64
+	pauseAtUpload.Store(2)
 	var update atomic.Pointer[streamCamera]
 	update.Store(&streamCamera{geographic: &camera, dpr: 1})
 	stream := &viewerStream{worker: bridge.Worker(), bridge: bridge}
@@ -105,10 +107,12 @@ func testLiveProducer(t *testing.T) {
 		mu.Lock()
 		stats = s
 		mu.Unlock()
-		if s.MeshUploads == 2 && pauseAfterUpload.CompareAndSwap(true, false) {
+		if s.MeshUploads == pauseAtUpload.Load() && pauseAfterUpload.CompareAndSwap(true, false) {
 			pause.Store(true)
 		}
-		if stream.epoch != nil && !stream.epoch.renderer.Initialized() && bridge.Ready(revision.Load()) {
+		// Destruction reports the old epoch before Restarted installs the new
+		// generation. Only a live replacement can prematurely grant readiness.
+		if stream.epoch != nil && !stream.epoch.dead && !stream.epoch.renderer.Initialized() && bridge.Ready(revision.Load()) {
 			earlyReady.Store(true)
 		}
 	}
@@ -119,7 +123,11 @@ func testLiveProducer(t *testing.T) {
 		if old != nil && reset.Swap(false) {
 			stream.epoch.renderer.Node.ReleaseResources()
 		}
-		return stream.sync(item, old, streamUpdate{target: bridge.Target(), camera: *update.Load()})
+		node := stream.sync(item, old, streamUpdate{target: bridge.Target(), camera: *update.Load()})
+		if stream.epoch != nil && bridge.Ready(revision.Load()) && !stream.epoch.renderer.FrameSelected() {
+			earlyReady.Store(true)
+		}
+		return node
 	})
 	engine, err := createBenchmarkWindow(*initial, item, benchmarkOptions{foreground: true})
 	require.NoError(t, err)
@@ -194,6 +202,32 @@ func testLiveProducer(t *testing.T) {
 	mu.Lock()
 	assert.Equal(t, stableBytes, stats.UploadedBytes)
 	mu.Unlock()
+	// Supersede a two-mesh style replacement after its first upload. Both
+	// intermediate styles produce the same pixels; revisions must still differ.
+	mu.Lock()
+	pauseAtUpload.Store(stats.MeshUploads + 1)
+	mu.Unlock()
+	pauseAfterUpload.Store(true)
+	replaceStyle := func() {
+		next := *request.Style
+		next.Epoch++
+		next.Options.Zoom++
+		request.Style = &next
+		submit()
+	}
+	replaceStyle()
+	pump(func(streamStatus) bool { return pause.Load() })
+	pixel(20, [3]int{0, 255, 0})
+	pixel(140, [3]int{0, 0, 255})
+	before := bridge.Stats().Superseded
+	replaceStyle()
+	// Pumping prepare can complete the checked outstanding upload while Sync
+	// is paused, but cannot upload another packet. The bridge may now supersede.
+	pump(func(streamStatus) bool { return bridge.Stats().Superseded > before })
+	pause.Store(false)
+	pump(ready)
+	pixel(20, [3]int{0, 255, 0})
+	pixel(140, [3]int{0, 0, 255})
 	// Re-load a root target, then cross its antimeridian under rotation. Copies
 	// share resources and must cover both sides without another geometry upload.
 	request.Targets = []view.TileID{{}}
@@ -220,7 +254,7 @@ func testLiveProducer(t *testing.T) {
 	mu.Unlock()
 	reset.Store(true)
 	pump(func(s streamStatus) bool { return s.Generation > generation && ready(s) })
-	assert.False(t, earlyReady.Load(), "empty reset cannot release leases before startup drains")
+	assert.False(t, earlyReady.Load(), "publication must await CPU frame selection and startup drains")
 	mu.Lock()
 	assert.GreaterOrEqual(t, stats.CompletionDrains, uint64(2))
 	assert.Zero(t, status.BatchFailures)

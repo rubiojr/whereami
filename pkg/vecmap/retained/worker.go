@@ -21,8 +21,13 @@ type PacketWithData[T any] struct {
 	Generation, Sequence uint64
 	Current              *scene.Scene
 	CurrentData          T
-	Batch                *Batch
-	Err                  error
+	// TargetData identifies the accepted target used to plan this packet, not
+	// the concurrently writable latest-target slot. Together with CurrentData
+	// it covers this packet's and Planner's CPU payload borrows. Native/caller
+	// borrows and queued target inputs still require their own lifetime proof.
+	TargetData T
+	Batch      *Batch
+	Err        error
 	// Settled means this packet has no batch/error and the accepted target is
 	// Current, with all obsolete residency already acknowledged released. It is
 	// not a GPU fence. The packet itself still requires consumption and ack.
@@ -314,6 +319,9 @@ func (s *workerState[T]) advance(budget Budget) bool {
 		return false
 	}
 	s.out = &PacketWithData[T]{Generation: s.generation, Sequence: s.sequence, Current: current, CurrentData: s.currentData, Batch: batch, Err: err, Settled: settled}
+	if s.accepted != nil {
+		s.out.TargetData = s.accepted.data
+	}
 	s.lastSettled = settled
 	if batch != nil {
 		s.ticket = batch.Ticket

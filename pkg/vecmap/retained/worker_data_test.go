@@ -48,6 +48,7 @@ func TestWorkerSceneData(t *testing.T) {
 		p := next()
 		assert.Nil(t, p.Current)
 		assert.Nil(t, p.CurrentData, "unready target mapping must not escape")
+		assert.Same(t, mappingA, p.TargetData)
 		ack(p, true)
 	}
 	p := next()
@@ -75,6 +76,7 @@ func TestWorkerSceneData(t *testing.T) {
 		}
 		assert.Same(t, second, p.Current)
 		assert.Same(t, mappingB, p.CurrentData)
+		assert.Same(t, mappingC, p.TargetData)
 		require.NotNil(t, p.Batch)
 		ack(p, true)
 	}
@@ -98,11 +100,13 @@ func TestWorkerSceneData(t *testing.T) {
 	require.Error(t, p.Err)
 	assert.Same(t, third, p.Current)
 	assert.Same(t, mappingB, p.CurrentData, "rejection must not replace current mapping")
+	assert.Same(t, mappingB, p.TargetData, "rejection retains the accepted target")
 	ack(p, false)
 	require.True(t, w.SetTargetWithData(gen, nil, mappingA))
 	p = next()
 	assert.Nil(t, p.Current)
 	assert.Nil(t, p.CurrentData, "clear drops data even if caller supplied it")
+	assert.Nil(t, p.TargetData)
 	// Reset need not wait for the outstanding retirement acknowledgement.
 	gen, err = w.RestartWithData(first, mappingA)
 	require.NoError(t, err)
@@ -134,5 +138,33 @@ func TestWorkerDataSupersession(t *testing.T) {
 	require.True(t, s.advance(Budget{Bytes: 84, Resources: 1}))
 	assert.Nil(t, s.out.CurrentData)
 	require.Eventually(t, func() bool { runtime.GC(); return probe.Value() == nil }, 5*time.Second, time.Millisecond)
+	runtime.KeepAlive(s)
+}
+
+func TestWorkerSupersessionDropsUploadedPayloadBeforeRetirement(t *testing.T) {
+	w := &WorkerWithData[*frameMapping]{limits: ResidencyLimits{}, packets: make(chan PacketWithData[*frameMapping], 1), acks: make(chan workerAck, 1)}
+	s := workerState[*frameMapping]{}
+	budget := Budget{Bytes: 84, Resources: 1}
+	probe := func() weak.Pointer[scene.Vertex] {
+		first := triangle()
+		first.Meshes[0].Revision, first.Textures[0].Revision = 1, 1
+		probe := weak.Make(&first.Meshes[0].Vertices[0])
+		s.target(w, newWorkerTarget(1, first, &frameMapping{}))
+		require.True(t, s.advance(budget))
+		s.waiting, s.out = s.out, nil
+		s.acknowledge(workerAck{generation: 1, sequence: 1, success: true})
+		return probe
+	}()
+	s.target(w, newWorkerTarget[*frameMapping](1, nil, nil))
+	require.True(t, s.advance(budget))
+	require.NotEmpty(t, s.out.Batch.Releases)
+	assert.Len(t, s.planner.resident, 1, "native capacity remains charged until release ack")
+	require.Eventually(t, func() bool { runtime.GC(); return probe.Value() == nil }, 5*time.Second, time.Millisecond)
+	// Failed retirement still retains the native charge, but no abandoned payload.
+	s.waiting, s.out = s.out, nil
+	s.acknowledge(workerAck{generation: 1, sequence: 2, success: false})
+	require.True(t, s.advance(budget))
+	assert.Len(t, s.planner.resident, 1)
+	require.NotEmpty(t, s.out.Batch.Releases)
 	runtime.KeepAlive(s)
 }

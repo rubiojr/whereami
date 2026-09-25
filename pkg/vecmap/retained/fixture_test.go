@@ -72,8 +72,8 @@ func TestPinnedMultiFragmentComposition(t *testing.T) {
 			break
 		}
 		var residentBytes uint64
-		for _, resource := range p.resident {
-			residentBytes += resource.bytes()
+		for _, bytes := range p.resident {
+			residentBytes += bytes
 		}
 		assert.LessOrEqual(t, residentBytes+batch.Bytes, p.limits.Bytes)
 		assert.LessOrEqual(t, len(batch.Uploads)+len(batch.Releases), budget.Resources)

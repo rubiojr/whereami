@@ -53,8 +53,12 @@ func TestCompactCacheAdmissionAndSourceRollback(t *testing.T) {
 	r.Style = originalStyle
 	revision, err := p.Submit(r)
 	require.NoError(t, err)
-	nextLease(t, p, func(l *Lease) bool { return l.Revision == revision })
-	recovered := waitStatus(t, p, func(s Status) bool { return s.Builds == 2 })
+	reused := nextLease(t, p, func(l *Lease) bool { return l.Revision == revision })
+	recovered := waitStatus(t, p, func(s Status) bool { return s.Revision == revision && s.Pending == 0 })
+	assert.Same(t, first.Snapshot, reused.Snapshot, "returning to unchanged inputs retains original resource identities")
+	assert.Equal(t, before.Builds, recovered.Builds)
+	assert.Equal(t, before.Prepares, recovered.Prepares)
+	assert.Equal(t, uint64(1), recovered.StyleReuses)
 	assert.Equal(t, uint64(2), recovered.Loads, "reverting source reuses the original valid cached bytes")
 	assert.LessOrEqual(t, recovered.PeakCacheBytes, limits.CacheBytes)
 }

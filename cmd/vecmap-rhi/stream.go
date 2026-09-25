@@ -66,7 +66,7 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, update strea
 		s.report(s.status)
 	}
 	if e.pending != nil {
-		if e.pending.Batch != nil || !e.renderer.Initialized() {
+		if e.pending.Batch != nil || !e.renderer.FrameSelected() {
 			return old
 		}
 		s.acknowledge(e, *e.pending, true)
@@ -91,7 +91,7 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, update strea
 	if err := e.renderer.Sync(update.camera.frame(e.current), batch); err != nil {
 		s.status.Err = err
 		e.dead = true
-	} else if e.pending != nil && batch == nil && e.renderer.Initialized() {
+	} else if e.pending != nil && batch == nil && e.renderer.FrameSelected() {
 		s.acknowledge(e, *e.pending, true)
 		e.pending = nil
 	}

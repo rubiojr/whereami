@@ -75,10 +75,12 @@ type Planner struct {
 	active, target       *scene.Scene
 	activeSet, targetSet map[Version]Resource
 	targetOrder          []Resource
-	resident             map[Version]Resource
-	residentOrder        []Version
-	pending              *Batch
-	nextTicket           uint64
+	// Residency needs only identity and logical bytes after upload acknowledgement.
+	// Keeping Resource here would borrow abandoned target payloads until retirement.
+	resident      map[Version]uint64
+	residentOrder []Version
+	pending       *Batch
+	nextTicket    uint64
 }
 
 func NewPlanner(limits ResidencyLimits) (*Planner, error) {
@@ -91,7 +93,7 @@ func NewPlanner(limits ResidencyLimits) (*Planner, error) {
 	if limits.Bytes > 1<<30 || limits.Resources < 0 || limits.Resources > 16384 {
 		return nil, ErrLimit
 	}
-	return &Planner{limits: limits, resident: make(map[Version]Resource), nextTicket: 1}, nil
+	return &Planner{limits: limits, resident: make(map[Version]uint64), nextTicket: 1}, nil
 }
 
 // Current is the last fully acknowledged scene, or nil before initial readiness
@@ -202,7 +204,7 @@ func (p *Planner) Acknowledge(ticket uint64, success bool) error {
 		}
 		p.residentOrder = slices.DeleteFunc(p.residentOrder, func(key Version) bool { _, ok := p.resident[key]; return !ok })
 		for _, r := range batch.Uploads {
-			p.resident[r.Version] = r
+			p.resident[r.Version] = r.bytes()
 			p.residentOrder = append(p.residentOrder, r.Version)
 		}
 	}

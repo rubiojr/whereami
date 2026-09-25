@@ -94,6 +94,14 @@ func (b *BatchRenderer) Sync(frame scene.Frame, batch *retained.Batch) error {
 // must wait for this boundary before releasing old CPU ownership after a reset.
 func (b *BatchRenderer) Initialized() bool { return !b.dead && !b.warming }
 
+// FrameSelected proves prepare has replaced the previous CPU scene borrow with
+// the frame supplied to Sync. Sync alone only changes the frame header; resident
+// still borrows the old scene until prepare. This is not GPU retirement or a fence.
+// Nil-batch consumers must also pass this boundary before releasing old CPU leases.
+func (b *BatchRenderer) FrameSelected() bool {
+	return b.Initialized() && b.r.ready && b.r.resident == b.r.frame.Scene
+}
+
 func (r *Renderer) requireResident(s *scene.Scene) error {
 	for _, m := range s.Meshes {
 		if _, ok := r.meshes[resourceKey{m.ID, m.Revision}]; !ok {

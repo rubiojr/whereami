@@ -63,18 +63,20 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
 - Load immediate parents before detailed targets, preserving nearest-first order.
   Concurrency prioritizes dispatch, not completion order. `Set.Select` supplies the
   existing requested-sibling refinement and ancestor/descendant continuity policy.
-- Cancel obsolete loads and loads from an obsolete style/source snapshot. Keep
-  useful loads across overlapping cover updates or asset refresh. Their original
+- Cancel obsolete loads and loads from an obsolete source. Raw data belongs to the
+  immutable source, so keep useful loads across style, cover and asset updates. Their original
   registered job token remains valid; it is not silently retagged.
 - Canceled jobs retain their worker/raw reservation until their results return.
   Even a loader ignoring cancellation cannot cause replacement goroutines to be
   spawned. Late canceled results are discarded before decoding.
-- Preparation concurrency is **one**. A synchronous Prepare/Build finishes before
-  its owner handles the next request. Compatible camera updates do not discard
-  useful compilation; changed source/style/assets or obsolete tiles do. No decoding,
+- Preparation concurrency is **one**. Observe newer requests between synchronous
+  Prepare and Build, then again before installation. Obsolete preparation skips
+  packing; a compatible asset refresh uses that preparation with the newest assets.
+  Compatible camera updates don't discard useful compilation. Changes during Build
+  still reject obsolete source/style/assets or tiles before installation. No decoding,
   tessellation, shaping or composition runs in Submit, Next or native callbacks.
 - Raw MVT remains cached alongside optional reusable Prepared data. A style change
-  reparses/recompiles cached bytes; asset refresh reuses Prepared when available.
+  normally reparses/recompiles cached bytes; asset refresh reuses Prepared when available.
   Admission pressure evicts least-recently-built Prepared objects, or omits incoming
   preparation after packing. It never evicts pinned fragments. A later asset refresh
   reparses retained raw bytes if needed; camera-only updates do not rebuild geometry.
@@ -82,7 +84,11 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
 - A published cover must have a coherent source/style/asset epoch. While a refresh
   is incomplete, the native consumer keeps its acknowledged Current. It must not
   replace Current with a partially refreshed cover or pair it with target slots.
-- Drop satisfied fallback parents from desired work, but retain fragments pinned by
+- Refresh the currently selectable cover before unfinished refinements, preserving
+  LoadOrder within each group. Once requested siblings have installed fragments,
+  Set selects them even during epoch refresh. Don't rebuild their hidden parent;
+  a fresh parent cannot bypass those siblings' coherence check. Drop these
+  satisfied fallback parents from desired work, but retain fragments pinned by
   Current or any outstanding lease. Only explicit native Current is continuity;
   publishing or queueing a CPU snapshot does not advance it.
 - Transient transport errors get at most three attempts, separated by RetryDelay
@@ -94,6 +100,23 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   decoded valid empty tile is ready coverage. A zero-byte response is malformed
   under the existing MVT decoder. MVT feature degradation and text readiness keep
   the shared compiler's behavior. Dynamic missing-asset demand reporting is later.
+
+If a tile wasn't rebuilt during an intervening style request, returning to its exact
+preparation inputs reuses the installed immutable fragment and optional Prepared.
+The producer requires the same source, complete PrepareOptions, and identical
+immutable compiled-layer slice storage/length. New layer storage is conservatively
+treated as a new style even when its contents look equal. Epochs order requests;
+they aren't shader/compiler inputs. This doesn't approximate the sixteenth-zoom
+policy or retain multiple style variants. The original style profile stays charged
+while its strings are borrowed. Assets remain an independent rebuild boundary.
+
+Native sequence advancement with unchanged Current coverage updates progress but
+doesn't dirty placement. Changed coverage, camera requests, builds and evictions
+still do. Before placement/composition, the owner runs the shared coverage selector
+and checks the selected fragments' epochs. A mixed-epoch cover waits for real work
+to finish rather than composing a snapshot that would be rejected. Readiness still
+includes old installed fragments: filtering them out would incorrectly manufacture
+a smaller coherent target and could replace detailed continuity with a coarse parent.
 
 `Status.LastError` is the most recent bounded error text, not an event log or a
 readiness flag. It remains latched after recovery. Cache/count failures are explicit;
@@ -175,6 +198,13 @@ attempts are included. ResponseBytes and RawCapacityBytes describe completed raw
 results before admission. LastErrorStage identifies the most recent failing stage.
 Requested/SelectedTiles/Fallbacks describe the latest CPU target, not native Current.
 
+`LoadStyleReuses` counts useful in-flight jobs retained at style-change boundaries
+(one job can count more than once). `StyleReuses` counts installed fragments reused
+under identical immutable preparation inputs. `SkippedBuilds` counts obsolete
+pre-pack attempts. `DeferredSelections` counts mixed covers rejected before placement;
+`UnchangedCurrent` counts native mailbox updates that needed no continuity selection.
+These counters describe avoided work, not wall-time savings.
+
 Raw-cache admission occurs after receiving the bounded response, when its compact
 size is known. Cache failure preserves the previous entry, including its raw and
 prepared data, atomically. The transport slot remains separately bounded; a small
@@ -220,9 +250,11 @@ restore continuity. Useful producer jobs may continue: their generation is separ
 no accepted/latest target, Planner state, packet, adapter or caller still borrows its
 snapshot. A newer target being submitted does not prove that an older target was
 discarded: it might have become Current during the final-upload acknowledgement.
-Likewise, observing a newer Current does not prove old Planner/native retirement
-finished. The Bridge described below tracks these bounded owners through coalescing,
-release packets and reset before calling Release. Copying a pointer does not acquire
+Likewise, observing a newer Current alone does not prove old CPU borrows have ended.
+Planner residency now stores only versions and byte charges after upload acknowledgement;
+it doesn't retain retired payloads. The Bridge described below proves the remaining
+target, packet and adapter CPU ownership before calling Release. Native allocations
+still retire through checked release batches. Copying a pointer does not acquire
 another lease. Retaining/using a snapshot after Release violates accounting.
 
 `Current` copies bounded coverage into one mailbox; it neither releases the lease
@@ -260,7 +292,7 @@ CGO_ENABLED=0 GOARCH=386 go test ./pkg/vecmap/producer ./pkg/vecmap/tiles ./pkg/
 GOAMD64=v1 go test -race ./pkg/vecmap/producer ./pkg/vecmap/tiles ./pkg/vecmap/view
 ```
 
-## Serial-target viewer bridge
+## Bounded superseding viewer bridge
 
 `NewBridge` takes a Producer with at least four lease slots, an empty geographic
 bootstrap document, residency limits and an upload budget. It creates an opt-in
@@ -273,23 +305,45 @@ Worker restarts with `Restarted`, consumed Current packets with `Consumed`, and
 successfully enqueued native acknowledgements with `Completed`. These methods do
 bounded metadata work. The viewer follows this protocol on its render owner.
 
-Accepted targets are **serialized through retirement**. Newer CPU targets coalesce
-into one pending slot while an accepted target uploads. At most Current, accepted
-target, and pending document are held by the bridge, plus the producer output or
-in-transfer lease. Same-snapshot camera publications update request progress without
-creating another Worker target. This is a conservative latency tradeoff: obsolete
-accepted uploads finish before the newest pending target starts.
+The bridge exposes **one unconfirmed target at a time**. A successful packet whose
+`TargetData` matches that target proves the Worker has processed the handoff. The
+bridge may then expose the latest pending CPU document without waiting for complete
+upload or retirement. The first cover must become Current before supersession starts;
+otherwise continuous camera motion could keep abandoning the initial cover and leave
+the map blank. Reset restores this startup rule. Same-snapshot camera publications
+update request progress without creating another Worker target.
 
-`NewSettlingWorkerWithData` publishes an acknowledged nil-batch `Settled` packet
-after all old resource releases have been acknowledged. Only settlement for the
-serial target allows Bridge to release older leases. The default Worker's packet
-cadence is unchanged. Settlement is a Planner ownership boundary, **not a GPU fence**.
-Even an empty target must wait for `BatchRenderer.Initialized()` after reset, proving
-both existing startup drains before Bridge releases prior-namespace leases.
+Ownership at a checked packet boundary is explicit:
+
+1. Planner borrows payloads only from Current, accepted target and the outstanding
+   batch. Its resident map retains version/byte metadata, including unreleased native
+   capacity, but no geometry or pixel slices.
+2. Each packet identifies both `CurrentData` and accepted `TargetData`. Matching the
+   bridge's exposed target also proves no earlier bridge target remains in the input
+   slot. The bridge doesn't expose another target until this match is acknowledged.
+3. The adapter must have selected Current and dropped previous CPU scene/batch borrows
+   before `Completed`. Upload/release completion provides that boundary. A nil-batch
+   packet waits for `BatchRenderer.FrameSelected()`: Sync alone only replaces the
+   frame header, while prepare still holds the old resident scene. This gate includes
+   `Initialized()`, preserving both startup drains even for an empty reset target.
+4. Only then may the bridge release documents outside Current, accepted target and
+   pending. A final-upload ack can make B Current while C is queued; C's packet
+   reports B, so B's lease remains held. Failed/stale callbacks grant no release.
+
+The existing four-lease pool bounds all these owners. Normally it holds Current,
+target, pending and output/in-transfer work. During handoff, the previous target may
+still be held alongside its replacement and Current. Receiving a pending document
+can fill the fourth slot, pausing producer publication until the next ownership
+boundary. There is no historical target list or extra lease allowance.
+
+`NewSettlingWorkerWithData` still publishes an acknowledged nil-batch `Settled` packet
+after retirement. It establishes final readiness, not permission to skip a native
+drain. Default Worker cadence is unchanged. Native capacity remains charged until
+release acknowledgement even when its original CPU lease is already gone.
 
 The consumer must drop old packet/document borrows at these protocol boundaries.
-The viewer releases on nil-packet consumption in updatePaintNode, while Qt blocks
-the GUI thread, after selecting the new Current. It joins Bridge only after native
+The viewer keeps GUI target sampling and render-owner callbacks ordered by Qt's
+synchronization protocol. It joins Bridge only after native
 window/item use has stopped. Bridge.Close stops the mailbox owner, joins its Worker
 and Producer, then releases remaining leases. It is not a native destruction API.
 
@@ -297,6 +351,20 @@ and Producer, then releases remaining leases. It is not a native destruction API
 capture, require producer Pending/Failed to be zero and the render consumer to have
 selected the bridge target. Timed live traces freeze their camera and allow a bounded
 settlement tail; a timeout reports an error and never acknowledges GPU work.
+
+`Bridge.Stats` reports received/coalesced/same-snapshot documents, exposed/superseded
+targets, successful upload/release batches and settlements. Overtaken upload bytes
+completed while a newer CPU document was pending or exposed; shared versions can
+still be useful, so this isn't a wasted-byte counter. FirstVisibleCurrent is elapsed
+wall time from bridge construction to consumption of the first drawable Current,
+not a presentation timestamp or proof of full coverage.
+
+CurrentChanges counts drawable document switches. FirstCurrentTiles/Labels and
+CurrentTiles/Fallbacks describe the first drawable and current selections' coverage
+and detail. LongestCurrentHold measures how long a drawable document stays unchanged,
+including the ongoing interval at Stats. It isn't content age: a static camera can
+legitimately hold a complete scene indefinitely, and camera reprojection still runs.
+Reset ends the old interval; these metrics retain no historical documents or leases.
 
 Checkpoint **hxzf** tests local HTTP/MVT arrivals, partial refinement and uploads,
 camera-only movement, rotated antimeridian root coverage, upload-time reset and
@@ -322,5 +390,7 @@ retirement-driven retry. The moving trace still exposes repeated Prepare/Build w
 and serial native publication latency. See
 [`docs/vecmap-rhi.md`](../../../docs/vecmap-rhi.md) for full commands, corpus paths,
 observed costs and both earlier failures and current results. **3a38** tracks native
-target latency: llvmpipe moving replay can finish CPU admission yet miss the unchanged
-native settlement deadline. Dynamic glyph demand remains a separate next step.
+target latency. Its superseding ownership protocol now settles the moving corpus in
+three repeated Vulkan and llvmpipe runs at unchanged limits, while first establishing
+drawable continuity. See the next section in that document for measurements and
+the remaining preparation/publication churn. Dynamic glyph demand stays separate.

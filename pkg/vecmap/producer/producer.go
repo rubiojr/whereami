@@ -30,7 +30,9 @@ var (
 )
 
 // Key identifies a transport request. Generation is a producer job generation,
-// unrelated to the retained Worker's native residency generation.
+// unrelated to the retained Worker's native residency generation. Source and Tile
+// identify immutable raw data; change Source when that data changes. StyleEpoch
+// describes the issuing request, not necessarily the style used when data arrives.
 type Key struct {
 	Source                 string
 	Tile                   view.TileID
@@ -48,6 +50,8 @@ type Loader func(context.Context, Key, io.Writer) error
 // is a trusted input contract, not introspection of arbitrary maps/closures.
 // Reserve owner, latest and one in-transfer snapshot pair. Use a new pointer and
 // epoch on changes; style zoom/topology/limits are fixed by Options.
+// Shared Layers storage must remain immutable across all such snapshots. Returning
+// to identical Source/Options/Layer storage may reuse an installed fragment.
 type Style struct {
 	Source  string
 	Epoch   uint64
@@ -108,6 +112,9 @@ type Status struct {
 	PeakJobs, PeakCached, PeakLeases            int
 	PeakCacheBytes, PeakLeaseBytes              uint64
 	Loads, Prepares, Builds, Rejected           uint64
+	LoadStyleReuses, SkippedBuilds              uint64 // retained in-flight jobs across style changes; obsolete pre-pack work
+	StyleReuses                                 uint64 // installed fragments with identical immutable preparation inputs
+	DeferredSelections, UnchangedCurrent        uint64 // mixed epochs rejected before placement; no continuity change on native ack
 	LastError                                   string
 	LastErrorStage                              string
 	Cache, PeakCache                            CacheUsage

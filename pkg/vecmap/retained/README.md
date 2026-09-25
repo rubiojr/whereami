@@ -203,6 +203,11 @@ err = planner.Acknowledge(batch.Ticket, success)
   of an abandoned target are retired before new uploads, unless needed by the
   active/new target. This maintains the residency bound even when stale partial
   targets temporarily occupy the admission window.
+- Acknowledged residency stores only version identities and logical byte charges.
+  CPU payload borrows belong to active/target resource metadata and outstanding
+  uploads, not to the resident ledger. An abandoned partial target's CPU backing
+  can be collected before native retirement; its native capacity remains charged
+  until the checked release acknowledgement.
 
 ### Batches and acknowledgements
 
@@ -345,6 +350,12 @@ packet, available := worker.Next()
 - `PacketWithData[T].CurrentData` switches with Current. Partial uploads, failed
   batches and rejected targets keep the old association. Initial/reset state and
   explicit nil targets have zero data, even if the caller supplies data for nil.
+- `TargetData` identifies the accepted target used to plan that packet, including
+  on partial uploads. Rejected targets retain the earlier accepted association.
+  It is distinct from CurrentData and from the concurrent latest-target input slot.
+  Together with CurrentData it describes Planner/packet CPU payload owners. It
+  doesn't by itself authorize external lease release: input slots, adapter borrows,
+  reset cleanup and caller-held packets still require an ownership protocol.
 - Promotion is captured during acknowledgement, before applying a coalesced target.
   This matters when the final upload of B completes while C is already queued:
   B's mapping must survive even if no standalone B publication packet was sent.
@@ -381,11 +392,10 @@ the adapter must still finish old-namespace lifetime obligations before old CPU
 leases are reclaimed. The QRhi viewer waits for BatchRenderer.Initialized even for
 nil-batch packets, preserving both checked startup drains.
 
-The headless producer Bridge uses this boundary with **serial accepted targets**:
-new CPU targets coalesce outside the Worker until the current accepted target
-settles. It can then drop old leases without an unbounded scene history or guessing
-which target won a final-ack race. A generic superseding caller cannot infer that
-all arbitrary old external references are gone merely from a Settled flag. See
-[`producer`](../producer/README.md#serial-target-viewer-bridge) for ownership and
-the latency tradeoff. Failed retirement never produces settlement; tests cover
-retry and resetting with the final settlement packet still outstanding.
+The headless producer Bridge uses settlement for final readiness. Its bounded
+supersession protocol uses CurrentData/TargetData and explicit native CPU selection
+to release older leases before complete retirement. A generic caller cannot infer
+that arbitrary old external references are gone merely from either field or a
+Settled flag. See [`producer`](../producer/README.md#bounded-superseding-viewer-bridge)
+for the four-slot ownership proof. Failed retirement never produces settlement;
+tests cover retry and resetting with the final settlement packet still outstanding.
