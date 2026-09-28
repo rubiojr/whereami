@@ -4,11 +4,13 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -202,16 +204,31 @@ func testLiveProducer(t *testing.T) {
 	mu.Lock()
 	assert.Equal(t, stableBytes, stats.UploadedBytes)
 	mu.Unlock()
-	// Supersede a two-mesh style replacement after its first upload. Both
-	// intermediate styles produce the same pixels; revisions must still differ.
+	// Interrupt a two-mesh style replacement after its first upload. Each
+	// replacement adds another fill layer so its geometry, and therefore its mesh
+	// revisions, really change; a zoom-only recompile would keep every resident
+	// version. All variants draw the same pixels.
 	mu.Lock()
 	pauseAtUpload.Store(stats.MeshUploads + 1)
 	mu.Unlock()
 	pauseAfterUpload.Store(true)
+	fills := 1
 	replaceStyle := func() {
+		fills++
+		var spec strings.Builder
+		spec.WriteString(`{"version":8,"layers":[`)
+		for i := range fills {
+			if i > 0 {
+				spec.WriteString(",")
+			}
+			fmt.Fprintf(&spec, `{"id":"land%d","type":"fill","source-layer":"land","paint":{"fill-color":["get","color"]}}`, i)
+		}
+		spec.WriteString("]}")
+		layers, err := style.Parse([]byte(spec.String()))
+		require.NoError(t, err)
 		next := *request.Style
 		next.Epoch++
-		next.Options.Zoom++
+		next.Layers = layers
 		request.Style = &next
 		submit()
 	}
@@ -219,13 +236,22 @@ func testLiveProducer(t *testing.T) {
 	pump(func(streamStatus) bool { return pause.Load() })
 	pixel(20, [3]int{0, 255, 0})
 	pixel(140, [3]int{0, 0, 255})
-	before := bridge.Stats().Superseded
+	progress := bridge.Stats()
 	replaceStyle()
-	// Pumping prepare can complete the checked outstanding upload while Sync
-	// is paused, but cannot upload another packet. The bridge may now supersede.
-	pump(func(streamStatus) bool { return bridge.Stats().Superseded > before })
+	// Pumping prepare can complete the checked outstanding upload while Sync is
+	// paused, but cannot upload another packet. The newer cover needs two uploads
+	// while the exposed target needs one more, so it must wait rather than
+	// abandon that progress.
+	pump(func(streamStatus) bool { return bridge.Stats().Received > progress.Received })
+	waiting := bridge.Stats()
+	assert.Equal(t, progress.Superseded, waiting.Superseded, "a document needing more uploads than the target has left cannot supersede it")
+	assert.Equal(t, progress.Targets, waiting.Targets)
 	pause.Store(false)
 	pump(ready)
+	settled := bridge.Stats()
+	assert.Equal(t, progress.Superseded, settled.Superseded)
+	assert.Equal(t, progress.Targets+1, settled.Targets, "the newer cover is exposed once the interrupted one is Current")
+	assert.Equal(t, progress.CurrentTargets+2, settled.CurrentTargets)
 	pixel(20, [3]int{0, 255, 0})
 	pixel(140, [3]int{0, 0, 255})
 	// Re-load a root target, then cross its antimeridian under rotation. Copies

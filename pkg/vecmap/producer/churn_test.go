@@ -324,3 +324,109 @@ func TestPreparationIdentityIsConservative(t *testing.T) {
 	empty.Layers = nil
 	assert.True(t, samePreparation(&empty, &empty))
 }
+
+func styleZoom(t *testing.T, s *state, r *Request, zoom float64) {
+	t.Helper()
+	next := *r.Style
+	next.Epoch++
+	next.Options.Zoom = zoom
+	r.Style = &next
+	_, err := s.p.Submit(*r)
+	require.NoError(t, err)
+}
+
+func TestHeldEpochPublishesCoherentIntermediateCovers(t *testing.T) {
+	left, right := view.TileID{Z: 1}, view.TileID{Z: 1, X: 1}
+	r := testRequest(t, left, right)
+	s := churnState(t, r)
+	for _, tile := range []view.TileID{left, right} {
+		e := &entry{raw: tilePBF(), source: r.Style.Source}
+		s.entries[tile] = e
+		s.build(tile, e)
+	}
+	s.publish()
+	first, ok := s.p.Next()
+	require.True(t, ok)
+	t.Cleanup(first.Release)
+	require.True(t, s.p.Current(1, 1, first))
+	styleZoom(t, s, &r, 3)
+	s.inputs()
+	assert.Equal(t, uint64(2), s.style, "a published epoch adopts newer paint at once")
+	assert.Equal(t, uint64(1), s.stats.StyleAdoptions)
+	require.True(t, s.compile())
+	assert.Equal(t, s.style, s.entries[left].style)
+	assert.NotEqual(t, s.style, s.entries[right].style)
+	styleZoom(t, s, &r, 4)
+	s.inputs()
+	assert.Equal(t, uint64(2), s.style, "installed working-epoch progress holds newer paint")
+	assert.Equal(t, uint64(1), s.stats.HeldStyles)
+	s.report()
+	status := s.p.Status()
+	assert.True(t, status.StyleHeld)
+	assert.Positive(t, status.Pending, "a held pair is unfinished work for settlement")
+	s.publish()
+	_, ok = s.p.Next()
+	assert.False(t, ok, "mixed epochs still never publish")
+	styleZoom(t, s, &r, 5)
+	s.inputs()
+	assert.Equal(t, uint64(2), s.style)
+	assert.Equal(t, uint64(2), s.stats.HeldStyles, "each deferred pair counts once")
+	require.True(t, s.compile())
+	s.publish()
+	second, ok := s.p.Next()
+	require.True(t, ok)
+	t.Cleanup(second.Release)
+	assert.Equal(t, []view.TileID{left, right}, second.Snapshot.Cover)
+	assert.Equal(t, 3.0, s.entries[left].styleSnapshot.Options.Zoom, "the intermediate cover is coherent at the held sixteenth, not the newest")
+	assert.True(t, s.published)
+	s.inputs()
+	assert.Equal(t, uint64(3), s.style, "the publication boundary adopts the newest pair, skipping the coalesced one")
+	assert.Equal(t, 5.0, s.working.Style.Options.Zoom)
+	assert.Equal(t, uint64(2), s.stats.StyleAdoptions)
+	styleZoom(t, s, &r, 6)
+	s.inputs()
+	assert.Equal(t, uint64(4), s.style, "without installed progress newer paint adopts immediately")
+	assert.Equal(t, uint64(2), s.stats.HeldStyles)
+	s.report()
+	assert.False(t, s.p.Status().StyleHeld)
+}
+
+func TestHeldEpochReleasesOnExhaustionAndPreparationBound(t *testing.T) {
+	left, right := view.TileID{Z: 1}, view.TileID{Z: 1, X: 1}
+	r := testRequest(t, left, right)
+	s := churnState(t, r)
+	for _, tile := range []view.TileID{left, right} {
+		e := &entry{raw: tilePBF(), source: r.Style.Source}
+		s.entries[tile] = e
+		s.build(tile, e)
+	}
+	s.publish()
+	first, ok := s.p.Next()
+	require.True(t, ok)
+	t.Cleanup(first.Release)
+	styleZoom(t, s, &r, 3)
+	s.inputs()
+	require.Equal(t, uint64(2), s.style)
+	require.True(t, s.compile())
+	s.failures[right] = failure{attempts: 3}
+	styleZoom(t, s, &r, 4)
+	s.inputs()
+	assert.Equal(t, uint64(2), s.style, "held while a coherent cover could still complete")
+	s.refine() // installed siblings hide their unloaded parent, as in the owner loop
+	s.dirty = true
+	s.publish()
+	_, ok = s.p.Next()
+	assert.False(t, ok)
+	assert.True(t, s.published, "terminal failures exhaust the epoch")
+	s.inputs()
+	assert.Equal(t, uint64(3), s.style, "an exhausted epoch releases newer paint")
+	assert.Empty(t, s.failures)
+	require.True(t, s.compile())
+	styleZoom(t, s, &r, 5)
+	s.inputs()
+	assert.Equal(t, uint64(3), s.style)
+	s.workingPrepares = 2 * len(s.order)
+	s.inputs()
+	assert.Equal(t, uint64(4), s.style, "two covers of preparation bound a held epoch")
+	assert.Zero(t, s.workingPrepares)
+}

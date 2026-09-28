@@ -32,6 +32,7 @@ type Store struct {
 	limits Limits
 	parts  map[string]*fragment
 	nextID uint64
+	reused uint64
 }
 
 type fragment struct {
@@ -74,8 +75,9 @@ type Change struct {
 // Apply publishes at most twice the fragment limit in changes atomically (so a
 // full remove-and-replace fits one batch). It validates bounded input before allocating
 // remapped metadata, and consumes no IDs on failure. Removing an absent key is a
-// no-op. All replacements bump every resource revision, irrespective of input
-// revisions or byte equality; unchanged fragments retain their IDs/revisions.
+// no-op. A replacement bumps the revision of every resource whose payload changed
+// or is new; a resource with byte-identical payload under the same store ID keeps
+// its revision. Input revisions are ignored. Untouched fragments keep IDs/revisions.
 // Input metadata is copied. Geometry/index/pixel buffers are immutable borrows
 // through the lifetime of the store AND every snapshot that references them.
 func (s *Store) Apply(changes []Change) error {
@@ -98,21 +100,28 @@ func (s *Store) Apply(changes []Change) error {
 	}
 	next := maps.Clone(s.parts)
 	nextID := s.nextID
+	var reused uint64
 	for i, change := range changes {
 		if change.Scene == nil {
 			delete(next, change.Key)
 			continue
 		}
-		part, err := remap(change.Scene, s.parts[change.Key], &nextID)
+		part, kept, err := remap(change.Scene, s.parts[change.Key], &nextID)
 		if err != nil {
 			return err
 		}
+		reused += uint64(kept)
 		part.usage = usage[i]
 		next[strings.Clone(change.Key)] = part
 	}
 	s.parts, s.nextID = next, nextID
+	s.reused += reused
 	return nil
 }
+
+// ReusedVersions counts replaced resources that kept their revision because their
+// payload was byte-identical. It describes avoided upload planning, not GPU work.
+func (s *Store) ReusedVersions() uint64 { return s.reused }
 
 func (s *Store) preflight(changes []Change) ([]Limits, error) {
 	seen := make(map[string]bool, len(changes))

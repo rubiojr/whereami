@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/fixture"
@@ -52,12 +53,23 @@ func TestPinnedMultiFragmentComposition(t *testing.T) {
 			assert.Equal(t, original, got, "draw %d instance %d", i, instance)
 		}
 	}
+	// An identical replacement keeps every resident version; a changed mesh
+	// takes a new revision while untouched textures keep theirs.
 	require.NoError(t, s.Apply([]Change{{"tile-b", result.Scene}}))
+	same, err := s.Snapshot(order)
+	require.NoError(t, err)
+	assert.Equal(t, combined.Meshes[1], same.Meshes[1])
+	assert.Equal(t, len(result.Scene.Meshes)+len(result.Scene.Textures), int(s.ReusedVersions()))
+	changed := *result.Scene
+	changed.Meshes = slices.Clone(result.Scene.Meshes)
+	changed.Meshes[0].Vertices = slices.Clone(result.Scene.Meshes[0].Vertices)
+	changed.Meshes[0].Vertices[0].X++
+	require.NoError(t, s.Apply([]Change{{"tile-b", &changed}}))
 	updated, err := s.Snapshot(order)
 	require.NoError(t, err)
 	assert.Equal(t, combined.Meshes[0], updated.Meshes[0])
 	assert.Equal(t, combined.Meshes[1].ID, updated.Meshes[1].ID)
-	assert.Equal(t, uint64(2), updated.Meshes[1].Revision)
+	assert.Equal(t, uint64(3), updated.Meshes[1].Revision, "the identical replacement consumed generation 2 without renaming versions")
 	assert.Equal(t, uint64(1), combined.Meshes[1].Revision)
 	p := planner(t, ResidencyLimits{Bytes: 64 << 20, Resources: 32})
 	budget := Budget{Bytes: 12 << 20, Resources: 2}

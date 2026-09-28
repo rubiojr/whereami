@@ -3065,6 +3065,139 @@ the corresponding detail context without retaining a history of scenes.
 quiet-host replay confirmation. Final settlement alone is not that goal. Dynamic
 glyph demand, asynchronous native completion and MapLibre comparison remain separate.
 
+### Coherent intermediate covers during motion
+
+Checkpoint **twd2** makes native Current advance during continuous sixteenth-zoom
+motion instead of only at its end. Cache, lease, resource, upload, quality and
+deadline limits are unchanged; the checked in-frame finish and separate retirement
+remain. Three interacting causes were found on a recaptured corpus, and each is
+addressed at its own layer with an explicit bound.
+
+1. **Producer epoch adoption.** The owner switched compilation to every new style
+   pair at once, so under motion no selected cover was ever coherent (71–121
+   deferred selections per run) and nothing published until the camera froze. The
+   owner now adopts style/asset pairs at bounded boundaries: a working epoch with
+   installed fragments is held until one coherent publication has been attempted,
+   its remaining desired work can no longer arrive, or two covers' worth of Prepare
+   attempts have been spent. Camera and targets always follow the latest request.
+   Each intermediate cover is still evaluated at exactly one sixteenth style zoom;
+   it may trail the camera by that bound. A held pair counts as Pending, so
+   settlement still requires the newest paint. Mixed epochs are never published.
+2. **Bridge supersession.** The bridge superseded any exposed target at each packet
+   boundary, so intermediate covers were abandoned half-uploaded. It now mirrors
+   acknowledged residency from successful batches and lets a pending document
+   replace the exposed target only when it needs no more uploads than the target
+   still lacks. Camera-only documents share the target's fragments and replace it
+   for free; a new epoch's cover waits until the target it would abandon is Current.
+   Progress is guaranteed either way, and a slow backend never spends frames on a
+   cover a cheaper document could replace. A target whose packet reports an error
+   no longer pins the bridge. An intermediate rule that committed a target after
+   its first landed upload made llvmpipe miss the settlement deadline in loaded-host
+   runs; a fixed half-of-uploads bound restored the deadline but starved progress on
+   Vulkan, because camera-only documents arrive about twelve times per second.
+   Neither is the accepted result.
+3. **Store revisions.** Every Set replacement bumped every resource revision, so
+   byte-identical glyph atlas and sprite textures were re-uploaded and later retired
+   two per frame. Measured on the final Madrid cover, one adjacent sixteenth changes
+   all 20 tile meshes (line widths are baked in tile units) but none of the 91
+   textures, which are 82% of the resource count. A replaced resource now keeps its
+   revision when its payload is byte-identical under the same store ID; changed and
+   new resources take the replacement generation. `ReusedVersions` counts them.
+
+Progressive Current pins larger covers. One run deadlocked: a committed 39-tile
+detailed Current filled the 256 MiB cache, the 21 coarser tiles that had to replace
+it failed admission, and no headroom could ever appear. Capacity failures now drop
+non-desired cached tiles from the cache and Set (lease-only pins before Current
+continuity, oldest builds first) until the fixed charge fits. Leases keep their own
+payload, so Current still renders; only future selections lose that fallback.
+Desired tiles are never evicted, and indivisible oversized inputs stay explicit
+failures. `ContinuityEvictions` reports it; it engaged in two of the final runs.
+
+New measurements: producer `StyleAdoptions`, `HeldStyles`, `StyleHeld` and
+`ReusedVersions`; bridge `CurrentTargets`, `TargetErrors`, `LongestCurrentAge` and
+`TotalCurrentAge` (receipt of a lease to its consumption as Current). None are
+presentation timestamps.
+
+#### Environment and corpus
+
+The earlier `/tmp/opencode` corpus, glyphs and Qt private headers were gone. The
+headers came from the Fedora `qt6-qtbase-private-devel-6.11.2-2.fc44` RPM extracted
+with `rpm2cpio`; range-0 Noto Sans Regular/Bold/Italic glyphs were downloaded from
+OpenFreeMap; the 71-tile trace union was recaptured over HTTP with
+`producer.HTTPLoader` on 2026-09-28 (8,399,303 bytes plus the pinned z9 tile, whose
+served copy no longer matches its pinned checksum and was taken from the
+application cache). The recaptured tiles place **94 labels / 598 draws** at the
+final moving camera instead of 95 / 600; `TestCapturedMadridAdmission` accepts
+both. Compare runs only within one corpus.
+
+#### Replay observations
+
+Same arguments as the preceding checkpoints: 800×600, scale 1, threaded loop, 256 MiB
+cache, 32 MiB / two-resource batches, five-second trace, ten-second tail; static uses
+one loader, moving four. Baseline is the committed `2e1d4fa` tree built the same
+way and run on the same corpus and host. All rows exit 0 with zero pending, failed,
+fallback and batch-failure counts. Moving ends at 20 tiles / 598 draws / 94 labels,
+static at 42 / 978 / 130. Host load stayed between 1.9 and 3.2 during the final
+series; the interim series that motivated the supersession rule ran alongside test
+suites and is not reported as timing evidence.
+
+| Replay | Elapsed s | Drawable Current changes | Longest hold s | Mean Current age s | Targets / superseded | Upload / release batches |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving, baseline 1 | 7.31 | 2 | 5.48 | n/a | 35 / 33 | 120 / 64 |
+| Vulkan moving, baseline 2 | 7.13 | 2 | 6.49 | n/a | 45 / 43 | 119 / 64 |
+| Vulkan moving, baseline 3 | 6.98 | 2 | 6.30 | n/a | 46 / 44 | 117 / 61 |
+| Vulkan moving, new 1 | 8.15 | 6 | 3.05 | 1.24 | 11 / 5 | 142 / 86 |
+| Vulkan moving, new 2 | 9.53 | 7 | 2.44 | 1.16 | 8 / 1 | 162 / 107 |
+| Vulkan moving, new 3 | 7.65 | 6 | 2.48 | 0.79 | 15 / 9 | 133 / 78 |
+| Vulkan static, new | 5.93 | 4 | 2.97 | 1.09 | 5 / 1 | 125 / 39 |
+| llvmpipe moving, new 1 | 11.94 | 5 | 5.06 | 1.83 | 7 / 2 | 86 / 30 |
+| llvmpipe moving, new 2 | 13.45 | 4 | 4.99 | 2.43 | 8 / 4 | 92 / 36 |
+| llvmpipe moving, new 3 | 14.45 | 6 | 6.43 | 2.52 | 9 / 3 | 97 / 40 |
+| llvmpipe static, new | 14.81 | 4 | 8.70 | 2.70 | 4 / 0 | 116 / 30 |
+
+Baseline runs held their first two-to-seven-tile Current through the whole motion;
+the new runs advance Current every one to three seconds on Vulkan with 700–758
+reused texture versions per run and 0–3 continuity evictions. Mean age divides
+`TotalCurrentAge` by drawable changes and includes the first partial cover.
+
+The cost is settlement time: completed intermediate covers must be retired two
+resources per frame, and llvmpipe frames slow down once the fuller scene is drawn
+(previous-frame GPU p50 36–42 ms versus 28–32 ms while the sparse first cover was
+displayed). Vulkan moving settles 0.6–2.4 s later than baseline; llvmpipe moving
+settled in 8.62–10.91 s at **3a38** and now takes 11.94–14.45 s, and llvmpipe static
+14.81 s against 9.44–9.98 s, all within the unchanged ten-second tail but with
+little margin on the software rasterizer. Prepare/Build attempts are unchanged in
+range (257–287 moving). These are matched input replays, not matched frame work;
+no presentation pacing or MapLibre claim follows.
+
+#### Verification
+
+- Deterministic owner tests: a held epoch publishes a coherent intermediate cover
+  at its own sixteenth and then adopts the newest pair, skipping coalesced ones;
+  terminal failures and the Prepare bound release a hold; a held pair is Pending.
+- Synthetic bridge tests: a document needing more uploads than the target has left
+  waits, an equally close camera-only document replaces it without abandoning
+  staged versions, retirement-only progress permits replacement, a Current target
+  releases the next pending document, and an unplannable target is replaced.
+  The coalescing/reset test now changes geometry rather than only zoom, since a
+  zoom-only recompile keeps every resident version.
+- Store/Set tests: identical replacement keeps versions and counts them; changed
+  payload takes the replacement generation; worker, planner and settlement tests
+  use distinct payloads where they previously relied on the unconditional bump.
+- Capacity eviction test: lease-only pins yield before Current continuity, desired
+  tiles are never evicted, oversized input remains an explicit failure.
+- Pinned v1 race coverage: producer **96.7%**, retained **99.8%**, tiles **98.7%**;
+  new adoption, hold, eviction, residency-mirror and remap code is 100% covered
+  except error branches. GOARCH=386 headless suites, the full pinned pkg/vecmap
+  suite, staticcheck and the captured-corpus admission test pass. The tagged
+  viewer/adapter integration suites pass on Vulkan and on OpenGL under the race
+  detector; the live viewer test now interrupts geometry-changing replacements
+  and asserts that the newer cover waits until the interrupted one is Current.
+
+Remaining levers for the llvmpipe margin are outside this checkpoint: upload
+before retirement in the Planner, asynchronous completion (**w47r**) and pacing
+(**vx93**). Dynamic glyph demand and MapLibre comparison remain separate.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

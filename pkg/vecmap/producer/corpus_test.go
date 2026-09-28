@@ -117,7 +117,9 @@ func TestCapturedMadridAdmission(t *testing.T) {
 		if seconds == 0 {
 			assert.Equal(t, 130, current.Labels)
 		} else {
-			assert.Equal(t, 95, current.Labels)
+			// The 2026-09-24 corpus placed 95 labels; a 2026-09-28 recapture of
+			// the same snapshot path serves slightly different tiles and places 94.
+			assert.InDelta(t, 95, current.Labels, 1)
 		}
 		assert.LessOrEqual(t, s.PeakCacheBytes, limits.CacheBytes)
 		assert.LessOrEqual(t, s.PeakLeases, limits.Leases)

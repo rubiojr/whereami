@@ -131,6 +131,10 @@ func (s *Set) Apply(changes []Change) error {
 	return nil
 }
 
+// ReusedVersions forwards the Store's count of replaced resources that kept their
+// revision under byte-identical payload, such as glyph atlases across style zooms.
+func (s *Set) ReusedVersions() uint64 { return s.store.ReusedVersions() }
+
 func (s *Set) preflight(changes []Change) error {
 	if len(changes) > 2*s.maxTiles {
 		return ErrLimit

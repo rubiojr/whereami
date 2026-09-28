@@ -69,12 +69,12 @@ func TestWorkerTransitions(t *testing.T) {
 	assert.Same(t, first, p.Current)
 	workerAckPacket(t, w, p, true)
 	// Only the newest target is retained while a resource batch is outstanding.
-	require.NoError(t, store.Apply([]Change{{"a", triangle()}}))
+	require.NoError(t, store.Apply([]Change{{"a", variant(2)}}))
 	second := snapshot(t, store, "a")
 	require.True(t, w.SetTarget(gen, second))
 	p = workerPacket(t, w, gen)
 	assert.Same(t, first, p.Current)
-	require.NoError(t, store.Apply([]Change{{"a", triangle()}}))
+	require.NoError(t, store.Apply([]Change{{"a", variant(3)}}))
 	third := snapshot(t, store, "a")
 	for range 100 {
 		require.True(t, w.SetTarget(gen, second))

@@ -2,6 +2,7 @@ package tiles
 
 import (
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/fixture"
@@ -51,10 +52,22 @@ func TestPinnedGeometryComposition(t *testing.T) {
 	}
 	assert.Same(t, &source.Meshes[0].Vertices[0], &combined.Scene.Meshes[0].Vertices[0])
 	assert.Same(t, &source.Meshes[0].Indices[0], &combined.Scene.Meshes[1].Indices[0])
+	// Recompiling identical bytes keeps every resident version; only changed
+	// payload takes the replacement revision.
 	require.NoError(t, s.Apply([]Change{{second, f}}))
+	same := selectTiles(t, s, []view.TileID{first, second}, combined.Cover, result.Camera)
+	assert.Equal(t, combined.Scene.Meshes[1], same.Scene.Meshes[1])
+	assert.Equal(t, uint64(len(source.Meshes)+len(source.Textures)), s.ReusedVersions())
+	changed := *f
+	changedScene := source
+	changedScene.Meshes = slices.Clone(source.Meshes)
+	changedScene.Meshes[0].Vertices = slices.Clone(source.Meshes[0].Vertices)
+	changedScene.Meshes[0].Vertices[0].X++
+	changed.Scene = &changedScene
+	require.NoError(t, s.Apply([]Change{{second, &changed}}))
 	updated := selectTiles(t, s, []view.TileID{first, second}, combined.Cover, result.Camera)
 	assert.Equal(t, combined.Scene.Meshes[0], updated.Scene.Meshes[0])
 	assert.Equal(t, combined.Scene.Meshes[1].ID, updated.Scene.Meshes[1].ID)
-	assert.Equal(t, uint64(2), updated.Scene.Meshes[1].Revision)
+	assert.Equal(t, uint64(3), updated.Scene.Meshes[1].Revision)
 	assert.Equal(t, uint64(1), combined.Scene.Meshes[1].Revision)
 }

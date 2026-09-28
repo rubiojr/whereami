@@ -103,6 +103,7 @@ type Status struct {
 	CapacityRetries                             uint64
 	UncachedPreparations                        uint64
 	PreparationEvictions, PreparationBytesFreed uint64
+	ContinuityEvictions, ContinuityBytesFreed   uint64 // non-desired cached tiles dropped so desired work could be admitted
 	CurrentGeneration, CurrentSequence          uint64 // native Current mailbox consumed by the owner
 	Revision, Generation                        uint64
 	Jobs, Cached, Leases                        int
@@ -115,6 +116,9 @@ type Status struct {
 	LoadStyleReuses, SkippedBuilds              uint64 // retained in-flight jobs across style changes; obsolete pre-pack work
 	StyleReuses                                 uint64 // installed fragments with identical immutable preparation inputs
 	DeferredSelections, UnchangedCurrent        uint64 // mixed epochs rejected before placement; no continuity change on native ack
+	StyleAdoptions, HeldStyles                  uint64 // paint-input switches after the first; newest pairs deferred by a held epoch
+	ReusedVersions                              uint64 // replaced resources that kept a resident revision under identical bytes
+	StyleHeld                                   bool   // the newest style/asset pair is not yet adopted
 	LastError                                   string
 	LastErrorStage                              string
 	Cache, PeakCache                            CacheUsage

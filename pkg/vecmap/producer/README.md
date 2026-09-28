@@ -78,18 +78,34 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
 - Raw MVT remains cached alongside optional reusable Prepared data. A style change
   normally reparses/recompiles cached bytes; asset refresh reuses Prepared when available.
   Admission pressure evicts least-recently-built Prepared objects, or omits incoming
-  preparation after packing. It never evicts pinned fragments. A later asset refresh
+  preparation after packing. If the fixed raw/fragment/profile charge still cannot
+  fit, cached tiles that are no longer requested are dropped from the cache and Set,
+  lease-only pins before acknowledged Current continuity and oldest builds first.
+  Their leases keep the snapshot payload, so Current still renders; only future
+  selections lose that fallback (`ContinuityEvictions`). Desired tiles are never
+  evicted for admission. A later asset refresh
   reparses retained raw bytes if needed; camera-only updates do not rebuild geometry.
   A source change reloads bytes. Old immutable fragments survive through their leases.
 - A published cover must have a coherent source/style/asset epoch. While a refresh
   is incomplete, the native consumer keeps its acknowledged Current. It must not
   replace Current with a partially refreshed cover or pair it with target slots.
+- Camera and targets follow the latest request immediately. Style/asset pairs are
+  adopted at bounded boundaries: a working epoch with installed fragments is held
+  until one coherent publication has been attempted, its remaining desired work
+  can no longer arrive, or two covers' worth of Prepare attempts have been spent.
+  Continuous sixteenth-zoom changes therefore publish coherent intermediate covers,
+  each evaluated at one exact style zoom that may trail the camera by that bound,
+  instead of publishing nothing until motion ends. Without installed progress the
+  newest pair is adopted at once; coalesced intermediate pairs are skipped. A held
+  pair counts as Pending and sets `StyleHeld`, so settlement still requires the
+  newest paint. `StyleAdoptions`/`HeldStyles` count switches and deferred pairs.
 - Refresh the currently selectable cover before unfinished refinements, preserving
   LoadOrder within each group. Once requested siblings have installed fragments,
   Set selects them even during epoch refresh. Don't rebuild their hidden parent;
   a fresh parent cannot bypass those siblings' coherence check. Drop these
   satisfied fallback parents from desired work, but retain fragments pinned by
-  Current or any outstanding lease. Only explicit native Current is continuity;
+  Current or any outstanding lease unless admission of desired work requires the
+  space. Only explicit native Current is continuity;
   publishing or queueing a CPU snapshot does not advance it.
 - Transient transport errors get at most three attempts, separated by RetryDelay
   (default 250 ms). One ticker handles all retries. Missing/permanent responses,
@@ -197,6 +213,11 @@ workers, so its sum is not elapsed time or CPU time. Failed/discarded compilatio
 attempts are included. ResponseBytes and RawCapacityBytes describe completed raw
 results before admission. LastErrorStage identifies the most recent failing stage.
 Requested/SelectedTiles/Fallbacks describe the latest CPU target, not native Current.
+
+`ReusedVersions` forwards the Set's count of replaced resources that kept their
+resident revision because their payload was byte-identical, typically glyph atlas
+and sprite textures across sixteenth-zoom recompiles. Fewer versions change per
+epoch, so each intermediate cover uploads and later retires fewer resources.
 
 `LoadStyleReuses` counts useful in-flight jobs retained at style-change boundaries
 (one job can count more than once). `StyleReuses` counts installed fragments reused
@@ -306,12 +327,25 @@ successfully enqueued native acknowledgements with `Completed`. These methods do
 bounded metadata work. The viewer follows this protocol on its render owner.
 
 The bridge exposes **one unconfirmed target at a time**. A successful packet whose
-`TargetData` matches that target proves the Worker has processed the handoff. The
-bridge may then expose the latest pending CPU document without waiting for complete
-upload or retirement. The first cover must become Current before supersession starts;
-otherwise continuous camera motion could keep abandoning the initial cover and leave
-the map blank. Reset restores this startup rule. Same-snapshot camera publications
-update request progress without creating another Worker target.
+`TargetData` matches that target proves the Worker has processed the handoff. While
+only retirement, or nothing, has happened for the exposed target, the bridge may
+then expose the latest pending CPU document, **provided that supersession does not
+increase the uploads still needed before something becomes Current**. The bridge
+mirrors acknowledged residency from successful upload/release batches and compares
+how many versions the pending document and the exposed target still lack. A
+camera-only document shares the target's fragments, so it replaces the target for
+free and keeps placement fresh while the shared uploads keep counting. A new style
+epoch's cover needs its own meshes, so it waits until the target it would abandon
+is Current; the pending slot still coalesces to the newest document, so that wait is
+bounded by one target's remaining uploads. Progress is guaranteed: the exposed target
+either finishes or is replaced by a document at least as close to finishing, and a
+backend whose uploads are slower than publication never spends frames on a cover
+that a cheaper document could replace. A target whose packet reports an error
+never pins the bridge; the next pending document replaces it. The first cover must
+become Current before any supersession starts; otherwise continuous camera motion
+could keep abandoning the initial cover and leave the map blank. Reset restores this
+startup rule. Same-snapshot camera publications update request progress without
+creating another Worker target.
 
 Ownership at a checked packet boundary is explicit:
 
@@ -364,6 +398,12 @@ CurrentTiles/Fallbacks describe the first drawable and current selections' cover
 and detail. LongestCurrentHold measures how long a drawable document stays unchanged,
 including the ongoing interval at Stats. It isn't content age: a static camera can
 legitimately hold a complete scene indefinitely, and camera reprojection still runs.
+CurrentTargets counts exposed targets that became Current; with Superseded and
+TargetErrors it accounts for every exposed target. LongestCurrentAge and
+TotalCurrentAge measure, for documents that became Current, the time from bridge
+receipt of their lease to consumption as Current: how far native continuity trails
+CPU publication. Divide TotalCurrentAge by CurrentChanges for the mean. None of
+these are presentation timestamps.
 Reset ends the old interval; these metrics retain no historical documents or leases.
 
 Checkpoint **hxzf** tests local HTTP/MVT arrivals, partial refinement and uploads,

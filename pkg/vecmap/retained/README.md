@@ -45,13 +45,18 @@ texture. Local input revisions are ignored.
   style, wrap or other identity as appropriate. Keys must be nonempty and at most
   **256 bytes**; retained strings are copied into owned storage.
 - Replacement preserves global IDs for local resource IDs still present in that
-  same fragment. It increments **every resource's revision** using the fragment's
-  replacement generation, even if source revisions/bytes did not change. This
-  conservative rule also handles scene packers whose first-use local IDs can change
-  meaning between compilations. Untouched fragments keep their IDs and revisions.
-- This is slot identity, not content addressing or cross-tile atlas deduplication.
+  same fragment. A resource whose vertices/indices or dimensions/RGBA are
+  **byte-identical** to the previous revision under the same store ID keeps that
+  revision; every changed or new resource takes the fragment's replacement
+  generation. Source revisions are ignored. A version therefore still names exactly
+  one immutable payload, and an adapter holding it resident needs neither upload
+  nor retirement. Scene packers whose first-use local IDs change meaning between
+  compilations are still safe: different meaning means different bytes.
+  `ReusedVersions` counts kept revisions. Untouched fragments keep IDs/revisions.
+- This is slot identity plus exact payload comparison, not content addressing or
+  cross-tile atlas deduplication: equal bytes under different IDs stay distinct.
   Do not replace a fragment merely for camera motion: retain its snapshot and
-  update the frame transforms. Fine-grained resource dirtiness is a later extension.
+  update the frame transforms.
 - Removed resources lose their identity. Removing/re-adding a fragment or one of
   its resources assigns fresh IDs; old IDs are never reused. ID/revision exhaustion
   returns `ErrLimit` without changing state or consuming IDs.

@@ -18,6 +18,15 @@ func triangle() *scene.Scene {
 	}
 }
 
+// variant is a triangle whose mesh and texture payloads both differ from
+// triangle(), so a replacement needs new revisions for every resource.
+func variant(n byte) *scene.Scene {
+	v := triangle()
+	v.Meshes[0].Vertices[1].X = 1 + float32(n)
+	v.Textures[0].RGBA[0] = 10 + n // triangle() uses 1
+	return v
+}
+
 func newStore(t testing.TB, limits Limits) *Store {
 	t.Helper()
 	s, err := New(limits)
@@ -57,6 +66,8 @@ func TestIdentityLifecycleAndIsolation(t *testing.T) {
 	second := snapshot(t, s, "a", "b")
 	assert.Equal(t, first.Meshes[0].ID, second.Meshes[0].ID)
 	assert.Equal(t, uint64(2), second.Meshes[0].Revision)
+	assert.Equal(t, first.Textures[0], second.Textures[0], "byte-identical texture keeps its resident revision")
+	assert.Equal(t, uint64(1), s.ReusedVersions())
 	assert.Equal(t, first.Meshes[1], second.Meshes[1])
 	assert.Equal(t, first.Textures[1], second.Textures[1])
 	assert.Equal(t, float32(1), first.Meshes[0].Vertices[1].X, "old snapshots survive replacement")

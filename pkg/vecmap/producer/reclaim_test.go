@@ -153,3 +153,46 @@ func TestCapacityRetryWaitsForRealCacheHeadroom(t *testing.T) {
 	s.failCapacity(tile, next)
 	assert.False(t, s.failures[tile].capacity, "indivisible oversized input stays terminal")
 }
+
+func TestCapacityEvictsNonDesiredContinuityBeforeFailing(t *testing.T) {
+	target, visible, stale := view.TileID{Z: 1}, view.TileID{Z: 1, X: 1}, view.TileID{Z: 1, Y: 1}
+	r := testRequest(t, target, visible, stale)
+	s := churnState(t, r)
+	for _, tile := range []view.TileID{target, visible, stale} {
+		e := &entry{raw: tilePBF(), source: r.Style.Source}
+		s.entries[tile] = e
+		s.build(tile, e)
+		require.NotNil(t, s.entries[tile].fragment, "build installs a replacement entry")
+	}
+	// visible is acknowledged Current continuity; stale is pinned only by an
+	// unconfirmed lease. Neither is requested any more. Fixed charges: 400 each,
+	// plus the shared 1024-byte style profile.
+	s.current.cover = []view.TileID{visible}
+	s.desired = map[view.TileID]bool{target: true}
+	for _, tile := range []view.TileID{visible, stale} {
+		s.entries[tile].usage = CacheUsage{Fragments: 400}
+	}
+	s.entries[target].usage = CacheUsage{Fragments: 100}
+	s.recordCache(target, s.entries[target])
+	s.p.limits.CacheBytes = 3000
+	next := *s.entries[target]
+	next.usage = CacheUsage{Fragments: 1300, Prepared: 50}
+	require.True(t, s.admitPrepared(target, &next), "dropping the lease-only tile admits the desired replacement")
+	assert.NotContains(t, s.entries, stale)
+	assert.Contains(t, s.entries, visible, "visible continuity outlives lease-only pins")
+	assert.Equal(t, uint64(1), s.stats.ContinuityEvictions)
+	assert.Equal(t, uint64(400), s.stats.ContinuityBytesFreed)
+	assert.True(t, s.dirty)
+	_, err := s.set.Select([]view.TileID{stale}, nil, r.Camera, 0)
+	require.NoError(t, err)
+	selected, _ := view.SelectCover([]view.TileID{stale}, nil, func(tile view.TileID) bool { return s.entries[tile] != nil })
+	assert.Empty(t, selected, "evicted continuity is no longer selectable")
+	assert.Equal(t, uint64(50), next.usage.Prepared, "incoming preparation survives when continuity eviction suffices")
+	next.usage = CacheUsage{Fragments: 1800}
+	require.True(t, s.admitPrepared(target, &next), "visible continuity yields when nothing else can")
+	assert.NotContains(t, s.entries, visible)
+	assert.Equal(t, uint64(2), s.stats.ContinuityEvictions)
+	next.usage = CacheUsage{Fragments: 2500}
+	assert.False(t, s.admitPrepared(target, &next), "an indivisible oversized input remains an explicit failure")
+	assert.Equal(t, uint64(2), s.stats.ContinuityEvictions, "desired tiles are never evicted for admission")
+}

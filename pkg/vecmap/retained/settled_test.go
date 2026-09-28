@@ -28,7 +28,7 @@ func TestSettlementFollowsAcknowledgedRetirement(t *testing.T) {
 		}
 	}
 	settle()
-	require.NoError(t, store.Apply([]Change{{"a", triangle()}}))
+	require.NoError(t, store.Apply([]Change{{"a", variant(2)}}))
 	second := snapshot(t, store, "a")
 	require.True(t, w.SetTarget(gen, second))
 	for range 2 {

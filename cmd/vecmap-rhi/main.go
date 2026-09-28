@@ -196,12 +196,14 @@ func display(document scene.Document, options benchmarkOptions) error {
 		fmt.Printf("producer_loads=%d prepares=%d builds=%d rejected=%d peak_jobs=%d peak_cache_bytes=%d peak_leases=%d peak_lease_bytes=%d pending=%d failed=%d last_error=%q\n", s.Loads, s.Prepares, s.Builds, s.Rejected, s.PeakJobs, s.PeakCacheBytes, s.PeakLeases, s.PeakLeaseBytes, s.Pending, s.Failed, s.LastError)
 		fmt.Printf("producer_requested=%d selected=%d fallbacks=%d error_stage=%q response_bytes=%d raw_capacity_bytes=%d\n", s.Requested, s.SelectedTiles, s.Fallbacks, s.LastErrorStage, s.ResponseBytes, s.RawCapacityBytes)
 		fmt.Printf("cache_raw=%d prepared=%d fragments=%d profiles=%d peak_raw=%d peak_prepared=%d peak_fragments=%d peak_profiles=%d\n", s.Cache.Raw, s.Cache.Prepared, s.Cache.Fragments, s.Cache.Profiles, s.PeakCache.Raw, s.PeakCache.Prepared, s.PeakCache.Fragments, s.PeakCache.Profiles)
-		fmt.Printf("preparation_evictions=%d preparation_bytes_freed=%d uncached_preparations=%d capacity_retries=%d\n", s.PreparationEvictions, s.PreparationBytesFreed, s.UncachedPreparations, s.CapacityRetries)
+		fmt.Printf("preparation_evictions=%d preparation_bytes_freed=%d uncached_preparations=%d capacity_retries=%d continuity_evictions=%d continuity_bytes_freed=%d\n", s.PreparationEvictions, s.PreparationBytesFreed, s.UncachedPreparations, s.CapacityRetries, s.ContinuityEvictions, s.ContinuityBytesFreed)
 		fmt.Printf("load_style_reuses=%d style_reuses=%d skipped_builds=%d deferred_selections=%d unchanged_current=%d\n", s.LoadStyleReuses, s.StyleReuses, s.SkippedBuilds, s.DeferredSelections, s.UnchangedCurrent)
+		fmt.Printf("style_adoptions=%d held_styles=%d style_held=%t reused_versions=%d\n", s.StyleAdoptions, s.HeldStyles, s.StyleHeld, s.ReusedVersions)
 		b := options.live.bridge.Stats()
 		fmt.Printf("bridge_received=%d coalesced=%d same_snapshot=%d targets=%d superseded=%d settlements=%d first_visible_current=%s\n", b.Received, b.Coalesced, b.SameSnapshot, b.Targets, b.Superseded, b.Settlements, b.FirstVisibleCurrent)
 		fmt.Printf("bridge_upload_batches=%d upload_bytes=%d overtaken_upload_bytes=%d release_batches=%d released_resources=%d\n", b.UploadBatches, b.UploadBytes, b.OvertakenUploadBytes, b.ReleaseBatches, b.ReleasedResources)
 		fmt.Printf("bridge_current_changes=%d first_current_tiles=%d first_current_labels=%d current_tiles=%d current_fallbacks=%d longest_current_hold=%s\n", b.CurrentChanges, b.FirstCurrentTiles, b.FirstCurrentLabels, b.CurrentTiles, b.CurrentFallbacks, b.LongestCurrentHold)
+		fmt.Printf("bridge_current_targets=%d target_errors=%d longest_current_age=%s total_current_age=%s\n", b.CurrentTargets, b.TargetErrors, b.LongestCurrentAge, b.TotalCurrentAge)
 		for _, phase := range []struct {
 			name  string
 			value producer.PhaseTime

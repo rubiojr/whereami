@@ -71,7 +71,7 @@ func TestAcknowledgedActivationAndRetirement(t *testing.T) {
 	assert.Same(t, first, p.Current())
 	assert.ErrorIs(t, p.Acknowledge(retry.Ticket, true), ErrTicket)
 
-	require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
+	require.NoError(t, s.Apply([]Change{{"a", variant(2)}}))
 	second := snapshot(t, s, "a")
 	require.NoError(t, p.SetTarget(second))
 	assert.Same(t, first, p.Current())
@@ -109,13 +109,13 @@ func TestSupersessionReleasesOnlyUnusedVersions(t *testing.T) {
 	budget := Budget{Bytes: 84, Resources: 1}
 	require.NoError(t, p.SetTarget(first))
 	settle(t, p, budget)
-	require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
+	require.NoError(t, s.Apply([]Change{{"a", variant(2)}}))
 	second := snapshot(t, s, "a")
 	require.NoError(t, p.SetTarget(second))
 	partial := nextBatch(t, p, budget)
 	require.NoError(t, p.Acknowledge(partial.Ticket, true))
 	assert.Same(t, first, p.Current())
-	require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
+	require.NoError(t, s.Apply([]Change{{"a", variant(3)}}))
 	third := snapshot(t, s, "a")
 	require.NoError(t, p.SetTarget(third))
 	obsolete := nextBatch(t, p, budget)
@@ -143,11 +143,11 @@ func TestUploadAdmissionAndInvalidInput(t *testing.T) {
 	s := newStore(t, Limits{})
 	require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
 	first := snapshot(t, s, "a")
-	for _, limits := range []ResidencyLimits{{Bytes: 175}, {Resources: 3}} {
+	for i, limits := range []ResidencyLimits{{Bytes: 175}, {Resources: 3}} {
 		p := planner(t, limits)
 		require.NoError(t, p.SetTarget(first))
 		settle(t, p, Budget{Bytes: 88, Resources: 2})
-		require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
+		require.NoError(t, s.Apply([]Change{{"a", variant(byte(i + 1))}}))
 		assert.ErrorIs(t, p.SetTarget(snapshot(t, s, "a")), ErrLimit)
 		assert.Same(t, first, p.Current())
 		assert.Same(t, first, p.target)

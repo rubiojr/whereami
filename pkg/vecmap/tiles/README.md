@@ -145,9 +145,12 @@ asset readiness and consistent style epochs across tile updates.
 `Apply` copies scene, draw and symbol metadata. It borrows vertex/index/RGBA
 payloads through the lifetime of the Set **and every referencing snapshot**.
 Changes are atomic: invalid metadata or a Store failure publishes nothing and
-consumes no resource IDs. Surviving local IDs keep their global IDs with a new
-revision on replacement. Removal and re-addition get fresh IDs. A nil Fragment
-removes a tile; a nonnil empty scene means a successfully prepared blank tile.
+consumes no resource IDs. Surviving local IDs keep their global IDs on replacement;
+a resource keeps its revision when its payload is byte-identical and takes a new
+one otherwise, so glyph atlases and sprite textures survive a sixteenth-zoom
+recompile while re-extruded geometry does not. `ReusedVersions` counts kept
+revisions. Removal and re-addition get fresh IDs. A nil Fragment removes a tile; a
+nonnil empty scene means a successfully prepared blank tile.
 
 ## Coverage and native publication
 

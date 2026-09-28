@@ -23,9 +23,11 @@ type Bridge struct {
 	latest                                    atomic.Pointer[scene.Document]
 	mu                                        sync.Mutex
 	held                                      map[*scene.Document]*Lease
+	received                                  map[*scene.Document]time.Time
 	pending                                   *scene.Document
 	busy                                      bool
 	advance                                   bool
+	resident                                  map[retained.Version]bool // acknowledged native residency, mirrored from batches
 	receiving                                 bool
 	generation, consumed, completed, revision uint64
 	stop, done                                chan struct{}
@@ -49,6 +51,13 @@ type BridgeStats struct {
 	FirstCurrentTiles, FirstCurrentLabels int
 	CurrentTiles, CurrentFallbacks        int
 	LongestCurrentHold                    time.Duration // drawable document unchanged; not content age or presentation time
+	// Exposed targets that became Current, and targets whose packets reported an
+	// error. Together with Superseded they account for every exposed target.
+	CurrentTargets, TargetErrors uint64
+	// Age of a document when it became Current, measured from bridge receipt of its
+	// lease: how far native continuity trails CPU publication. Not a presentation
+	// timestamp; camera reprojection of Current continues independently.
+	LongestCurrentAge, TotalCurrentAge time.Duration
 }
 
 func (b *Bridge) Stats() BridgeStats {
@@ -72,8 +81,8 @@ func NewBridge(p *Producer, initial *scene.Document, limits retained.ResidencyLi
 	if err != nil {
 		return nil, err
 	}
-	b := &Bridge{producer: p, worker: w, initial: initial, held: make(map[*scene.Document]*Lease), busy: true, started: time.Now(),
-		stop: make(chan struct{}), done: make(chan struct{})}
+	b := &Bridge{producer: p, worker: w, initial: initial, held: make(map[*scene.Document]*Lease), received: make(map[*scene.Document]time.Time),
+		resident: make(map[retained.Version]bool), busy: true, started: time.Now(), stop: make(chan struct{}), done: make(chan struct{})}
 	b.latest.Store(initial)
 	go b.run()
 	return b, nil
@@ -98,6 +107,7 @@ func (b *Bridge) Restarted(generation uint64) bool {
 	}
 	b.generation, b.consumed, b.completed, b.busy = generation, 0, 0, true
 	b.advance = false
+	clear(b.resident) // a fresh native namespace starts empty
 	b.observeCurrent(nil, nil)
 	return true
 }
@@ -143,6 +153,14 @@ func (b *Bridge) observeCurrent(document *scene.Document, lease *Lease) {
 	if document != nil && len(document.Scene.Draws) > 0 {
 		b.stats.CurrentChanges++
 	}
+	if document != nil && document != b.initial && document == b.latest.Load() {
+		b.stats.CurrentTargets++
+	}
+	if since, ok := b.received[document]; ok {
+		age := now.Sub(since)
+		b.stats.LongestCurrentAge = max(b.stats.LongestCurrentAge, age)
+		b.stats.TotalCurrentAge += age
+	}
 }
 
 // Completed follows successful enqueueing of the native acknowledgement, after
@@ -161,18 +179,27 @@ func (b *Bridge) Completed(packet retained.PacketWithData[*scene.Document], succ
 	if success && packet.Err == nil {
 		b.recordCompletion(packet)
 	}
-	if !success || packet.Err != nil || packet.TargetData != b.latest.Load() {
+	if packet.Err != nil {
+		// A target the Worker cannot plan must not pin the bridge forever: allow
+		// the next pending document to replace it. Its lease is released only once
+		// a later checked packet proves the replacement handoff, as usual.
+		b.stats.TargetErrors++
+		b.advance = true
+		return true
+	}
+	if !success || packet.TargetData != b.latest.Load() {
 		return true
 	}
 	for document, lease := range b.held {
 		if document != packet.CurrentData && document != packet.TargetData && document != b.pending {
 			lease.Release()
 			delete(b.held, document)
+			delete(b.received, document)
 		}
 	}
 	// Establish initial continuity before allowing supersession. Otherwise a
 	// moving camera can repeatedly abandon the first cover and stay blank until
-	// motion ends. Once Current exists, unfinished replacements may be skipped.
+	// motion ends. Once Current exists, unstarted replacements may be skipped.
 	b.advance = packet.Settled || (packet.CurrentData != nil && packet.CurrentData != b.initial)
 	b.busy = !packet.Settled
 	return true
@@ -186,27 +213,67 @@ func (b *Bridge) recordCompletion(packet retained.PacketWithData[*scene.Document
 		if len(batch.Uploads) > 0 {
 			b.stats.UploadBatches++
 			b.stats.UploadBytes += batch.Bytes
+			for _, resource := range batch.Uploads {
+				b.resident[resource.Version] = true
+			}
 			if b.pending != nil || packet.TargetData != b.latest.Load() {
 				b.stats.OvertakenUploadBytes += batch.Bytes
 			}
 		} else {
 			b.stats.ReleaseBatches++
 			b.stats.ReleasedResources += uint64(len(batch.Releases))
+			for _, version := range batch.Releases {
+				delete(b.resident, version)
+			}
 		}
 	}
 }
 
 // Caller holds mu. Expose only one unconfirmed target at a time. The producer's
 // fixed lease pool also covers the former target until its replacement is observed.
+//
+// Supersession must never increase the uploads still needed before something
+// becomes Current. The bridge mirrors acknowledged residency from successful
+// batches, so it knows how many of a document's versions are not resident yet. A
+// pending document replaces the exposed target only while it needs no more uploads
+// than the target still has outstanding. Camera-only documents share the target's
+// fragments, so they replace it at no cost and keep placement fresh; a new style
+// epoch's cover waits until the target it would abandon is Current. Progress is
+// guaranteed: either the exposed target finishes, or it is replaced by a document
+// that is at least as close to finishing. Supersession is always free once the
+// target is Current. The pending slot still coalesces to the newest document.
 func (b *Bridge) promotePending() {
-	if b.advance && b.pending != nil {
-		b.stats.Targets++
-		if b.busy {
-			b.stats.Superseded++
-		}
-		b.latest.Store(b.pending)
-		b.pending, b.busy, b.advance = nil, true, false
+	if !b.advance || b.pending == nil {
+		return
 	}
+	latest := b.latest.Load()
+	current := !b.busy || b.current == latest
+	if !current && b.remaining(&b.pending.Scene) > b.remaining(&latest.Scene) {
+		return
+	}
+	b.stats.Targets++
+	if !current {
+		b.stats.Superseded++
+	}
+	b.latest.Store(b.pending)
+	b.pending, b.busy, b.advance = nil, true, false
+}
+
+// remaining counts a scene's versions that acknowledged residency lacks. It is
+// bounded metadata work over the scene's resource lists, not payload comparison.
+func (b *Bridge) remaining(target *scene.Scene) int {
+	missing := 0
+	for _, m := range target.Meshes {
+		if !b.resident[retained.Version{Kind: retained.MeshResource, ID: m.ID, Revision: m.Revision}] {
+			missing++
+		}
+	}
+	for _, t := range target.Textures {
+		if !b.resident[retained.Version{Kind: retained.TextureResource, ID: t.ID, Revision: t.Revision}] {
+			missing++
+		}
+	}
+	return missing
 }
 
 func (b *Bridge) run() {
@@ -253,6 +320,7 @@ func (b *Bridge) receive(lease *Lease) {
 		b.stats.Coalesced++
 		b.held[b.pending].Release()
 		delete(b.held, b.pending)
+		delete(b.received, b.pending)
 		b.pending = nil
 	}
 	if current := b.held[b.latest.Load()]; current != nil && current.Snapshot == lease.Snapshot {
@@ -261,6 +329,7 @@ func (b *Bridge) receive(lease *Lease) {
 		return
 	}
 	b.held[document], b.pending = lease, document
+	b.received[document] = time.Now()
 }
 
 // Close joins outside GUI/render callbacks, after native use of documents and
@@ -281,6 +350,7 @@ func (b *Bridge) Close() {
 			lease.Release()
 			delete(b.held, document)
 		}
+		clear(b.received)
 		b.pending = nil
 		b.latest.Store(nil)
 	})

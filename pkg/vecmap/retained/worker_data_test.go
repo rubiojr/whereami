@@ -17,8 +17,10 @@ type frameMapping struct {
 
 func TestWorkerSceneData(t *testing.T) {
 	store := newStore(t, Limits{})
+	var generation byte
 	newScene := func() *scene.Scene {
-		require.NoError(t, store.Apply([]Change{{"a", triangle()}}))
+		generation++
+		require.NoError(t, store.Apply([]Change{{"a", variant(generation)}}))
 		return snapshot(t, store, "a")
 	}
 	first, second, third := newScene(), newScene(), newScene()

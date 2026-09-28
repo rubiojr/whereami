@@ -33,7 +33,8 @@ type failure struct {
 type state struct {
 	p                                   *Producer
 	set                                 *tiles.Set
-	request                             *Request
+	request                             *Request // latest camera and targets
+	working                             *Request // adopted style/asset pair for loads and compilation
 	revision, generation, style, assets uint64
 	current                             current
 	targets, order                      []view.TileID
@@ -43,6 +44,10 @@ type state struct {
 	failures                            map[view.TileID]failure
 	stats                               Status
 	dirty                               bool
+	published                           bool // the working epoch reached a coherent publication attempt
+	workingPrepares                     int  // Prepare attempts since adoption; bounds a held epoch
+	heldStyle                           *Style
+	heldAssets                          *Assets
 }
 
 func (p *Producer) run(set *tiles.Set) {
@@ -166,48 +171,118 @@ func (s *state) inputs() {
 		pinned[tile] = true
 	}
 	s.pinned = pinned
-	if r == nil {
+	if r != nil {
+		targets := r.Targets
+		if targets == nil {
+			targets = view.VisibleTileCover(r.Camera)
+		}
+		if !slices.Equal(targets, s.targets) {
+			if !s.advanceGeneration() {
+				return
+			}
+			clear(s.failures)
+		}
+		s.request, s.revision, s.targets = r, revision, targets
+		s.order = view.LoadOrder(targets)
+		s.desired = make(map[view.TileID]bool, len(s.order))
+		for _, tile := range s.order {
+			s.desired[tile] = true
+		}
+		for tile, j := range s.running {
+			if !s.desired[tile] {
+				j.cancel()
+			}
+		}
+		s.dirty = true
+	}
+	s.adopt()
+}
+
+func (s *state) advanceGeneration() bool {
+	if s.generation == math.MaxUint64 {
+		s.error(ErrLimit)
+		s.p.Close()
+		return false
+	}
+	s.generation++
+	return true
+}
+
+// adopt switches loads and compilation to the newest style/asset pair at a bounded
+// boundary. Camera and targets always follow the latest request; only paint inputs
+// may lag. A working epoch with installed progress is held until one coherent
+// publication has been attempted, its remaining desired work can no longer arrive,
+// or it has spent two covers' worth of preparation without becoming coherent.
+// Continuous sixteenth-zoom changes therefore yield coherent intermediate covers,
+// each evaluated at an exact style zoom, instead of publishing nothing until motion
+// ends. Mixed epochs are still never published.
+func (s *state) adopt() {
+	r := s.request
+	if r == nil || (s.working != nil && s.working.Style == r.Style && s.working.Assets == r.Assets) {
 		return
 	}
-	targets := r.Targets
-	if targets == nil {
-		targets = view.VisibleTileCover(r.Camera)
+	if s.working != nil && s.holdWorking() {
+		if s.heldStyle != r.Style || s.heldAssets != r.Assets {
+			s.heldStyle, s.heldAssets = r.Style, r.Assets
+			s.stats.HeldStyles++
+		}
+		return
 	}
-	styleChanged := s.request == nil || s.request.Style != r.Style
-	assetsChanged := s.request == nil || s.request.Assets != r.Assets
-	changed := styleChanged || assetsChanged || !slices.Equal(targets, s.targets)
-	if changed {
-		if s.generation == math.MaxUint64 {
-			s.error(ErrLimit)
-			p.Close()
-			return
-		}
-		s.generation++
-		if styleChanged {
-			s.style++
-		}
-		if assetsChanged {
-			s.assets++
-		}
-		clear(s.failures)
+	styleChanged := s.working == nil || s.working.Style != r.Style
+	assetsChanged := s.working == nil || s.working.Assets != r.Assets
+	if !s.advanceGeneration() {
+		return
 	}
 	if styleChanged {
+		s.style++
 		s.reuseStyle(r.Style)
 	}
-	s.request, s.revision, s.targets = r, revision, targets
-	s.order = view.LoadOrder(targets)
-	s.desired = make(map[view.TileID]bool, len(s.order))
-	for _, tile := range s.order {
-		s.desired[tile] = true
+	if assetsChanged {
+		s.assets++
 	}
-	for tile, j := range s.running {
-		if j.key.Source != r.Style.Source || !s.desired[tile] {
+	clear(s.failures)
+	if s.working != nil {
+		s.stats.StyleAdoptions++
+	}
+	s.working = r
+	s.published, s.workingPrepares = false, 0
+	s.heldStyle, s.heldAssets = nil, nil
+	for _, j := range s.running {
+		if j.key.Source != r.Style.Source {
 			j.cancel()
 		} else if styleChanged && j.ctx.Err() == nil {
 			s.stats.LoadStyleReuses++
 		}
 	}
 	s.dirty = true
+}
+
+// holdWorking reports whether adopting newer paint inputs now would discard
+// installed working-epoch fragments before they could be published coherently.
+func (s *state) holdWorking() bool {
+	if s.published || s.workingPrepares >= 2*len(s.order) {
+		return false
+	}
+	for _, tile := range s.order {
+		if e := s.entries[tile]; s.desired[tile] && s.atWorkingEpoch(e) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *state) atWorkingEpoch(e *entry) bool {
+	return e != nil && e.fragment != nil && e.source == s.working.Style.Source && e.style == s.style && e.assets == s.assets
+}
+
+// pendingWork reports whether any desired tile can still reach the working epoch.
+func (s *state) pendingWork() bool {
+	for _, tile := range s.order {
+		if e := s.entries[tile]; s.desired[tile] && !s.atWorkingEpoch(e) && s.failures[tile].attempts < 3 {
+			return true
+		}
+	}
+	return false
 }
 
 // Epochs order requests; they aren't an input to compilation. A tile not rebuilt
@@ -285,7 +360,7 @@ func (s *state) nextJob(now time.Time) (job, bool) {
 			continue
 		}
 		e := s.entries[tile]
-		if e != nil && e.source == s.request.Style.Source {
+		if e != nil && e.source == s.working.Style.Source {
 			continue
 		}
 		f := s.failures[tile]
@@ -296,8 +371,8 @@ func (s *state) nextJob(now time.Time) (job, bool) {
 			continue
 		}
 		ctx, cancel := context.WithCancel(s.p.ctx)
-		return job{ctx: ctx, cancel: cancel, key: Key{Source: strings.Clone(s.request.Style.Source), Tile: tile,
-			StyleEpoch: s.request.Style.Epoch, Generation: s.generation}}, true
+		return job{ctx: ctx, cancel: cancel, key: Key{Source: strings.Clone(s.working.Style.Source), Tile: tile,
+			StyleEpoch: s.working.Style.Epoch, Generation: s.generation}}, true
 	}
 	return job{}, false
 }
@@ -441,7 +516,7 @@ func (s *state) compile() bool {
 				continue
 			}
 			e := s.entries[tile]
-			if e == nil || e.source != s.request.Style.Source || (e.style == s.style && e.assets == s.assets) || s.failures[tile].attempts >= 3 {
+			if e == nil || e.source != s.working.Style.Source || (e.style == s.style && e.assets == s.assets) || s.failures[tile].attempts >= 3 {
 				continue
 			}
 			s.build(tile, e)
@@ -457,12 +532,13 @@ func (s *state) build(tile view.TileID, old *entry) {
 	var err error
 	stage := "prepare"
 	if next.prepared == nil || next.style != s.style {
-		options := s.request.Style.Options
+		options := s.working.Style.Options
 		options.Tile = tile
 		started := time.Now()
-		next.prepared, err = tiles.Prepare(next.raw, s.request.Style.Layers, options)
+		next.prepared, err = tiles.Prepare(next.raw, s.working.Style.Layers, options)
 		s.stats.Preparing.observe(time.Since(started))
 		s.stats.Prepares++
+		s.workingPrepares++
 	}
 	// Preparation and packing are separately bounded expensive phases. Observe
 	// newer demand between them, before allocating pixels for an obsolete style.
@@ -478,7 +554,7 @@ func (s *state) build(tile view.TileID, old *entry) {
 		stage = "build"
 		var built *tiles.BuildResult
 		started := time.Now()
-		built, err = next.prepared.BuildOwned(s.request.Assets.Value, s.p.limits.CacheBytes)
+		built, err = next.prepared.BuildOwned(s.working.Assets.Value, s.p.limits.CacheBytes)
 		s.stats.Building.observe(time.Since(started))
 		s.stats.Builds++
 		if err == nil {
@@ -496,7 +572,7 @@ func (s *state) build(tile view.TileID, old *entry) {
 		stage = "cache/compiled"
 		next.preparedUse = s.stats.Builds
 		next.usage = entryUsage(tile, &next)
-		next.styleSnapshot = s.request.Style
+		next.styleSnapshot = s.working.Style
 		if !s.admitPrepared(tile, &next) {
 			err = ErrLimit
 		}
@@ -557,8 +633,12 @@ func (s *state) publish() {
 	if !s.coherentCover() {
 		s.stats.DeferredSelections++
 		s.dirty = false
+		if !s.pendingWork() {
+			s.published = true // terminal failures block this epoch; don't hold newer paint for it
+		}
 		return
 	}
+	s.published = true
 	started := time.Now()
 	snapshot, err := s.set.SelectBounded(s.targets, s.current.cover, s.request.Camera, 0, p.limits.SnapshotBytes)
 	s.stats.Selecting.observe(time.Since(started))
@@ -602,7 +682,7 @@ func (s *state) publish() {
 func (s *state) coherentCover() bool {
 	for _, tile := range s.selectedCover() {
 		e := s.entries[tile]
-		if e.style != s.style || e.assets != s.assets || e.source != s.request.Style.Source {
+		if e.style != s.style || e.assets != s.assets || e.source != s.working.Style.Source {
 			return false
 		}
 	}
@@ -639,6 +719,11 @@ func (s *state) report() {
 	if s.dirty {
 		s.stats.Pending++
 	}
+	s.stats.StyleHeld = s.working != nil && (s.working.Style != s.request.Style || s.working.Assets != s.request.Assets)
+	if s.stats.StyleHeld {
+		s.stats.Pending++ // the newest paint inputs are not installed yet
+	}
+	s.stats.ReusedVersions = s.set.ReusedVersions()
 	s.stats.Jobs, s.stats.Cached, s.stats.Leases = len(s.running), len(s.entries), len(p.leases)
 	s.stats.ReservedRawBytes = uint64(len(s.running)) * uint64(p.limits.RawBytes)
 	s.stats.LeaseBytes = 0

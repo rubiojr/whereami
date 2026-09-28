@@ -62,9 +62,16 @@ func TestTileUpdates(t *testing.T) {
 	assert.ErrorIs(t, s.Apply([]Change{{testTile, tooLarge}}), retained.ErrLimit)
 	assert.Same(t, first, selectTiles(t, s, []view.TileID{testTile}, nil, testCamera(testTile)))
 	require.NoError(t, s.Apply([]Change{{testTile, baseFragment(1)}}))
+	same := selectTiles(t, s, []view.TileID{testTile}, nil, testCamera(testTile))
+	assert.NotSame(t, first, same, "replacement invalidates the selection cache")
+	assert.Equal(t, first.Scene.Meshes[0], same.Scene.Meshes[0], "byte-identical geometry keeps its resident version")
+	assert.Equal(t, uint64(1), s.ReusedVersions())
+	moved := baseFragment(1)
+	moved.Scene.Meshes[0].Vertices[1].X = 128
+	require.NoError(t, s.Apply([]Change{{testTile, moved}}))
 	second := selectTiles(t, s, []view.TileID{testTile}, nil, testCamera(testTile))
 	assert.Equal(t, first.Scene.Meshes[0].ID, second.Scene.Meshes[0].ID)
-	assert.Equal(t, uint64(2), second.Scene.Meshes[0].Revision)
+	assert.Equal(t, uint64(3), second.Scene.Meshes[0].Revision, "changed payload takes the fragment's replacement generation")
 	assert.Equal(t, uint64(1), first.Scene.Meshes[0].Revision)
 	other := view.TileID{X: 3, Y: 2, Z: 3}
 	// Full-capacity replacement admits inserts and removals in either order.
