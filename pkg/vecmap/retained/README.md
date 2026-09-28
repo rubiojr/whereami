@@ -205,9 +205,11 @@ err = planner.Acknowledge(batch.Ticket, success)
   uses the Worker transport described below. See the
   [native adapter contract](../../../internal/vecmaprhi/README.md).
 - Target supersession is accepted between batches. Successfully uploaded resources
-  of an abandoned target are retired before new uploads, unless needed by the
-  active/new target. This maintains the residency bound even when stale partial
-  targets temporarily occupy the admission window.
+  of an abandoned target stay charged until retired, unless needed by the
+  active/new target. Uploads take priority while acknowledged residency plus the
+  batch fits the limits; stale versions retire when an upload needs their
+  capacity or once no upload remains. Residency therefore never exceeds the
+  limits, and a new target never waits behind the previous cover's retirement.
 - Acknowledged residency stores only version identities and logical byte charges.
   CPU payload borrows belong to active/target resource metadata and outstanding
   uploads, not to the resident ledger. An abandoned partial target's CPU backing
@@ -217,13 +219,21 @@ err = planner.Acknowledge(batch.Ticket, success)
 ### Batches and acknowledgements
 
 `Next` allows one outstanding batch. Batches contain **either uploads or releases**.
-Releases take priority and follow successful admission order. Uploads follow target
-mesh then texture slice order. Every batch has a fresh, nonzero ticket; ticket
-exhaustion returns `ErrLimit` without issuing work. `SetTarget` and another `Next`
-return `ErrBusy` while acknowledgement is pending.
+Uploads follow target mesh then texture slice order and take priority while
+acknowledged residency (including stale versions) plus the batch fits the residency
+limits. Releases follow successful admission order and are issued when the next
+upload cannot fit, when no upload remains, or before an unplannable target's error.
+Once no stale version remains, residency is a subset of the active and target sets
+that `SetTarget` proved to fit, so an upload batch always fits eventually. Every
+batch has a fresh, nonzero ticket; ticket exhaustion returns `ErrLimit` without
+issuing work. `SetTarget` and another `Next` return `ErrBusy` while acknowledgement
+is pending.
 
-`Budget.Bytes` and `Budget.Resources` must be positive and within residency limits.
-Upload bytes and total resource operations are bounded per call. Mesh vertex plus
+`Budget.Bytes` and `Budget.Resources` must be positive and within residency limits;
+they bound one upload batch. `Budget.Releases` bounds one retirement batch and
+defaults to `Resources` when zero; it must stay within the residency resource limit.
+Retirement moves no payload, so a larger release count reduces the number of checked
+retirement drains without admitting more upload work per batch. Mesh vertex plus
 index buffers form one indivisible unit, as does each texture. An oversized missing
 resource returns **ErrBudget**; it is not skipped or silently admitted over budget.
 Raise the budget explicitly or prepare smaller resource units upstream. This

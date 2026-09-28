@@ -83,9 +83,17 @@ func TestWorkerSceneData(t *testing.T) {
 		ack(p, true)
 	}
 	assert.Same(t, mappingC, p.CurrentData)
+	stale := make(map[Version]bool)
+	for _, version := range append(sceneVersions(first), sceneVersions(second)...) {
+		stale[version] = true
+	}
 	for p.Batch != nil { // complete retirement before the data-only target
 		ack(p, true)
-		if len(p.Batch.Releases) == 1 && p.Batch.Releases[0].Kind == TextureResource {
+		for _, version := range p.Batch.Releases {
+			require.True(t, stale[version])
+			delete(stale, version)
+		}
+		if len(stale) == 0 {
 			break
 		}
 		p = next()

@@ -49,11 +49,23 @@ type ResidencyLimits struct {
 	Resources int
 }
 
-// Budget bounds one batch. Both values must be positive and within residency
-// limits. Meshes (vertices plus indices) and textures are indivisible upload units.
+// Budget bounds one batch. Bytes and Resources must be positive and within
+// residency limits; they bound one upload batch. Meshes (vertices plus indices)
+// and textures are indivisible upload units. Releases bounds one retirement
+// batch; zero means Resources. Retiring a version costs no payload transfer, so
+// a larger release count reduces the number of checked retirement drains without
+// admitting more upload work per batch.
 type Budget struct {
 	Bytes     uint64
 	Resources int
+	Releases  int
+}
+
+func (b Budget) releases() int {
+	if b.Releases == 0 {
+		return b.Resources
+	}
+	return b.Releases
 }
 
 // Batch is either uploads or releases, never both. Bytes counts upload payload.
@@ -79,6 +91,7 @@ type Planner struct {
 	// Keeping Resource here would borrow abandoned target payloads until retirement.
 	resident      map[Version]uint64
 	residentOrder []Version
+	residentBytes uint64
 	pending       *Batch
 	nextTicket    uint64
 }
@@ -189,7 +202,8 @@ func (p *Planner) publishReady() {
 // are usable by the next frame, or releases have finished their native lifetime
 // obligations. Failure changes no residency and allows retry with a fresh ticket.
 // A duplicate/stale ticket never acknowledges another batch. Publication occurs
-// only when all target resources are ready; old revisions retire afterward.
+// only when all target resources are ready; old revisions retire afterward or,
+// under residency pressure, before the uploads that need their capacity.
 func (p *Planner) Acknowledge(ticket uint64, success bool) error {
 	if p.resident == nil {
 		return ErrInput
@@ -200,11 +214,13 @@ func (p *Planner) Acknowledge(ticket uint64, success bool) error {
 	batch := p.pending
 	if success {
 		for _, key := range batch.Releases {
+			p.residentBytes -= p.resident[key]
 			delete(p.resident, key)
 		}
 		p.residentOrder = slices.DeleteFunc(p.residentOrder, func(key Version) bool { _, ok := p.resident[key]; return !ok })
 		for _, r := range batch.Uploads {
 			p.resident[r.Version] = r.bytes()
+			p.residentBytes += r.bytes()
 			p.residentOrder = append(p.residentOrder, r.Version)
 		}
 	}

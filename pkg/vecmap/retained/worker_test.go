@@ -81,22 +81,21 @@ func TestWorkerTransitions(t *testing.T) {
 	}
 	require.True(t, w.SetTarget(gen, third))
 	workerAckPacket(t, w, p, true)
-	p = workerPacket(t, w, gen)
-	require.Len(t, p.Batch.Releases, 1, "abandoned partial revision retires before more uploads")
-	assert.Equal(t, second.Meshes[0].Revision, p.Batch.Releases[0].Revision)
-	assert.Same(t, first, p.Current)
-	workerAckPacket(t, w, p, true)
 	for range 2 {
 		p = workerPacket(t, w, gen)
 		assert.Same(t, first, p.Current)
+		assert.Empty(t, p.Batch.Releases, "uploads for the newest target precede retirement while residency fits")
 		assert.LessOrEqual(t, p.Batch.Bytes, uint64(84))
 		require.Len(t, p.Batch.Uploads, 1)
 		workerAckPacket(t, w, p, true)
 	}
-	for range 2 {
+	for i := range 3 {
 		p = workerPacket(t, w, gen)
 		assert.Same(t, third, p.Current, "publication must accompany retirement")
 		require.Len(t, p.Batch.Releases, 1)
+		if i == 2 {
+			assert.Equal(t, second.Meshes[0].Revision, p.Batch.Releases[0].Revision, "the abandoned partial revision retires in admission order")
+		}
 		workerAckPacket(t, w, p, true)
 	}
 	require.True(t, w.SetTarget(gen, nil))

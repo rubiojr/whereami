@@ -21,9 +21,18 @@ func nextBatch(t testing.TB, p *Planner, budget Budget) *Batch {
 	b, err := p.Next(budget)
 	require.NoError(t, err)
 	require.NotNil(t, b)
-	assert.LessOrEqual(t, len(b.Uploads)+len(b.Releases), budget.Resources)
+	assert.LessOrEqual(t, len(b.Uploads), budget.Resources)
+	assert.LessOrEqual(t, len(b.Releases), budget.releases())
 	assert.LessOrEqual(t, b.Bytes, budget.Bytes)
 	return b
+}
+
+func residentBytes(p *Planner) uint64 {
+	var total uint64
+	for _, bytes := range p.resident {
+		total += bytes
+	}
+	return total
 }
 
 func settle(t testing.TB, p *Planner, budget Budget) {
@@ -118,9 +127,12 @@ func TestSupersessionReleasesOnlyUnusedVersions(t *testing.T) {
 	require.NoError(t, s.Apply([]Change{{"a", variant(3)}}))
 	third := snapshot(t, s, "a")
 	require.NoError(t, p.SetTarget(third))
+	// 172 of 176 bytes are resident, so the abandoned revision must retire
+	// before the 84-byte mesh upload; retirement is capacity-driven, not eager.
 	obsolete := nextBatch(t, p, budget)
 	assert.Empty(t, obsolete.Uploads)
 	assert.Equal(t, []Version{partial.Uploads[0].Version}, obsolete.Releases)
+	assert.Equal(t, uint64(172), residentBytes(p))
 	require.NoError(t, p.Acknowledge(obsolete.Ticket, true))
 	assert.Same(t, first, p.Current())
 	settle(t, p, budget)
@@ -204,4 +216,133 @@ func TestReadyEmptyScene(t *testing.T) {
 	require.NoError(t, p.SetTarget(empty))
 	assert.Same(t, empty, p.Current())
 	settle(t, p, Budget{Bytes: 88, Resources: 2})
+}
+
+func TestUploadsPrecedeRetirementWithinResidency(t *testing.T) {
+	s := newStore(t, Limits{})
+	require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
+	first := snapshot(t, s, "a")
+	p := planner(t, ResidencyLimits{})
+	budget := Budget{Bytes: 84, Resources: 1}
+	require.NoError(t, p.SetTarget(first))
+	settle(t, p, budget)
+	require.NoError(t, s.Apply([]Change{{"a", variant(2)}}))
+	second := snapshot(t, s, "a")
+	require.NoError(t, p.SetTarget(second))
+	partial := nextBatch(t, p, budget)
+	require.NoError(t, p.Acknowledge(partial.Ticket, true))
+	require.NoError(t, s.Apply([]Change{{"a", variant(3)}}))
+	third := snapshot(t, s, "a")
+	require.NoError(t, p.SetTarget(third))
+	assert.Equal(t, uint64(172), residentBytes(p))
+	assert.Equal(t, p.residentBytes, residentBytes(p))
+	// Plenty of residency remains: the newest target uploads before the
+	// abandoned partial revision retires, so nothing waits behind retirement.
+	for range 2 {
+		upload := nextBatch(t, p, budget)
+		assert.Empty(t, upload.Releases)
+		require.Len(t, upload.Uploads, 1)
+		assert.Equal(t, uint64(3), upload.Uploads[0].Version.Revision)
+		assert.Same(t, first, p.Current())
+		require.NoError(t, p.Acknowledge(upload.Ticket, true))
+	}
+	assert.Same(t, third, p.Current())
+	assert.Len(t, p.resident, 5, "first, the partial second and third coexist until retirement")
+	assert.Equal(t, uint64(260), p.residentBytes)
+	// Stale versions retire in admission order: first's mesh and texture, then
+	// the partial second revision.
+	var released []Version
+	for range 3 {
+		release := nextBatch(t, p, budget)
+		assert.Empty(t, release.Uploads)
+		require.Len(t, release.Releases, 1)
+		released = append(released, release.Releases...)
+		require.NoError(t, p.Acknowledge(release.Ticket, true))
+	}
+	assert.Equal(t, []Version{
+		{Kind: MeshResource, ID: first.Meshes[0].ID, Revision: 1},
+		{Kind: TextureResource, ID: first.Textures[0].ID, Revision: 1},
+		partial.Uploads[0].Version,
+	}, released)
+	batch, err := p.Next(budget)
+	require.NoError(t, err)
+	assert.Nil(t, batch)
+	assert.Equal(t, uint64(88), p.residentBytes)
+	assert.Equal(t, p.residentBytes, residentBytes(p))
+}
+
+func TestFailedRetirementKeepsUploadsWaiting(t *testing.T) {
+	// Failed retirement keeps its charge, so the upload that needs that
+	// capacity still waits; once reclaimed, uploads resume before the rest of
+	// the stale residency retires.
+	s := newStore(t, Limits{})
+	require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
+	first := snapshot(t, s, "a")
+	p := planner(t, ResidencyLimits{Bytes: 176, Resources: 4})
+	budget := Budget{Bytes: 84, Resources: 1}
+	require.NoError(t, p.SetTarget(first))
+	settle(t, p, budget)
+	require.NoError(t, s.Apply([]Change{{"a", variant(2)}}))
+	second := snapshot(t, s, "a")
+	require.NoError(t, p.SetTarget(second))
+	partial := nextBatch(t, p, budget)
+	require.NoError(t, p.Acknowledge(partial.Ticket, true))
+	require.NoError(t, s.Apply([]Change{{"a", variant(3)}}))
+	third := snapshot(t, s, "a")
+	require.NoError(t, p.SetTarget(third))
+	release := nextBatch(t, p, budget)
+	require.Len(t, release.Releases, 1)
+	require.NoError(t, p.Acknowledge(release.Ticket, false))
+	assert.Equal(t, uint64(172), p.residentBytes)
+	retry := nextBatch(t, p, budget)
+	assert.Equal(t, release.Releases, retry.Releases, "residency is not reclaimed optimistically")
+	require.NoError(t, p.Acknowledge(retry.Ticket, true))
+	assert.Equal(t, uint64(88), p.residentBytes)
+	// Both third revisions now fit beside the stale first revision (176 bytes,
+	// four resources), so they upload before first retires.
+	for range 2 {
+		upload := nextBatch(t, p, budget)
+		assert.Empty(t, upload.Releases)
+		require.Len(t, upload.Uploads, 1)
+		assert.Equal(t, uint64(3), upload.Uploads[0].Version.Revision)
+		require.NoError(t, p.Acknowledge(upload.Ticket, true))
+	}
+	assert.Equal(t, uint64(176), p.residentBytes)
+	assert.Same(t, third, p.Current())
+	stale := nextBatch(t, p, budget)
+	require.Len(t, stale.Releases, 1)
+	assert.Equal(t, Version{Kind: MeshResource, ID: first.Meshes[0].ID, Revision: 1}, stale.Releases[0])
+	require.NoError(t, p.Acknowledge(stale.Ticket, true))
+	settle(t, p, budget)
+	assert.Len(t, p.resident, 2)
+	assert.Equal(t, uint64(88), p.residentBytes)
+}
+
+func TestReleaseBudgetBoundsRetirementSeparately(t *testing.T) {
+	s := newStore(t, Limits{})
+	require.NoError(t, s.Apply([]Change{{"a", triangle()}, {"b", triangle()}}))
+	first, err := s.Snapshot([]Range{{Key: "a", Count: 1}, {Key: "b", Count: 1}})
+	require.NoError(t, err)
+	p := planner(t, ResidencyLimits{})
+	budget := Budget{Bytes: 84, Resources: 1, Releases: 3}
+	assert.Equal(t, 1, Budget{Resources: 1}.releases())
+	assert.Equal(t, 3, budget.releases())
+	require.NoError(t, p.SetTarget(first))
+	settle(t, p, budget)
+	assert.Len(t, p.resident, 4)
+	require.NoError(t, p.SetTarget(nil))
+	release := nextBatch(t, p, budget)
+	require.Len(t, release.Releases, 3, "retirement uses its own count bound")
+	assert.Empty(t, release.Uploads)
+	require.NoError(t, p.Acknowledge(release.Ticket, true))
+	release = nextBatch(t, p, budget)
+	require.Len(t, release.Releases, 1)
+	require.NoError(t, p.Acknowledge(release.Ticket, true))
+	assert.Empty(t, p.resident)
+	assert.Zero(t, p.residentBytes)
+	_, err = p.Next(Budget{Bytes: 84, Resources: 1, Releases: -1})
+	assert.ErrorIs(t, err, ErrBudget)
+	_, err = p.Next(Budget{Bytes: 84, Resources: 1, Releases: p.limits.Resources + 1})
+	assert.ErrorIs(t, err, ErrBudget)
+	assert.Nil(t, p.pending, "rejected budgets issue no work")
 }

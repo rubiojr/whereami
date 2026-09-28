@@ -3195,8 +3195,105 @@ no presentation pacing or MapLibre claim follows.
   and asserts that the newer cover waits until the interrupted one is Current.
 
 Remaining levers for the llvmpipe margin are outside this checkpoint: upload
-before retirement in the Planner, asynchronous completion (**w47r**) and pacing
-(**vx93**). Dynamic glyph demand and MapLibre comparison remain separate.
+before retirement in the Planner (addressed by **vtgd** below), asynchronous
+completion (**w47r**) and pacing (**vx93**). Dynamic glyph demand and MapLibre
+comparison remain separate.
+
+### Upload before retirement and bounded release batches
+
+Checkpoint **vtgd** removes the two ways retirement delayed progress after **twd2**.
+The Planner always issued release batches before any upload, so a new target waited
+behind the previous cover's retirement, and every release batch retired at most the
+upload resource count, so each completed intermediate cover cost dozens of
+frame-gated retirement drains. Both were bounded by design but paid on the software
+rasterizer, where every frame is expensive.
+
+1. **Ordering.** `Planner.Next` now issues an upload batch while acknowledged
+   residency (including stale versions) plus that batch fits the residency limits.
+   Stale versions retire when the next upload cannot fit, when no upload remains, or
+   before an unplannable target's error. Residency never exceeds the limits: once no
+   stale version remains, residency is a subset of the active and target sets that
+   `SetTarget` proved to fit. A running resident-byte counter backs the check. The
+   bridge's no-regret supersession rule is unchanged: it counts uploads a document
+   still lacks, and retirement never changes that count.
+2. **Release budget.** `Budget.Releases` bounds one retirement batch separately
+   from `Resources`; zero keeps the upload count. Retiring a version moves no payload
+   and costs the same checked drain per batch, so larger release batches reduce the
+   number of drains without admitting more upload work per batch. The viewer's
+   `-release-resources` flag defaults to **8**.
+
+#### Replay observations
+
+Same corpus, arguments and host as **twd2**; the `-release-resources` value is the
+only added argument. The desktop session was locked during this series, so
+on-screen Vulkan runs could not present (nineteen frames in fifteen seconds for
+every binary, including the baseline) and are not reported; Vulkan rows remain to be
+recaptured on an unlocked desktop. The Xvfb llvmpipe rows below are comparable with
+the twd2 table. Host load stayed between 1.0 and 4.2. Baseline is the committed
+`22fe450` tree; the *old order* rows come from an ablation build that keeps the old
+release-first order with the new release budget. All rows end at 20 tiles / 598
+draws / 94 labels (static 42 / 978 / 130) with zero pending, failed and batch
+failures unless marked.
+
+| llvmpipe replay | Order | Releases | Elapsed s | Current changes | Longest hold s | Mean age s | Upload / release batches | Frames |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| moving, baseline 1 | old | 2 | 12.85 | 5 | 6.86 | 1.91 | 101 / 45 | 306 |
+| moving, baseline 2 | old | 2 | 12.64 | 4 | 6.89 | 2.35 | 99 / 43 | 299 |
+| moving, baseline 3 | old | 2 | 14.10 | 5 | 5.07 | 2.54 | 103 / 47 | 315 |
+| static, baseline | old | 2 | 12.28 | 5 | 7.07 | 2.18 | 114 / 28 | 299 |
+| moving, ablation 1 | old | 2 | 12.88 | 4 | 6.87 | 2.45 | 98 / 41 | 293 |
+| moving, ablation 2 | old | 2 | 14.16 | 6 | 5.15 | 2.16 | 104 / 49 | 321 |
+| moving, ablation 3 | old | 2 | 13.26 | 5 | 6.96 | 2.64 | 99 / 44 | 301 |
+| static, ablation (missed deadline) | old | 2 | 15.25 | 5 | 6.49 | 2.48 | 122 / 31 | 319 |
+| moving, new 1 (missed deadline) | new | 2 | 15.26 | 6 | 4.63 | 1.73 | 110 / 50 | 332 |
+| moving, new 2 | new | 2 | 13.41 | 6 | 4.67 | 1.48 | 102 / 45 | 306 |
+| moving, new 3 | new | 2 | 14.80 | 5 | 4.98 | 1.99 | 103 / 47 | 312 |
+| static, new | new | 2 | 13.16 | 4 | 7.76 | 2.38 | 116 / 30 | 307 |
+| moving, ablation 1 | old | 8 | 13.34 | 5 | 5.62 | 2.38 | 120 / 16 | 286 |
+| moving, ablation 2 | old | 8 | 9.48 | 5 | 4.90 | 1.65 | 99 / 11 | 235 |
+| moving, ablation 3 | old | 8 | 9.86 | 5 | 5.16 | 1.44 | 101 / 13 | 241 |
+| static, ablation | old | 8 | 12.21 | 5 | 5.30 | 2.22 | 122 / 10 | 278 |
+| moving, new 1 | new | 8 | 12.11 | 5 | 5.33 | 2.15 | 109 / 14 | 260 |
+| moving, new 2 | new | 8 | 12.19 | 5 | 5.39 | 2.21 | 109 / 14 | 261 |
+| moving, new 3 | new | 8 | 9.99 | 5 | 4.47 | 1.55 | 100 / 11 | 236 |
+| moving, new 4 | new | 8 | 10.00 | 4 | 4.45 | 1.66 | 98 / 11 | 234 |
+| moving, new 5 | new | 8 | 9.83 | 5 | 4.18 | 1.31 | 99 / 11 | 235 |
+| moving, new 6 | new | 8 | 11.51 | 5 | 5.41 | 2.02 | 96 / 11 | 226 |
+| static, new 1 | new | 8 | 10.54 | 5 | 6.82 | 1.88 | 117 / 8 | 265 |
+| static, new 2 | new | 8 | 10.78 | 4 | 7.88 | 2.41 | 116 / 8 | 263 |
+
+The release budget is the main lever: retirement batches fall from 41–50 to 11–16
+per moving run, and settlement on llvmpipe moves from 12.6–14.2 s (six old-order
+runs at two releases, one static miss) to 9.8–12.2 s across six runs of the
+committed configuration, with static at 10.5–10.8 s instead of 12.3–15.3 s. Ordering
+alone does not shorten settlement on llvmpipe because it reorders rather than
+removes batches, and one of its three runs missed the deadline at 110 upload plus 50
+release batches; it does lower the longest hold (4.6–5.0 s against 5.1–7.0 s) and the
+mean Current age (1.5–2.0 s against 1.9–2.6 s) because a new cover's uploads no longer
+queue behind the previous cover's retirement. Combined, the six moving runs hold
+Current for at most 4.2–5.4 s with a mean age of 1.3–2.2 s. Run-to-run variance on
+the shared host remains large (about ±1.5 s), so these are ranges, not point
+estimates; Vulkan, where frames are cheap and ordering matters most, is unmeasured
+here. No presentation pacing or MapLibre claim follows.
+
+#### Verification
+
+- Planner tests: uploads precede retirement of an abandoned revision under
+  residency headroom, with stale versions then retiring in admission order and the
+  resident-byte counter matching the ledger; a failed retirement keeps its charge so
+  the upload that needs the capacity still waits; the existing tight-limit
+  supersession test now exercises the capacity-driven release path; the release
+  budget bounds retirement separately and rejects negative or over-limit values
+  without issuing work.
+- Worker, worker-data and synthetic bridge tests updated to the new order: the
+  newest target uploads before the abandoned partial revision retires; a landed
+  upload commits the target under the unchanged no-regret rule; A's lease is still
+  released only when C's handoff is proven.
+- The residency fuzz run exercised **634,587 executions** in 20 seconds with the
+  peak-residency and release-safety assertions unchanged. Race, GOARCH=386, vet and
+  staticcheck pass on retained, producer and tiles; the full pinned pkg/vecmap
+  suite and the tagged OpenGL adapter/viewer suites, including the race detector,
+  are recorded in the kata issue.
 
 ## Flatpak integration
 

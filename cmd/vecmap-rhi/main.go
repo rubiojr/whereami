@@ -32,7 +32,8 @@ func main() {
 	foreground := flag.Bool("foreground", false, "keep the benchmark window on top and request activation")
 	diagnostics := flag.Bool("diagnostics", false, "report timer delivery and window state around pacing gaps")
 	uploadBytes := flag.Uint64("upload-bytes", 32<<20, "maximum geometry/index/RGBA bytes per upload batch (resources are indivisible)")
-	uploadResources := flag.Int("upload-resources", 2, "maximum resource operations per upload or retirement batch")
+	uploadResources := flag.Int("upload-resources", 2, "maximum resources per upload batch")
+	releaseResources := flag.Int("release-resources", 8, "maximum resources per retirement batch; zero uses -upload-resources")
 	reload := flag.Duration("reload", 0, "poll the scene file for live replacements (for example 1s); zero disables")
 	live := liveOptions{}
 	flag.BoolVar(&live.enabled, "live", false, "load live MVT tiles with supplied Liberty fonts")
@@ -46,7 +47,7 @@ func main() {
 	flag.IntVar(&live.workers, "tile-workers", 4, "live transport workers (1-4); use 1 for ordered cache replay")
 	flag.BoolVar(&live.cacheOnly, "cache-only", false, "live replay from verified cached tiles only; never fetch missing entries")
 	flag.Parse()
-	if err := run(*path, benchmarkOptions{liveOptions: live, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources}}); err != nil {
+	if err := run(*path, benchmarkOptions{liveOptions: live, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -211,7 +212,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 			fmt.Printf("producer_%s_count=%d wall_total=%s wall_max=%s\n", phase.name, phase.value.Count, phase.value.Total, phase.value.Maximum)
 		}
 	}
-	fmt.Printf("upload_budget_bytes=%d upload_budget_resources=%d planner_ready=%t native_generation=%d batch_failures=%d\n", options.budget.Bytes, options.budget.Resources, finalStatus.Ready, finalStatus.Generation, finalStatus.BatchFailures)
+	fmt.Printf("upload_budget_bytes=%d upload_budget_resources=%d release_budget_resources=%d planner_ready=%t native_generation=%d batch_failures=%d\n", options.budget.Bytes, options.budget.Resources, options.budget.Releases, finalStatus.Ready, finalStatus.Generation, finalStatus.BatchFailures)
 	fmt.Printf("backend=%s device=%s\n", latest.Backend, latest.Device)
 	fmt.Printf("frames=%d mesh_uploads=%d texture_uploads=%d uploaded_bytes=%d live_meshes=%d live_textures=%d\n", latest.Frames, latest.MeshUploads, latest.TextureUploads, latest.UploadedBytes, latest.LiveMeshes, latest.LiveTextures)
 	fmt.Printf("completion_drains=%d completion_drain_cpu=%s\n", latest.CompletionDrains, latest.CompletionDrainTime)
