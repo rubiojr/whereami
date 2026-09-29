@@ -183,6 +183,7 @@ type Producer struct {
 	current  current
 	status   Status
 	wake     chan struct{}
+	changed  chan struct{}
 	ctx      context.Context
 	cancel   context.CancelFunc
 	done     chan struct{}
@@ -205,7 +206,7 @@ func New(loader Loader, limits Limits) (*Producer, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &Producer{ctx: ctx, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1),
+	p := &Producer{ctx: ctx, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1), changed: make(chan struct{}, 1),
 		jobs: make(chan job), results: make(chan result, limits.Workers), limits: limits, loader: loader,
 		leases: make(map[*Lease]struct{})}
 	go p.run(set)
@@ -356,6 +357,14 @@ func (p *Producer) Close() {
 }
 
 func (p *Producer) Done() <-chan struct{} { return p.done }
+
+// Changed receives when the producer has something new for its consumer: a lease
+// for Next, or a change of Pending, Failed, LastError or StyleHeld in Status,
+// including the owner taking a request, Retry or Current from its mailbox. An
+// idle producer sends nothing. Values coalesce, so one receive can stand for
+// several changes: call Next and Status after each. It serves one consumer and
+// is never closed; select on Done as well.
+func (p *Producer) Changed() <-chan struct{} { return p.changed }
 
 func (p *Producer) signal() {
 	select {

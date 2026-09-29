@@ -31,6 +31,7 @@ type Bridge struct {
 	receiving                                 bool
 	generation, consumed, completed, revision uint64
 	stop, done                                chan struct{}
+	protocol                                  chan struct{} // the renderer consumed or completed a packet
 	once                                      sync.Once
 	stats                                     BridgeStats
 	started                                   time.Time
@@ -82,7 +83,8 @@ func NewBridge(p *Producer, initial *scene.Document, limits retained.ResidencyLi
 		return nil, err
 	}
 	b := &Bridge{producer: p, worker: w, initial: initial, held: make(map[*scene.Document]*Lease), received: make(map[*scene.Document]time.Time),
-		resident: make(map[retained.Version]bool), busy: true, started: time.Now(), stop: make(chan struct{}), done: make(chan struct{})}
+		resident: make(map[retained.Version]bool), busy: true, started: time.Now(), stop: make(chan struct{}), done: make(chan struct{}),
+		protocol: make(chan struct{}, 1)}
 	b.latest.Store(initial)
 	go b.run()
 	return b, nil
@@ -129,6 +131,7 @@ func (b *Bridge) Consumed(packet retained.PacketWithData[*scene.Document]) bool 
 	}
 	b.consumed = packet.Sequence
 	b.observeCurrent(packet.CurrentData, l)
+	b.progressed()
 	if b.stats.FirstVisibleCurrent == 0 && packet.CurrentData != nil && len(packet.CurrentData.Scene.Draws) > 0 {
 		b.stats.FirstVisibleCurrent = time.Since(b.started)
 		b.stats.FirstCurrentTiles = b.stats.CurrentTiles
@@ -176,6 +179,7 @@ func (b *Bridge) Completed(packet retained.PacketWithData[*scene.Document], succ
 		return false
 	}
 	b.completed = packet.Sequence
+	defer b.progressed()
 	if success && packet.Err == nil {
 		b.recordCompletion(packet)
 	}
@@ -276,26 +280,35 @@ func (b *Bridge) remaining(target *scene.Scene) int {
 	return missing
 }
 
+// progressed wakes run, which may now promote the pending document.
+func (b *Bridge) progressed() {
+	select {
+	case b.protocol <- struct{}{}:
+	default:
+	}
+}
+
+// run takes the producer's output and promotes pending documents. It wakes only
+// when the producer signals a change or the renderer reports packet progress.
 func (b *Bridge) run() {
 	defer close(b.done)
-	ticker := time.NewTicker(8 * time.Millisecond)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-b.stop:
 			return
-		case <-ticker.C:
-			b.mu.Lock()
-			b.receiving = true
-			b.mu.Unlock()
-			if lease, ok := b.producer.Next(); ok {
-				b.receive(lease)
-			}
-			b.mu.Lock()
-			b.receiving = false
-			b.promotePending()
-			b.mu.Unlock()
+		case <-b.producer.Changed():
+		case <-b.protocol:
 		}
+		b.mu.Lock()
+		b.receiving = true
+		b.mu.Unlock()
+		if lease, ok := b.producer.Next(); ok {
+			b.receive(lease)
+		}
+		b.mu.Lock()
+		b.receiving = false
+		b.promotePending()
+		b.mu.Unlock()
 	}
 }
 

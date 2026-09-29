@@ -161,6 +161,13 @@ is no polling retry loop, enlarged limit or optimistic retirement credit. Inputs
 that cannot fit remain explicit failures. LastError stays latched after recovery;
 use Pending/Failed and bridge readiness to judge current progress.
 
+`Changed` lets a consumer wait instead of polling. It receives when a lease is
+ready for Next, when the owner takes a request, Retry or Current from its mailbox,
+and when Pending, Failed, LastError or StyleHeld change; an idle producer sends
+nothing. Receives coalesce, so read Next and Status after each one. The view has
+settled when Status.Pending is zero for the latest revision. Bridge waits on it
+and on the renderer's Consumed and Completed calls instead of a timer.
+
 ## Storage ledger
 
 Limits are explicit positive values; use DefaultLimits as a starting policy:

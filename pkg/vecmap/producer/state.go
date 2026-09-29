@@ -45,6 +45,7 @@ type state struct {
 	failures                            map[view.TileID]failure
 	stats                               Status
 	dirty                               bool
+	notify                              bool // the consumer can see a change the next report must signal
 	published                           bool // the working epoch reached a coherent publication attempt
 	workingPrepares                     int  // Prepare attempts since adoption; bounds a held epoch
 	heldStyle                           *Style
@@ -151,6 +152,7 @@ func (s *state) inputs() {
 	}
 	retry := p.retry
 	p.retry = false
+	s.notify = s.notify || r != nil || retry
 	ack := p.current
 	pinned := make(map[view.TileID]bool)
 	for l := range p.leases {
@@ -160,6 +162,7 @@ func (s *state) inputs() {
 	}
 	p.mu.Unlock()
 	if ack.generation != s.current.generation || ack.sequence != s.current.sequence {
+		s.notify = true
 		// Native packets advance sequence for every batch, but only changed
 		// coverage affects continuity selection. Don't feed uploads back into
 		// identical CPU publications and placement work.
@@ -645,6 +648,7 @@ func (s *state) publish() {
 		p.output.released = true
 		delete(p.leases, p.output)
 		p.output = nil
+		s.notify = true
 	}
 	full := len(p.leases) >= p.limits.Leases
 	p.mu.Unlock()
@@ -691,6 +695,7 @@ func (s *state) publish() {
 	}
 	s.stats.PeakLeaseBytes = max(s.stats.PeakLeaseBytes, leaseBytes)
 	p.output = l
+	s.notify = true
 	s.stats.SelectedTiles, s.stats.Fallbacks = len(snapshot.Cover), snapshot.Fallbacks
 	s.dirty = false
 }
@@ -777,5 +782,14 @@ func (s *state) report() {
 	s.stats.PeakLeases = max(s.stats.PeakLeases, s.stats.Leases)
 	s.stats.PeakCacheBytes = max(s.stats.PeakCacheBytes, s.stats.CacheBytes)
 	s.stats.PeakLeaseBytes = max(s.stats.PeakLeaseBytes, s.stats.LeaseBytes)
+	old := p.status
+	if s.notify || old.Pending != s.stats.Pending || old.Failed != s.stats.Failed || old.StyleHeld != s.stats.StyleHeld ||
+		old.LastError != s.stats.LastError || old.LastErrorStage != s.stats.LastErrorStage {
+		select {
+		case p.changed <- struct{}{}:
+		default:
+		}
+		s.notify = false
+	}
 	p.status = s.stats
 }

@@ -318,6 +318,86 @@ func TestRetryIsPendingUntilTheOwnerTakesIt(t *testing.T) {
 	assert.Equal(t, 1, p.Status().Pending, "a consumer polling for settlement must not stop before the retry starts")
 }
 
+// changed waits for the next signal from Changed.
+func changed(t *testing.T, p *Producer) {
+	t.Helper()
+	select {
+	case <-p.Changed():
+	case <-time.After(5 * time.Second):
+		t.Fatalf("no change signalled, status: %+v", p.Status())
+	}
+}
+
+// settle consumes like a client that never polls: it wakes only on Changed and
+// stops once the latest request has no pending work. It returns the last lease.
+func settle(t *testing.T, p *Producer, revision uint64) (*Lease, Status) {
+	t.Helper()
+	var last *Lease
+	for {
+		changed(t, p)
+		if l, ok := p.Next(); ok {
+			if last != nil {
+				last.Release()
+			}
+			last = l
+		}
+		if status := p.Status(); status.Revision == revision && status.Pending == 0 {
+			if last != nil {
+				t.Cleanup(last.Release)
+			}
+			return last, status
+		}
+	}
+}
+
+// quiet fails when Changed signals again within a while.
+func quiet(t *testing.T, p *Producer) {
+	t.Helper()
+	select {
+	case <-p.Changed(): // one change may have coalesced with those already read
+	default:
+	}
+	select {
+	case <-p.Changed():
+		t.Fatalf("an idle producer signalled a change, status: %+v", p.Status())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestChangedSignalsOutputAndSettlementWithoutPolling(t *testing.T) {
+	limits := DefaultLimits()
+	limits.RetryDelay = time.Millisecond
+	p, c := newControlled(t, limits)
+	tile, other := view.TileID{}, view.TileID{Z: 1}
+	revision, err := p.Submit(testRequest(t, tile))
+	require.NoError(t, err)
+	nextCall(t, c).reply <- answer{data: tilePBF()}
+	lease, _ := settle(t, p, revision)
+	require.NotNil(t, lease)
+	assert.Equal(t, []view.TileID{tile}, lease.Snapshot.Cover)
+	quiet(t, p)
+
+	// Taking Current from the mailbox is a change the consumer waits for.
+	require.True(t, p.Current(1, 1, lease))
+	assert.Positive(t, p.Status().Pending)
+	settle(t, p, revision)
+	quiet(t, p)
+
+	// So is a retry with nothing to retry.
+	require.NoError(t, p.Retry())
+	settle(t, p, revision)
+	quiet(t, p)
+
+	// A failure settles too, and reports it.
+	revision, err = p.Submit(testRequest(t, other))
+	require.NoError(t, err)
+	nextCall(t, c).reply <- answer{err: ErrMissing}
+	_, status := settle(t, p, revision)
+	assert.Equal(t, 1, status.Failed)
+	assert.NotEmpty(t, status.LastError)
+	quiet(t, p)
+}
+
 func TestAssetsRebuildStyleReprepareAndCameraReuse(t *testing.T) {
 	limits := DefaultLimits()
 	limits.Workers = 1
