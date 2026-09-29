@@ -12,3 +12,4 @@ dist/
 /whereami-flatpak
 /examples/map/map
 .kata.local.toml
+/tmp
