@@ -11,6 +11,7 @@ import (
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/mvt"
 	"github.com/rubiojr/whereami/pkg/vecmap/style"
+	"github.com/rubiojr/whereami/pkg/vecmap/view"
 )
 
 // MaxTriangles is the existing per-batch tessellation/builder ceiling. Callers
@@ -26,6 +27,10 @@ type LayerOptions struct {
 	Zoom          float64
 	Indexed       bool
 	TriangleLimit int
+	// Coarser is the number of zoom levels the style zoom lies below the zoom
+	// the tile is drawn at. Zoom evaluates the style; Zoom plus Coarser converts
+	// pixels to source-tile units. At most view.MaxCoarser.
+	Coarser int
 	// ExtrudeLines makes CompileTile emit undashed, unoffset lines and fill
 	// outlines as width-independent extruded primitives, and marks the remaining
 	// zoom-baked line geometry Dynamic. False preserves the existing output.
@@ -38,8 +43,9 @@ type LayerOptions struct {
 }
 
 func (o LayerOptions) validated() (float64, int, error) {
-	scale := math.Exp2(o.Zoom - float64(o.SourceZoom))
-	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) || o.TriangleLimit < 0 || o.TriangleLimit > MaxTriangles {
+	scale := math.Exp2(o.Zoom + float64(o.Coarser) - float64(o.SourceZoom))
+	if scale <= 0 || math.IsNaN(scale) || math.IsInf(scale, 0) || o.TriangleLimit < 0 || o.TriangleLimit > MaxTriangles ||
+		o.Coarser < 0 || o.Coarser > view.MaxCoarser {
 		return 0, 0, ErrOptions
 	}
 	limit := o.TriangleLimit

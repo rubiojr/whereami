@@ -3837,6 +3837,138 @@ false with `=false`; the tagged adapter and viewer suites pass on Vulkan and
 OpenGL, and tagged staticcheck passes. Only flag defaults changed, so headless
 packages are unaffected.
 
+### Coarser tiles
+
+Checkpoint **xcmf** adds an option to draw tiles from below the camera zoom
+(`tiles.PrepareOptions.Coarser`, `view.VisibleTileCoverAt`, `view.StyleZoomAt`,
+viewer `-coarser-tiles`, 0 to 2, default 0). vecmap draws a tile 256 units wide at
+its own zoom. MapLibre draws the same tile 512 units wide, so for one view vecmap
+loads more tiles and evaluates the style one zoom higher. With `Coarser` set to
+one, tiles and style zoom lie one level below the camera zoom.
+
+The option has to reach the compiler. Baked line widths, pattern sizes and symbol
+spacing are converted from pixels to tile units, which before this checkpoint
+used the style zoom. Lowering only the style zoom on coarser tiles draws baked
+lines twice as wide and spaces line labels at twice the distance. `Zoom` still
+evaluates the style; the conversion uses `Zoom` plus `Coarser`, the zoom the tile
+is drawn at. Geometry with pixel offsets (the three resident options, labels) was
+already independent of it. The producer selects its default cover from
+`Style.Options.Coarser`, so cover and preparation cannot disagree; explicit
+targets remain the caller's responsibility.
+
+Limits of the option: from camera zoom 14 plus `Coarser` up the tiles are the
+same and only the style zoom differs. Below camera zoom `Coarser` the style zoom
+stays at zero and baked widths are those of camera zoom `Coarser`. The prefetch
+ring stays at one tile, which covers twice the ground with `Coarser` one.
+
+Tiles per view at Madrid, bearing 0, zoom 10 to 16 in quarter steps, `Coarser` one
+as a share of zero: 0.49 of the visible tiles and 0.68 with the ring at 800x600,
+0.42 and 0.59 at 1280x800, 0.50 and 0.71 at 372x695.
+
+#### Replay observations
+
+Same host, glyphs and arguments as **kykh** (resident options on). The corpus is
+the **kykh** corpus plus the tiles `view.LoadOrder(view.VisibleTileCoverAt(trace,
+1))` needs: 38 tiles against 71, captured from the same pinned snapshot. Both
+modes come from one binary, in two passes of three moving runs and one static
+run per backend, the second pass in reverse order, on an unlocked desktop. Every
+series started at a one-minute host load of 0.77–1.49. All 32 runs exit 0 with
+zero pending, failed and batch failures. The two modes do not draw the same
+scene: moving runs end at 20 tiles / 94 labels against 12 / 40, static runs at
+42 / 130 against 20 / 90.
+
+| Replay | Coarser | Elapsed s | Current changes | Longest hold s | Mean age s | Loads | Upload batches | Mesh uploads | Uploaded MB | Prepare + Build ms | Peak RSS MiB | GPU p95 ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | 0 | 6.63–6.69 | 8–12 | 1.11–1.42 | 0.31–0.38 | 87 | 121–127 | 167–176 | 300–308 | 2,890–2,980 | 1,001–1,057 | 4.3–4.6 |
+| Vulkan moving | 1 | 5.40–5.49 | 17–20 | 0.75–1.10 | 0.13–0.21 | 47 | 84–86 | 98 | 293 | 2,605–2,711 | 998–1,045 | 3.7–4.1 |
+| Vulkan static | 0 | 5.13–5.14 | 5 | 2.04–2.07 | 0.55–0.56 | 58 | 77 | 114 | 182 | 574–605 | 695–713 | 3.8–4.0 |
+| Vulkan static | 1 | 5.15 | 4 | 3.13–3.14 | 0.50 | 29 | 49 | 58 | 138 | 455–473 | 594–597 | 3.0–3.5 |
+| llvmpipe moving | 0 | 9.42–10.72 | 6–9 | 2.87–3.62 | 0.94–1.13 | 60–74 | 70–78 | 100–121 | 207–234 | 3,215–3,522 | 1,304–1,467 | 60.8–67.1 |
+| llvmpipe moving | 1 | 6.09–6.85 | 7–9 | 1.80–2.44 | 0.28–0.59 | 36–39 | 55–70 | 71–87 | 187–253 | 2,701–3,009 | 1,358–1,485 | 51.7–57.0 |
+| llvmpipe static | 0 | 8.67–8.79 | 5 | 5.39–5.43 | 1.44 | 58 | 78 | 116 | 186 | 650–679 | 988–999 | 57.6–59.1 |
+| llvmpipe static | 1 | 5.20–5.22 | 4 | 2.49–2.63 | 0.59–0.60 | 29 | 49 | 56–58 | 134–138 | 484–501 | 827–836 | 47.9–49.1 |
+
+Under motion `Coarser` one settles 1.1–1.3 s sooner on Vulkan and 2.6–4.6 s sooner
+on llvmpipe, with a mean Current age of about half or less. Vulkan completes 17–20
+covers against 8–12. A static view on llvmpipe settles 3.5 s sooner, within 0.2 s
+of the five-second run length.
+
+The saving is in counts, not in bytes. Loads fall by about half, upload batches by
+about a third and mesh uploads by 40–50% (less on llvmpipe under motion: 55–70
+batches against 70–78). A coarser tile is heavier: uploaded bytes under motion
+are unchanged and fall by a quarter on a static load, and Prepare plus Build time
+falls by 9–15% under motion and 21–26% on a static load. This agrees with
+**s834**: the upload count is the binding limit.
+
+Both static Vulkan modes end at the five-second run length, so their elapsed time
+says nothing. The longer hold with `Coarser` one (3.1 s against 2.1 s) is
+consistent with the final cover arriving earlier and then staying; the replay
+does not record that time.
+
+In the replay, peak process memory is 100–170 MiB lower on a static load and
+unchanged under motion, where both modes fill the 256 MiB CPU cache. `Coarser` one evicts far
+fewer preparations to stay within it (static 1 against 35–40, moving 10–52 against
+101–193).
+
+The replay covers camera zoom 9.8–10.2 only. Static loads of the same place at
+eight camera zooms (800x600, llvmpipe, CPU cache and scene budgets raised to 1 GiB
+so both modes draw complete covers, one run each) show that the saving depends on
+the source zoom, because tiles of zoom 8 and zoom 13 are heavy:
+
+| Camera zoom | Source tiles | Tiles | Labels | Uploaded MB | Peak cache MiB | Peak RSS MiB | Complete at default budgets |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 9 | z9 → z8 | 36 → 25 | 141 → 73 | 191 → 262 | 365 → 490 | 1,054 → 1,342 | no → no |
+| 11 | z11 → z10 | 30 → 20 | 132 → 85 | 120 → 110 | 221 → 209 | 747 → 729 | yes → yes |
+| 12 | z12 → z11 | 30 → 16 | 90 → 86 | 127 → 88 | 235 → 164 | 778 → 588 | yes → yes |
+| 13 | z13 → z12 | 36 → 20 | 54 → 28 | 326 → 92 | 577 → 173 | 1,634 → 592 | no → yes |
+| 14 | z14 → z13 | 30 → 20 | 110 → 26 | 194 → 242 | 369 → 428 | 1,087 → 1,224 | no → no |
+| 14.5 | z14 → z13 | 25 → 16 | 81 → 14 | 181 → 204 | 345 → 360 | 1,012 → 1,055 | no → no |
+| 15 | z14 → z14 | 20 → 20 | 89 → 76 | 184 → 139 | 337 → 269 | 1,021 → 810 | no → yes |
+| 16 | z14 → z14 | 12 → 12 | 75 → 64 | 164 → 123 | 326 → 231 | 953 → 707 | no → yes |
+
+Each cell reads `Coarser` zero → one. The zoom 13 row for zero needed upload
+batches of 32 resources to settle in time, so its peak RSS is not strictly
+comparable. With the viewer's default budgets (256 MiB cache, 128 MiB per scene)
+six of the eight views stay incomplete with `Coarser` zero and three with one:
+the scene budget is exceeded and parent tiles stand in.
+
+The look changes most at camera zoom 13 to 14.5: buildings appear at 14 instead
+of 13, and street names, transit stations and the minor streets of the old centre
+appear at 15 instead of 14. Zoom 12, 15 and 16 are close to identical.
+
+The option stays off in the viewer: an owner decision recorded on 2026-09-29
+after comparing the eight views. The look with `Coarser` one at street level was
+judged not acceptable, and the look with zero good. Turning the option on changes
+the look at every camera zoom below 15 (thinner roads, fewer labels, full detail
+one zoom later).
+
+The missing names come from the tile data, not from the style. Coarser tiles
+prepared with the style zoom of the camera (explicit targets one zoom lower,
+`Coarser` zero, an experiment build) bring back the width of minor streets but
+place the same 26 labels at camera zoom 14 and 14 at zoom 14.5: tiles of zoom 13
+carry no minor street names or transit stations. No style setting on coarser
+tiles recovers today's detail. These are matched input replays, not
+matched frame work; no presentation pacing or MapLibre claim follows.
+
+#### Verification
+
+- View: the cover with `Coarser` one equals the default cover of a camera one zoom
+  lower with half the viewport; source zoom is bounded at 0 and 14 and the option
+  at `MaxCoarser`. `StyleZoomAt` keeps the sixteenth steps and stays at zero below
+  camera zoom `Coarser`.
+- Compiler and placement: a zoom-dependent line width takes the value of the
+  style zoom and the tile units of the drawn zoom; pattern scale and symbol
+  spacing follow the drawn zoom; values outside the range are rejected. Coverage
+  stays at **100%**.
+- Tiles: a tile prepared at style zoom z with `Coarser` one equals the same tile
+  prepared at z+1 without it when the style does not depend on zoom, in
+  primitives and symbol candidates, and differs from z without it.
+- Producer: a request without targets loads and publishes only tiles one zoom
+  below the camera; values outside the range are rejected by `Submit`.
+- Native: static screenshots of the Madrid view render both modes on OpenGL. The
+  tagged viewer and adapter suites pass on OpenGL, and tagged staticcheck passes.
+  The tagged suites were not rerun on Vulkan.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

@@ -45,6 +45,11 @@ built, err := prepared.Build(tiles.Assets{
 err = set.Apply([]tiles.Change{{Tile: tileID, Fragment: built.Fragment}})
 ```
 
+`PrepareOptions.Coarser` prepares a tile that is drawn that many zoom levels above
+its own zoom and the style zoom, as `view.VisibleTileCoverAt` selects it. `Zoom`
+still evaluates the style. Pixel widths, pattern sizes and symbol spacing are
+converted to tile units at `Zoom` plus `Coarser`, the zoom the tile is drawn at.
+
 `Prepare` accepts arbitrary bounded MVT input and application-owned compiled style
 layers. It reuses the existing MVT decoder, Earcut/line geometry, layer visibility
 and symbol-candidate algorithms. Unsupported style kinds retain compiler's existing

@@ -102,6 +102,9 @@ func TestPrepareSymbolsSpacingFallbacksAndCallerVisibility(t *testing.T) {
 	assert.Equal(t, geometry.Point{}, symbols[0].IconOffset)
 	assert.False(t, symbols[0].ViewportAligned)
 	assert.Equal(t, 25.0, SymbolSpacing(200, 14, 17))
+	// Spacing follows the zoom the tile is drawn at, not the lower style zoom.
+	assert.Equal(t, symbols, collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 16, Coarser: 1, Limit: 10}))
+	assert.Len(t, collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 16, Limit: 10}), 2)
 	layer.Layout["text-field"] = strings.Repeat("A", 257)
 	assert.Empty(t, collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{}))
 	layer.Layout["icon-image"] = "airport"

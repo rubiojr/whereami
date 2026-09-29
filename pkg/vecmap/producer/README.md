@@ -54,8 +54,10 @@ be inferred automatically. It must remain valid as a cache fills. Underdeclaring
 profile violates the budget contract. No new untrusted style/asset ingestion API is
 introduced.
 
-`Targets == nil` uses `view.VisibleTileCover`; an explicit empty slice clears the
-cover. Explicit covers have at most 64 unique canonical tiles at one source zoom
+`Targets == nil` uses `view.VisibleTileCoverAt` with `Style.Options.Coarser`
+(zero by default, at most `view.MaxCoarser`); an explicit empty slice clears the
+cover. Explicit targets must lie `Style.Options.Coarser` zoom levels below the
+camera zoom, because baked widths and symbol spacing are converted at that scale. Explicit covers have at most 64 unique canonical tiles at one source zoom
 through 14. Submit copies that small slice. Camera updates coalesce in one slot.
 
 ## Scheduling, refresh and failure

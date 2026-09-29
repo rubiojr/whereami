@@ -49,6 +49,7 @@ func main() {
 	flag.BoolVar(&live.residentGeometry, "resident-geometry", true, "keep fills and shader-extruded lines resident across style-zoom changes")
 	flag.BoolVar(&live.residentSymbols, "resident-symbols", true, "keep icon and text quads resident across style-zoom changes that preserve symbol layout")
 	flag.BoolVar(&live.residentDashes, "resident-dashes", true, "keep butt-capped dashed lines resident and dash them in the fragment shader")
+	flag.IntVar(&live.coarser, "coarser-tiles", 0, "draw live tiles from this many zoom levels below the camera zoom (0-2); 1 draws a tile 512 units wide as MapLibre does")
 	flag.Parse()
 	if err := run(*path, benchmarkOptions{liveOptions: live, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -187,7 +188,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser)
 	if options.diagnostics {
 		pacing.report()
 	}

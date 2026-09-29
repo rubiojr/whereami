@@ -174,7 +174,7 @@ func (s *state) inputs() {
 	if r != nil {
 		targets := r.Targets
 		if targets == nil {
-			targets = view.VisibleTileCover(r.Camera)
+			targets = view.VisibleTileCoverAt(r.Camera, r.Style.Options.Coarser)
 		}
 		if !slices.Equal(targets, s.targets) {
 			if !s.advanceGeneration() {

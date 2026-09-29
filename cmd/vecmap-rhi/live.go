@@ -29,6 +29,7 @@ type liveOptions struct {
 	residentGeometry          bool
 	residentSymbols           bool
 	residentDashes            bool
+	coarser                   int
 }
 
 type liveSource struct {
@@ -47,6 +48,9 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return nil, producer.ErrInput
 		}
+	}
+	if options.coarser < 0 || options.coarser > view.MaxCoarser {
+		return nil, producer.ErrInput
 	}
 	var load producer.Loader
 	var err error
@@ -91,7 +95,7 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 		return nil, err
 	}
 	l := &liveSource{p: p, bridge: b, initial: initial, request: producer.Request{Camera: camera,
-		Style:  &producer.Style{Source: options.template, Epoch: 1, Layers: layers, Options: tiles.PrepareOptions{Zoom: view.StyleZoom(camera.Zoom), Indexed: true, ResidentGeometry: options.residentGeometry, ResidentSymbols: options.residentSymbols, ResidentDashes: options.residentDashes}, Bytes: 4 << 20},
+		Style:  &producer.Style{Source: options.template, Epoch: 1, Layers: layers, Options: tiles.PrepareOptions{Zoom: view.StyleZoomAt(camera.Zoom, options.coarser), Coarser: options.coarser, Indexed: true, ResidentGeometry: options.residentGeometry, ResidentSymbols: options.residentSymbols, ResidentDashes: options.residentDashes}, Bytes: 4 << 20},
 		Assets: &producer.Assets{Epoch: 1, Bytes: 60 << 20, Value: tiles.Assets{Fonts: fonts, Sprite: liberty.Sprite, SpriteEntry: liberty.SpriteEntry, FallbackEligible: glyph.LegacyFallbackEligible}},
 	}}
 	l.revision, err = p.Submit(l.request)
@@ -107,7 +111,7 @@ func (l *liveSource) update(camera view.Camera) error {
 		return nil
 	}
 	l.request.Camera = camera
-	zoom := view.StyleZoom(camera.Zoom)
+	zoom := view.StyleZoomAt(camera.Zoom, l.request.Style.Options.Coarser)
 	if zoom != l.request.Style.Options.Zoom {
 		next := *l.request.Style
 		if next.Epoch == math.MaxUint64 {

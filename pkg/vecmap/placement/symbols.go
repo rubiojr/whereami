@@ -60,10 +60,13 @@ type Symbol struct {
 
 // SymbolOptions supplies tile/source zoom, evaluated style zoom and remaining
 // capacity shared across the caller's tile layers. Limit is capped at MaxSymbols.
+// Coarser is the number of zoom levels the style zoom lies below the zoom the
+// tile is drawn at; spacing follows the drawn zoom.
 type SymbolOptions struct {
 	SourceZoom uint32
 	Zoom       float64
 	Limit      int
+	Coarser    int
 }
 
 // PrepareSymbols emits candidates in feature/anchor order for one already-selected
@@ -101,7 +104,7 @@ func PrepareSymbols(features []mvt.Feature, layer style.CompiledLayer, options S
 			continue
 		}
 		mode := layer.StringValue("symbol-placement", context, "point")
-		spacing := SymbolSpacing(layer.NumberValue("symbol-spacing", context, 250), options.SourceZoom, options.Zoom)
+		spacing := SymbolSpacing(layer.NumberValue("symbol-spacing", context, 250), options.SourceZoom, options.Zoom+float64(options.Coarser))
 		fontFamily, fontStack := layer.FontStack(context)
 		for _, anchor := range FeatureAnchors(feature, mode, spacing) {
 			if remaining == 0 {
@@ -117,9 +120,10 @@ func PrepareSymbols(features []mvt.Feature, layer style.CompiledLayer, options S
 	return nil
 }
 
-// SymbolSpacing converts screen-pixel spacing to source-tile units at style zoom.
-func SymbolSpacing(screenPixels float64, sourceZoom uint32, styleZoom float64) float64 {
-	return screenPixels * math.Exp2(float64(sourceZoom)-styleZoom)
+// SymbolSpacing converts screen-pixel spacing to source-tile units at the zoom
+// the tile is drawn at, which is the style zoom unless tiles are drawn coarser.
+func SymbolSpacing(screenPixels float64, sourceZoom uint32, drawnZoom float64) float64 {
+	return screenPixels * math.Exp2(float64(sourceZoom)-drawnZoom)
 }
 
 func evaluatedSymbol(layer style.CompiledLayer, context style.Context, anchor Anchor, mode, text, iconName, family, stack string) Symbol {

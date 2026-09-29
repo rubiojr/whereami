@@ -9,6 +9,7 @@ import (
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/mvt"
 	"github.com/rubiojr/whereami/pkg/vecmap/style"
+	"github.com/rubiojr/whereami/pkg/vecmap/view"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,11 +150,36 @@ func TestLineFilteringDashesAndPolygonPaths(t *testing.T) {
 	assert.Empty(t, got[0].mesh.Vertices)
 }
 
+func TestCoarserEvaluatesStyleBelowTheDrawnZoom(t *testing.T) {
+	width := []any{"interpolate", []any{"linear"}, []any{"zoom"}, 9.0, 4.0, 10.0, 8.0}
+	line := style.CompiledLayer{Kind: "line", Paint: map[string]any{"line-color": "#ff0000", "line-width": width}}
+	features := []mvt.Feature{lineFeature(nil)}
+	// A z9 tile drawn at zoom 10: the style gives the 4 pixels of zoom 9, and a
+	// pixel is half a tile unit.
+	got := collect(t, features, line, LayerOptions{SourceZoom: 9, Zoom: 9, Coarser: 1})
+	require.Len(t, got, 1)
+	want, err := geometry.TessellateLines(features[0].Lines, geometry.LineStyle{Width: 2, Cap: "butt", Join: "miter"}, MaxTriangles, false)
+	require.NoError(t, err)
+	assert.Equal(t, want, got[0].mesh)
+	// Without the option the same style zoom draws the tile at zoom 9.
+	got = collect(t, features, line, LayerOptions{SourceZoom: 9, Zoom: 9})
+	want, err = geometry.TessellateLines(features[0].Lines, geometry.LineStyle{Width: 4, Cap: "butt", Join: "miter"}, MaxTriangles, false)
+	require.NoError(t, err)
+	assert.Equal(t, want, got[0].mesh)
+
+	pattern := style.CompiledLayer{Paint: map[string]any{"fill-pattern": "dots"}}
+	polygons := []mvt.Feature{polygonFeature(nil)}
+	coarse := collect(t, polygons, pattern, LayerOptions{SourceZoom: 9, Zoom: 9, Coarser: 1})
+	require.Len(t, coarse, 1)
+	assert.Equal(t, collect(t, polygons, pattern, LayerOptions{SourceZoom: 9, Zoom: 10}), coarse)
+	assert.NotEqual(t, collect(t, polygons, pattern, LayerOptions{SourceZoom: 9, Zoom: 9})[0].scale, coarse[0].scale)
+}
+
 func TestCompilerOptionsAndFailurePolicy(t *testing.T) {
 	sentinel := errors.New("sink stopped")
 	noop := func(geometry.Mesh, style.Color) error { return nil }
 	pattern := func(geometry.Mesh, string, float64, float64) error { return nil }
-	for _, options := range []LayerOptions{{Zoom: math.NaN()}, {Zoom: math.Inf(1)}, {Zoom: math.Inf(-1)}, {Zoom: 2000}, {Zoom: -2000}, {TriangleLimit: -1}, {TriangleLimit: MaxTriangles + 1}} {
+	for _, options := range []LayerOptions{{Zoom: math.NaN()}, {Zoom: math.Inf(1)}, {Zoom: math.Inf(-1)}, {Zoom: 2000}, {Zoom: -2000}, {TriangleLimit: -1}, {TriangleLimit: MaxTriangles + 1}, {Coarser: -1}, {Coarser: view.MaxCoarser + 1}} {
 		assert.ErrorIs(t, CompileFill(nil, style.CompiledLayer{}, options, noop, pattern), ErrOptions)
 		assert.ErrorIs(t, CompileLine(nil, style.CompiledLayer{}, options, noop), ErrOptions)
 	}

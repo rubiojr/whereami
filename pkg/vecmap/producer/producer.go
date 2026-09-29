@@ -70,7 +70,9 @@ type Request struct {
 	Camera view.Camera
 	Style  *Style
 	Assets *Assets
-	// Nil selects VisibleTileCover. A nonnil empty slice explicitly clears.
+	// Nil selects VisibleTileCoverAt with Style.Options.Coarser. A nonnil empty
+	// slice explicitly clears. Explicit targets must lie Style.Options.Coarser
+	// zoom levels below the camera zoom, or baked widths are drawn out of scale.
 	Targets []view.TileID
 }
 
@@ -225,7 +227,8 @@ func (p *Producer) validate(r Request) error {
 		len(r.Targets) > 64 || r.Style.Bytes > p.limits.ProfileBytes || r.Assets.Bytes > p.limits.ProfileBytes-r.Style.Bytes {
 		return ErrInput
 	}
-	if r.Style.Bytes == 0 || r.Assets.Bytes == 0 || math.IsNaN(r.Style.Options.Zoom) || r.Style.Options.Zoom < 0 || r.Style.Options.Zoom > 20 {
+	if r.Style.Bytes == 0 || r.Assets.Bytes == 0 || math.IsNaN(r.Style.Options.Zoom) || r.Style.Options.Zoom < 0 || r.Style.Options.Zoom > 20 ||
+		r.Style.Options.Coarser < 0 || r.Style.Options.Coarser > view.MaxCoarser {
 		return ErrInput
 	}
 	if !finiteViewport(r.Camera.Width) || !finiteViewport(r.Camera.Height) {

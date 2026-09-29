@@ -427,3 +427,49 @@ func TestConcurrentSubmitClose(t *testing.T) {
 	wg.Wait()
 	p.Close()
 }
+
+func TestDefaultCoverFollowsCoarser(t *testing.T) {
+	var mu sync.Mutex
+	zooms := make(map[uint32]int)
+	p, err := New(func(_ context.Context, key Key, dst io.Writer) error {
+		mu.Lock()
+		zooms[key.Tile.Z]++
+		mu.Unlock()
+		_, err := dst.Write(tilePBF())
+		return err
+	}, DefaultLimits())
+	require.NoError(t, err)
+	t.Cleanup(func() { p.Close(); waitDone(t, p.Done()) })
+	r := testRequest(t)
+	r.Camera = view.NewCamera(view.Coordinate{Latitude: 40.4168, Longitude: -3.7038}, 6, 0, 512, 512)
+	r.Style.Options.Zoom, r.Style.Options.Coarser = view.StyleZoomAt(r.Camera.Zoom, 1), 1
+	want := view.VisibleTileCoverAt(r.Camera, 1)
+	require.Less(t, len(want), len(view.VisibleTileCover(r.Camera)))
+	_, err = p.Submit(r)
+	require.NoError(t, err)
+	l := nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == len(want) })
+	assert.ElementsMatch(t, want, l.Snapshot.Cover)
+	// An unconsumed publication counts as pending, so wait for the loads instead.
+	status := waitStatus(t, p, func(s Status) bool { return s.Jobs == 0 && s.SelectedTiles == len(want) })
+	assert.Zero(t, status.Failed)
+	assert.Equal(t, len(want), status.Requested)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, len(want), zooms[5])
+	assert.Zero(t, zooms[6], "tiles at the camera zoom must not be loaded")
+}
+
+func TestSubmitRejectsCoarserOutOfRange(t *testing.T) {
+	p, _ := newControlled(t, DefaultLimits())
+	for _, coarser := range []int{-1, view.MaxCoarser + 1} {
+		r := testRequest(t, view.TileID{})
+		r.Style.Options.Coarser = coarser
+		revision, err := p.Submit(r)
+		assert.ErrorIs(t, err, ErrInput)
+		assert.Zero(t, revision)
+	}
+	r := testRequest(t, view.TileID{})
+	r.Style.Options.Coarser = view.MaxCoarser
+	_, err := p.Submit(r)
+	assert.NoError(t, err)
+}

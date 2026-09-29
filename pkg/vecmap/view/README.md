@@ -21,6 +21,14 @@ The cover preserves the existing scheduler policy: a one-tile prefetch ring,
 maximum source zoom 14, and at most 8x8 canonical tiles, ordered nearest first.
 Provider-specific cover policies remain a future extension.
 
+`VisibleTileCoverAt(camera, coarser)` takes tiles from `coarser` zoom levels below
+the camera zoom (0 to `MaxCoarser`). One draws a tile 512 pixels wide, as MapLibre
+draws the same tile, so a view needs fewer tiles. Prepare those tiles with the
+same `tiles.PrepareOptions.Coarser` and the style zoom of `StyleZoomAt`, which
+lies `coarser` levels below the camera zoom. Above camera zoom 14 plus `coarser`
+the tiles are the same as without the option and only the style zoom differs.
+Below camera zoom `coarser` the style zoom stays at zero.
+
 `LoadOrder` shares immediate-parent-first, deduplicated loading priority between
 the production scheduler and the headless producer. It preserves target order;
 transport completion order, cancellation and readiness remain caller-owned.

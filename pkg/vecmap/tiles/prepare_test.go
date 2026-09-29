@@ -191,6 +191,7 @@ func TestPrepareFailureAndLimits(t *testing.T) {
 	for _, mutate := range []func(*PrepareOptions){
 		func(o *PrepareOptions) { o.Tile.Z = 15 }, func(o *PrepareOptions) { o.Zoom = math.NaN() },
 		func(o *PrepareOptions) { o.Zoom = math.Inf(1) }, func(o *PrepareOptions) { o.Zoom = -1 },
+		func(o *PrepareOptions) { o.Coarser = -1 }, func(o *PrepareOptions) { o.Coarser = view.MaxCoarser + 1 },
 		func(o *PrepareOptions) { o.TriangleLimit = -1 }, func(o *PrepareOptions) { o.CandidateLimit = placement.MaxSymbols + 1 },
 		func(o *PrepareOptions) { o.ElementLimit = compiler.MaxSceneElements + 1 }, func(o *PrepareOptions) { o.DrawLimit = compiler.MaxFragmentDraws + 1 },
 	} {
@@ -315,4 +316,33 @@ func FuzzPreparedTile(f *testing.F) {
 		selected := selectTiles(t, set, []view.TileID{testTile}, nil, testCamera(testTile))
 		assert.LessOrEqual(t, len(selected.Scene.Draws), len(built.Fragment.Draws))
 	})
+}
+
+func TestPrepareCoarserConvertsPixelsAtTheDrawnZoom(t *testing.T) {
+	data := append(layerPBF("land", featurePBF(3, []uint32{9, 0, 0, 18, 512, 0, 511, 512, 15})),
+		layerPBF("roads", featurePBF(2, []uint32{9, 0, 256, 10, 400, 0}))...)
+	layers, err := style.Parse([]byte(`{"version":8,"layers":[
+		{"id":"land","type":"fill","source-layer":"land","paint":{"fill-pattern":"dots"}},
+		{"id":"roads","type":"line","source-layer":"roads","paint":{"line-width":4,"line-offset":2}},
+		{"id":"names","type":"symbol","source-layer":"roads",
+		 "layout":{"text-field":"A","text-font":["Test"],"symbol-placement":"line","symbol-spacing":40}}
+	]}`))
+	require.NoError(t, err)
+	prepare := func(zoom float64, coarser int) *Prepared {
+		p, err := Prepare(data, layers, PrepareOptions{Tile: testTile, Zoom: zoom, Coarser: coarser, Indexed: true})
+		require.NoError(t, err)
+		return p
+	}
+	zoom := float64(testTile.Z)
+	coarse, drawn, fine := prepare(zoom, 1), prepare(zoom+1, 0), prepare(zoom, 0)
+	require.NotEmpty(t, coarse.primitives)
+	require.NotEmpty(t, coarse.symbols)
+	// This style does not depend on zoom, so only the drawn zoom shapes the output.
+	assert.Equal(t, drawn.primitives, coarse.primitives)
+	assert.Equal(t, drawn.symbols, coarse.symbols)
+	assert.NotEqual(t, fine.primitives, coarse.primitives)
+	assert.NotEqual(t, len(fine.symbols), len(coarse.symbols))
+	built, err := coarse.Build(prepareAssets())
+	require.NoError(t, err)
+	require.NoError(t, built.Fragment.Scene.Validate())
 }

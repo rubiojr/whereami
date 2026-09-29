@@ -25,7 +25,28 @@ func TestLiveOptionsRejectBeforeWindowCreation(t *testing.T) {
 	assert.ErrorIs(t, err, producer.ErrInput)
 	_, err = newLiveSource(liveOptions{glyphs: "supplied", template: "bad"}, retained.Budget{})
 	assert.ErrorIs(t, err, producer.ErrInput)
+	for _, coarser := range []int{-1, view.MaxCoarser + 1} {
+		_, err = newLiveSource(liveOptions{glyphs: "supplied", coarser: coarser}, retained.Budget{})
+		assert.ErrorIs(t, err, producer.ErrInput)
+	}
 	assert.Error(t, run("scene.json", benchmarkOptions{liveOptions: liveOptions{enabled: true}}))
+}
+
+func TestLiveUpdateKeepsStyleZoomBelowCamera(t *testing.T) {
+	p, err := producer.New(func(context.Context, producer.Key, io.Writer) error { return producer.ErrMissing }, producer.DefaultLimits())
+	require.NoError(t, err)
+	t.Cleanup(func() { p.Close(); <-p.Done() })
+	camera := view.NewCamera(view.Coordinate{}, 10, 0, 256, 256)
+	l := &liveSource{p: p, request: producer.Request{Camera: camera,
+		Style: &producer.Style{Source: "test", Epoch: 1, Bytes: 1, Options: tiles.PrepareOptions{Zoom: 9, Coarser: 1}}, Assets: &producer.Assets{Epoch: 1, Bytes: 1}}}
+	camera.Zoom = 10.01
+	require.NoError(t, l.update(camera))
+	assert.Equal(t, uint64(1), l.request.Style.Epoch, "a camera change within one style step keeps the style")
+	camera.Zoom = 10.5
+	require.NoError(t, l.update(camera))
+	assert.Equal(t, uint64(2), l.request.Style.Epoch)
+	assert.Equal(t, 9.5, l.request.Style.Options.Zoom)
+	assert.Equal(t, 1, l.request.Style.Options.Coarser)
 }
 
 func TestFrozenLiveTraceAndSettlementDeadline(t *testing.T) {

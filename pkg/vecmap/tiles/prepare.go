@@ -29,6 +29,14 @@ type PrepareOptions struct {
 	Indexed                       bool
 	TriangleLimit, CandidateLimit int
 	ElementLimit, DrawLimit       int
+	// Coarser is the number of zoom levels the tile and the style zoom lie below
+	// the camera zoom the tile is drawn at, at most view.MaxCoarser. Zero draws a
+	// tile view.TileSize units wide at its own zoom. One draws it twice as wide,
+	// as MapLibre does, so a view needs fewer tiles and the style is evaluated
+	// one zoom lower. Pair it with view.VisibleTileCoverAt and view.StyleZoomAt.
+	// Zoom stays the evaluated style zoom; pixel widths, pattern sizes and
+	// symbol spacing are converted to tile units at Zoom plus Coarser.
+	Coarser int
 	// ResidentGeometry keeps geometry that does not depend on the evaluated zoom
 	// byte-identical across style-zoom changes. Undashed, unoffset lines and fill
 	// outlines are packed as width-independent extrusions whose half width is a
@@ -109,13 +117,13 @@ func Prepare(data []byte, layers []style.CompiledLayer, options PrepareOptions) 
 	}
 	err = compiler.CompileTile(layers, source.Layers, compiler.LayerOptions{
 		SourceZoom: int(options.Tile.Z), Zoom: options.Zoom, Indexed: options.Indexed, TriangleLimit: options.TriangleLimit,
-		ExtrudeLines: options.ResidentGeometry, ShaderDashes: options.ResidentDashes,
+		ExtrudeLines: options.ResidentGeometry, ShaderDashes: options.ResidentDashes, Coarser: options.Coarser,
 	}, func(primitive compiler.Primitive) error {
 		p.primitives = append(p.primitives, primitive)
 		return nil
 	}, func(layer style.CompiledLayer) error {
 		return placement.PrepareSymbols(source.Layers[layer.SourceLayer], layer,
-			placement.SymbolOptions{SourceZoom: options.Tile.Z, Zoom: options.Zoom, Limit: options.CandidateLimit - len(p.symbols)},
+			placement.SymbolOptions{SourceZoom: options.Tile.Z, Zoom: options.Zoom, Coarser: options.Coarser, Limit: options.CandidateLimit - len(p.symbols)},
 			func(symbol placement.Symbol) error { p.symbols = append(p.symbols, symbol); return nil })
 	})
 	if errors.Is(err, placement.ErrSymbolLimit) {
@@ -129,7 +137,7 @@ func Prepare(data []byte, layers []style.CompiledLayer, options PrepareOptions) 
 }
 
 func (o PrepareOptions) validate(layers []style.CompiledLayer) error {
-	if !validTile(o.Tile) || math.IsNaN(o.Zoom) || o.Zoom < 0 || o.Zoom > 20 {
+	if !validTile(o.Tile) || math.IsNaN(o.Zoom) || o.Zoom < 0 || o.Zoom > 20 || o.Coarser < 0 || o.Coarser > view.MaxCoarser {
 		return ErrInput
 	}
 	if len(layers) > MaxStyleLayers {

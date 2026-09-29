@@ -98,3 +98,49 @@ func assertUniqueValidTileIDs(t *testing.T, cover []TileID) {
 		seen[tile] = struct{}{}
 	}
 }
+
+func TestVisibleTileCoverAtDrawsCoarserTiles(t *testing.T) {
+	madrid := Coordinate{Latitude: 40.4168, Longitude: -3.7038}
+	camera := NewCamera(madrid, 12, 0, 800, 600)
+
+	fine, coarse := VisibleTileCover(camera), VisibleTileCoverAt(camera, 1)
+
+	assert.Equal(t, fine, VisibleTileCoverAt(camera, 0))
+	assert.Len(t, fine, 30)
+	require.Len(t, coarse, 16)
+	for _, tile := range coarse {
+		assert.Equal(t, uint32(11), tile.Z)
+	}
+	parent, _ := fine[0].Parent()
+	assert.Equal(t, parent, coarse[0])
+	assertUniqueValidTileIDs(t, coarse)
+	// The same ground one zoom lower is half the viewport in each direction.
+	assert.Equal(t, VisibleTileCover(NewCamera(madrid, 11, 0, 400, 300)), coarse)
+}
+
+func TestVisibleTileCoverAtBoundsZoomAndCoarser(t *testing.T) {
+	madrid := Coordinate{Latitude: 40.4168, Longitude: -3.7038}
+	for _, test := range []struct {
+		name    string
+		zoom    float64
+		coarser int
+		source  uint32
+	}{
+		{"below the source maximum", 14.5, 1, 13},
+		{"at the source maximum", 15, 1, 14},
+		{"above the source maximum", 17, 2, 14},
+		{"below zoom coarser", 0.5, 1, 0},
+		{"negative is zero", 12, -1, 12},
+		{"beyond the maximum is the maximum", 12, MaxCoarser + 1, 12 - MaxCoarser},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cover := VisibleTileCoverAt(NewCamera(madrid, test.zoom, 0, 800, 600), test.coarser)
+			require.NotEmpty(t, cover)
+			for _, tile := range cover {
+				assert.Equal(t, test.source, tile.Z)
+			}
+			assertUniqueValidTileIDs(t, cover)
+		})
+	}
+	assert.Empty(t, VisibleTileCoverAt(NewCamera(Coordinate{}, 9, 0, 0, 100), 1))
+}

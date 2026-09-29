@@ -11,6 +11,9 @@ const (
 	maximumCoverSide  = 8
 )
 
+// MaxCoarser bounds how many zoom levels below the camera zoom tiles may come from.
+const MaxCoarser = 2
+
 type tileCandidate struct {
 	id       TileID
 	distance float64
@@ -52,13 +55,22 @@ func TilesOverlap(left, right TileID) bool {
 
 // VisibleTileCover returns nearest-first canonical tiles with a prefetch ring.
 // It preserves vecmap's bounded policy: source zoom <=14 and at most 8x8 tiles.
-func VisibleTileCover(camera Camera) []TileID {
+func VisibleTileCover(camera Camera) []TileID { return VisibleTileCoverAt(camera, 0) }
+
+// VisibleTileCoverAt is VisibleTileCover with tiles from coarser zoom levels below
+// the camera zoom. Zero draws a tile TileSize units wide at its own zoom. One
+// draws it twice as wide, the size MapLibre draws the same tile, and so covers a
+// view with fewer tiles. Tiles must then be prepared with the same
+// tiles.PrepareOptions.Coarser and the style zoom of StyleZoomAt. Values outside
+// [0, MaxCoarser] are clamped.
+func VisibleTileCoverAt(camera Camera, coarser int) []TileID {
 	camera = camera.normalized()
 	if camera.Width <= 0 || camera.Height <= 0 {
 		return nil
 	}
 
-	sourceZoom := math.Max(0, math.Min(maximumSourceZoom, math.Floor(camera.Zoom)))
+	coarser = max(0, min(MaxCoarser, coarser))
+	sourceZoom := math.Max(0, math.Min(maximumSourceZoom, math.Floor(camera.Zoom)-float64(coarser)))
 	zoom := uint32(sourceZoom)
 	dimension := int64(1) << zoom
 	worldSize := TileSize * float64(dimension)
