@@ -227,6 +227,48 @@ func TestCancellationKeepsWorkerChargedAndRejectsLateSuccess(t *testing.T) {
 	assert.Equal(t, uint64(1), status.Prepares, "late raw result was never decoded")
 }
 
+// pastBusy is a source's pause that is already over.
+var pastBusy = &BusyError{Until: time.Now().Add(-time.Second), Err: errors.New("busy")}
+
+func TestBusySourceIsPausedAndAskedAgain(t *testing.T) {
+	limits := DefaultLimits()
+	limits.Workers = 1
+	limits.RetryDelay = time.Millisecond
+	p, c := newControlled(t, limits)
+	tile := view.TileID{}
+	revision, err := p.Submit(testRequest(t, tile))
+	require.NoError(t, err)
+
+	until := time.Now().Add(300 * time.Millisecond)
+	nextCall(t, c).reply <- answer{err: &BusyError{Until: until, Err: errors.New("429 Too Many Requests")}}
+	paused := waitStatus(t, p, func(s Status) bool { return !s.PausedUntil.IsZero() && s.Jobs == 0 })
+	assert.True(t, paused.PausedUntil.Equal(until))
+	assert.Zero(t, paused.Failed, "a busy source is not a failed tile")
+	assert.Positive(t, paused.Pending)
+	assert.Contains(t, paused.LastError, "source busy until")
+	select {
+	case load := <-c.calls:
+		t.Fatalf("tile %v asked for while the source is paused", load.key.Tile)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	// The tile is asked for again once the pause is over. A busy answer does
+	// not spend an attempt, so more than three of them still end in the tile.
+	load := nextCall(t, c)
+	assert.False(t, time.Now().Before(until), "asked again before the pause ended")
+	for range 3 {
+		load.reply <- answer{err: &BusyError{Until: time.Now().Add(10 * time.Millisecond), Err: errors.New("503 Service Unavailable")}}
+		load = nextCall(t, c)
+	}
+	load.reply <- answer{data: tilePBF()}
+	lease, status := settle(t, p, revision)
+	require.NotNil(t, lease)
+	assert.Equal(t, []view.TileID{tile}, lease.Snapshot.Cover)
+	assert.Zero(t, status.Failed)
+	assert.True(t, status.PausedUntil.IsZero())
+	assert.Equal(t, uint64(5), status.Loads)
+}
+
 func TestRetriesMissingMalformedAndOversized(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -242,6 +284,7 @@ func TestRetriesMissingMalformedAndOversized(t *testing.T) {
 		{"oversized", []answer{{data: make([]byte, 129)}}, 1, false},
 		{"blank", []answer{{data: []byte{26, 11, 10, 4, 'l', 'a', 'n', 'd', 40, 128, 2, 120, 2}}}, 1, true},
 		{"empty", []answer{{data: nil}}, 1, true},
+		{"busy until a time past", []answer{{err: pastBusy}, {err: pastBusy}, {err: pastBusy}}, 3, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			limits := DefaultLimits()

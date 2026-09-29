@@ -28,6 +28,9 @@ func TestBoundedHTTPAndCancellation(t *testing.T) {
 			w.WriteHeader(404)
 		case "/empty":
 			w.WriteHeader(204)
+		case "/busy":
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(429)
 		case "/large":
 			_, _ = w.Write(make([]byte, MaxBytes+1))
 		case "/wait":
@@ -47,6 +50,11 @@ func TestBoundedHTTPAndCancellation(t *testing.T) {
 	var status *StatusError
 	require.ErrorAs(t, err, &status)
 	assert.Equal(t, 404, status.Code)
+	assert.Zero(t, status.RetryAfter)
+	_, err = Fetch(context.Background(), client, server.URL+"/busy", "application/x-protobuf")
+	require.ErrorAs(t, err, &status)
+	assert.Equal(t, 429, status.Code)
+	assert.Equal(t, time.Minute, status.RetryAfter)
 	data, err = Fetch(context.Background(), client, server.URL+"/empty", "application/x-protobuf")
 	require.NoError(t, err)
 	assert.Empty(t, data)
@@ -65,6 +73,23 @@ func TestBoundedHTTPAndCancellation(t *testing.T) {
 	assert.ErrorIs(t, err, ErrLimit)
 	_, err = Read(failingReader{})
 	require.ErrorContains(t, err, "reader failed")
+}
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"", 0}, {"soon", 0}, {"-5", 0}, {"1.5", 0}, {"0", 0},
+		{" 30 ", 30 * time.Second},
+		{"86400", MaxRetryAfter}, {"99999999999999999999", 0}, {"18446744073709551615", MaxRetryAfter},
+		{now.Add(90 * time.Second).Format(http.TimeFormat), 90 * time.Second},
+		{now.Add(-time.Minute).Format(http.TimeFormat), 0},
+		{now.Add(48 * time.Hour).Format(http.TimeFormat), MaxRetryAfter},
+	} {
+		assert.Equal(t, tc.want, RetryAfter(tc.value, now), "Retry-After %q", tc.value)
+	}
 }
 
 type failingReader struct{}

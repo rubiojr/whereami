@@ -127,6 +127,12 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   to decode are not fetched again; capacity failures still wait for room.
   Like a request, it counts as Pending until the owner takes it. `RetriedLoads`
   counts the tiles it cleared.
+- A loader that returns a `BusyError` pauses its source: nothing is requested
+  from it before `Until`, and the refused tile is asked for again without
+  spending an attempt. `Status.PausedUntil` shows the pause; waiting tiles count
+  as Pending, not Failed. `HTTPLoader` returns one for a 429 or 503 response with
+  a Retry-After header; without the header both stay transient errors. Retry
+  does not end a pause.
 - Missing is not blank: `ErrMissing` retains fallback/continuity; a successfully
   decoded valid empty tile is ready coverage. That includes a zero-byte response,
   which OpenFreeMap sends for some empty tiles; `HTTPLoader` reads a 204 response

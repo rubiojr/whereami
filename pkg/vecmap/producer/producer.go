@@ -29,6 +29,21 @@ var (
 	ErrPermanent = errors.New("permanent tile load failure")
 )
 
+// BusyError is a loader's answer that its source asked for no requests before
+// Until, as an HTTP Retry-After does. The producer then requests nothing from
+// that source until Until and asks again for the tile, which keeps its attempts.
+// An Until that has passed is an ordinary transient error.
+type BusyError struct {
+	Until time.Time
+	Err   error
+}
+
+func (e *BusyError) Error() string {
+	return "source busy until " + e.Until.UTC().Format(time.RFC3339) + ": " + e.Err.Error()
+}
+
+func (e *BusyError) Unwrap() error { return e.Err }
+
 // Key identifies a transport request. Generation is a producer job generation,
 // unrelated to the retained Worker's native residency generation. Source and Tile
 // identify immutable raw data; change Source when that data changes. StyleEpoch
@@ -136,6 +151,7 @@ type Status struct {
 	StyleHeld                                   bool   // the newest style/asset pair is not yet adopted
 	LastError                                   string
 	LastErrorStage                              string
+	PausedUntil                                 time.Time // a busy source takes requests again; zero when not paused
 	Cache, PeakCache                            CacheUsage
 	Loading, Preparing, Building, Selecting     PhaseTime
 	ResponseBytes, RawCapacityBytes             uint64 // completed responses, before cache admission
@@ -359,7 +375,7 @@ func (p *Producer) Close() {
 func (p *Producer) Done() <-chan struct{} { return p.done }
 
 // Changed receives when the producer has something new for its consumer: a lease
-// for Next, or a change of Pending, Failed, LastError or StyleHeld in Status,
+// for Next, or a change of Pending, Failed, LastError, StyleHeld or PausedUntil,
 // including the owner taking a request, Retry or Current from its mailbox. An
 // idle producer sends nothing. Values coalesce, so one receive can stand for
 // several changes: call Next and Status after each. It serves one consumer and

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,10 +22,16 @@ const MaxBytes = mvt.MaxTileBytes
 
 var ErrLimit = errors.New("tile I/O limit exceeded")
 
+// MaxRetryAfter bounds how long a server can ask a client to wait.
+const MaxRetryAfter = 24 * time.Hour
+
 // StatusError preserves HTTP status for caller-owned retry/missing policy.
+// RetryAfter is the response's Retry-After delay, at most MaxRetryAfter, and
+// zero when the header is absent, invalid or already past.
 type StatusError struct {
-	Code   int
-	Status string
+	Code       int
+	Status     string
+	RetryAfter time.Duration
 }
 
 func (e *StatusError) Error() string { return "fetch tile: unexpected HTTP status " + e.Status }
@@ -62,13 +69,33 @@ func Fetch(ctx context.Context, client *http.Client, url, accept string) ([]byte
 		return []byte{}, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, &StatusError{response.StatusCode, response.Status}
+		return nil, &StatusError{response.StatusCode, response.Status, RetryAfter(response.Header.Get("Retry-After"), time.Now())}
 	}
 	data, err := Read(response.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read tile response: %w", err)
 	}
 	return data, nil
+}
+
+// RetryAfter parses a Retry-After value, delay seconds or an HTTP date, into a
+// delay from now of at most MaxRetryAfter. It is zero for an absent, invalid or
+// past value.
+func RetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	var delay time.Duration
+	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil {
+		delay = MaxRetryAfter
+		if seconds < uint64(MaxRetryAfter/time.Second) {
+			delay = time.Duration(seconds) * time.Second
+		}
+	} else if at, err := http.ParseTime(value); err == nil {
+		delay = at.Sub(now)
+	}
+	return min(max(delay, 0), MaxRetryAfter)
 }
 
 func ReadFile(path string) ([]byte, error) {

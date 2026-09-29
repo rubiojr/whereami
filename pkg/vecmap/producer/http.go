@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/tileio"
 )
@@ -98,6 +99,9 @@ func loadHTTP(ctx context.Context, client *http.Client, directory string, source
 		case errors.As(err, &status):
 			if status.Code == 404 {
 				return nil, fmt.Errorf("%w: %v", ErrMissing, err)
+			}
+			if (status.Code == 429 || status.Code == 503) && status.RetryAfter > 0 {
+				return nil, &BusyError{Until: time.Now().Add(status.RetryAfter), Err: err}
 			}
 			if status.Code >= 400 && status.Code < 500 && status.Code != 408 && status.Code != 429 {
 				return nil, fmt.Errorf("%w: %v", ErrPermanent, err)

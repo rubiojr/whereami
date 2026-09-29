@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/tileio"
 	"github.com/rubiojr/whereami/pkg/vecmap/view"
@@ -95,4 +96,28 @@ func TestHTTPSourceCacheAndClassification(t *testing.T) {
 	}
 	_, err = CacheLoader("", template)
 	assert.ErrorIs(t, err, ErrInput)
+}
+
+func TestHTTPLoaderReportsABusySource(t *testing.T) {
+	var status atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(int(status.Load()))
+	}))
+	defer server.Close()
+	template := server.URL + "/{z}/{x}/{y}.pbf"
+	load, err := HTTPLoader(nil, "", template)
+	require.NoError(t, err)
+	for _, code := range []int32{429, 503} {
+		status.Store(code)
+		asked := time.Now()
+		err := load(context.Background(), Key{Source: template, Tile: view.TileID{}}, &bytes.Buffer{})
+		var busy *BusyError
+		require.ErrorAs(t, err, &busy, "status %d", code)
+		assert.WithinDuration(t, asked.Add(time.Minute), busy.Until, 5*time.Second)
+		assert.Contains(t, err.Error(), "source busy until")
+	}
+	// Other refusals keep their classification even with the header.
+	status.Store(403)
+	assert.ErrorIs(t, load(context.Background(), Key{Source: template, Tile: view.TileID{}}, &bytes.Buffer{}), ErrPermanent)
 }

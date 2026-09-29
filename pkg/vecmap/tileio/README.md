@@ -9,7 +9,8 @@ delegate to these helpers; decoding and preparation remain with their callers.
   remain usable for controlled local servers. A custom client owns its policy.
 - `Fetch`, `Read` and `ReadFile` cap decoded response/file bytes at **2 MiB**.
   Fetch preserves Accept/User-Agent headers, returns no data for a 204 response and
-  a typed `StatusError` for any other non-200 response. `ErrLimit` identifies
+  a typed `StatusError` for any other non-200 response. `StatusError.RetryAfter`
+  carries a Retry-After header, capped at 24 hours. `ErrLimit` identifies
   oversized input.
 - `ReadCached` reads a bounded tile and optional checksum sidecar, validates the
   sidecar's SHA-256 encoding and refreshes modification times. The caller must

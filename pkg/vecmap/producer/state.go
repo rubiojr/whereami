@@ -50,6 +50,8 @@ type state struct {
 	workingPrepares                     int  // Prepare attempts since adoption; bounds a held epoch
 	heldStyle                           *Style
 	heldAssets                          *Assets
+	pausedSource                        string // the source that asked for no requests before pausedUntil
+	pausedUntil                         time.Time
 }
 
 func (p *Producer) run(set *tiles.Set) {
@@ -368,8 +370,13 @@ func (s *state) refine() {
 	}
 }
 
+// paused reports whether the working source asked for no requests yet.
+func (s *state) paused(now time.Time) bool {
+	return s.working != nil && s.pausedSource == s.working.Style.Source && now.Before(s.pausedUntil)
+}
+
 func (s *state) nextJob(now time.Time) (job, bool) {
-	if s.request == nil || len(s.running) >= s.p.limits.Workers {
+	if s.request == nil || len(s.running) >= s.p.limits.Workers || s.paused(now) {
 		return job{}, false
 	}
 	for _, tile := range s.order {
@@ -427,6 +434,16 @@ func (s *state) loaded(r result) {
 	if r.err != nil {
 		s.errorAt("load", r.err)
 		f := s.failures[tile]
+		if r.busy.After(time.Now()) {
+			// The source refused, not the tile: ask again once it takes
+			// requests, without spending one of the tile's attempts.
+			if s.pausedSource != r.job.key.Source || r.busy.After(s.pausedUntil) {
+				s.pausedSource, s.pausedUntil = r.job.key.Source, r.busy
+			}
+			f.attempts = max(f.attempts-1, 0)
+			s.failures[tile] = f
+			return
+		}
 		f.askAgain = !r.oversize
 		if r.retry && f.attempts < 3 {
 			f.retryAt = time.Now().Add(s.p.limits.RetryDelay)
@@ -770,6 +787,10 @@ func (s *state) report() {
 	if s.stats.StyleHeld {
 		s.stats.Pending++ // the newest paint inputs are not installed yet
 	}
+	s.stats.PausedUntil = time.Time{}
+	if s.paused(time.Now()) {
+		s.stats.PausedUntil = s.pausedUntil
+	}
 	s.stats.ReusedVersions = s.set.ReusedVersions()
 	s.stats.Jobs, s.stats.Cached, s.stats.Leases = len(s.running), len(s.entries), len(p.leases)
 	s.stats.ReservedRawBytes = uint64(len(s.running)) * uint64(p.limits.RawBytes)
@@ -784,7 +805,7 @@ func (s *state) report() {
 	s.stats.PeakLeaseBytes = max(s.stats.PeakLeaseBytes, s.stats.LeaseBytes)
 	old := p.status
 	if s.notify || old.Pending != s.stats.Pending || old.Failed != s.stats.Failed || old.StyleHeld != s.stats.StyleHeld ||
-		old.LastError != s.stats.LastError || old.LastErrorStage != s.stats.LastErrorStage {
+		old.LastError != s.stats.LastError || old.LastErrorStage != s.stats.LastErrorStage || !old.PausedUntil.Equal(s.stats.PausedUntil) {
 		select {
 		case p.changed <- struct{}{}:
 		default:

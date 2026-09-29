@@ -19,7 +19,8 @@ type result struct {
 	data     []byte
 	err      error
 	retry    bool
-	oversize bool // the response exceeded a limit; asking again gets the same bytes
+	oversize bool      // the response exceeded a limit; asking again gets the same bytes
+	busy     time.Time // a BusyError's Until: the source takes no requests before then
 	duration time.Duration
 }
 
@@ -62,6 +63,9 @@ func (p *Producer) load(wg *sync.WaitGroup) {
 			r := result{job: j, data: w.data, retry: retryable(err), oversize: errors.Is(err, ErrLimit), duration: time.Since(started)}
 			if err != nil {
 				r.err = errors.New(errorMessage(err))
+			}
+			if busy := (*BusyError)(nil); errors.As(err, &busy) {
+				r.busy = busy.Until
 			}
 			// Queued results retain only bounded error text, never an arbitrary
 			// loader error object that could own another response or large buffer.
