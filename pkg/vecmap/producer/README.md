@@ -122,8 +122,9 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   A changed cover/style/assets request resets failure state;
   camera-only updates within the same cover do not.
 - Missing is not blank: `ErrMissing` retains fallback/continuity; a successfully
-  decoded valid empty tile is ready coverage. A zero-byte response is malformed
-  under the existing MVT decoder. MVT feature degradation and text readiness keep
+  decoded valid empty tile is ready coverage. That includes a zero-byte response,
+  which OpenFreeMap sends for some empty tiles; `HTTPLoader` reads a 204 response
+  the same way. MVT feature degradation and text readiness keep
   the shared compiler's behavior. Dynamic missing-asset demand reporting is later.
 
 If a tile wasn't rebuilt during an intervening style request, returning to its exact

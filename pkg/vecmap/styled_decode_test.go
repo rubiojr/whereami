@@ -14,7 +14,6 @@ func TestStyledDecodePreservesInputValidation(t *testing.T) {
 			data []byte
 			tile vectorTileID
 		}{
-			{"empty", nil, pinnedTile},
 			{"short", []byte{0}, pinnedTile},
 			{"truncated", []byte{0xff, 0xff}, pinnedTile},
 			{"unsupported-zoom", []byte{0, 0}, vectorTileID{Z: 31}},
@@ -26,6 +25,13 @@ func TestStyledDecodePreservesInputValidation(t *testing.T) {
 				require.EqualError(t, styledErr, legacyErr.Error())
 			})
 		}
+		// Zero bytes are an empty tile for both decoders.
+		legacy, err := decodeRoadBucketGeometry(nil, pinnedTile, indexed)
+		require.NoError(t, err)
+		assert.Empty(t, legacy.sourceLayers)
+		styled, err := decodeStyledBucketGeometry(nil, pinnedTile, indexed)
+		require.NoError(t, err)
+		assert.Empty(t, styled.sourceLayers)
 	}
 }
 

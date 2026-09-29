@@ -19,7 +19,8 @@ for _, feature := range tile.Layers["transportation"] {
 polygon rings, and triangulates within shared tile budgets. It preserves feature
 order and appends duplicate source-layer names in input order. It performs no I/O,
 style evaluation, logging, or toolkit work. The bool selects direct indexed versus
-expanded polygon output, with the same triangle order and source rings.
+expanded polygon output, with the same triangle order and source rings. Zero bytes
+decode as a tile without layers.
 
 ## Ownership and failure policy
 

@@ -241,6 +241,7 @@ func TestRetriesMissingMalformedAndOversized(t *testing.T) {
 		{"malformed", []answer{{data: []byte{255}}}, 1, false},
 		{"oversized", []answer{{data: make([]byte, 129)}}, 1, false},
 		{"blank", []answer{{data: []byte{26, 11, 10, 4, 'l', 'a', 'n', 'd', 40, 128, 2, 120, 2}}}, 1, true},
+		{"empty", []answer{{data: nil}}, 1, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			limits := DefaultLimits()
@@ -256,7 +257,10 @@ func TestRetriesMissingMalformedAndOversized(t *testing.T) {
 				return s.Jobs == 0 && s.Loads == tc.attempts && (s.Builds > 0 || s.LastError != "")
 			})
 			if tc.success {
-				nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == 1 })
+				lease := nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == 1 })
+				assert.Zero(t, status.Failed)
+				require.Len(t, lease.Snapshot.Scene.Draws, 1)
+				assert.Equal(t, []byte{255, 0, 0, 255}, byteColor(lease), "only the background draws")
 			} else {
 				assert.NotEmpty(t, status.LastError)
 			}

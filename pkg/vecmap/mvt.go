@@ -50,9 +50,6 @@ type tileDecodeOptions struct {
 }
 
 func decodeTileFeatures(data []byte, tile vectorTileID, options tileDecodeOptions) (*tileBucket, error) {
-	if len(data) < 2 {
-		return nil, errors.New("MVT data is too short")
-	}
 	if tile.Z > 30 {
 		return nil, fmt.Errorf("MVT tile zoom %d is unsupported", tile.Z)
 	}

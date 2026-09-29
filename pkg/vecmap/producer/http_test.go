@@ -56,6 +56,17 @@ func TestHTTPSourceCacheAndClassification(t *testing.T) {
 	out.Reset()
 	require.NoError(t, load(context.Background(), key, &out))
 	assert.Equal(t, int32(2), hits.Load())
+	// An empty tile answered with 204 is a successful zero-byte response, cached
+	// like any other.
+	status.Store(204)
+	emptyKey := Key{Source: template, Tile: view.TileID{Z: 1}}
+	out.Reset()
+	require.NoError(t, load(context.Background(), emptyKey, &out))
+	assert.Zero(t, out.Len())
+	assert.Equal(t, int32(3), hits.Load())
+	require.NoError(t, offline(context.Background(), emptyKey, &out))
+	assert.Zero(t, out.Len())
+	status.Store(0)
 	uncached, err := HTTPLoader(nil, "", template)
 	require.NoError(t, err)
 	for _, tc := range []struct {

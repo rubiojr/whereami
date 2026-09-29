@@ -52,11 +52,9 @@ type RawFeature struct {
 
 // DecodeLayers parses at most MaxTileBytes, retaining layer order and duplicate
 // names. Tile/layer framing errors fail atomically; feature errors are handled
-// later during preparation. Feature payloads borrow data.
+// later during preparation. Feature payloads borrow data. Zero bytes are a valid
+// tile without layers: servers answer empty tiles that way.
 func DecodeLayers(data []byte) ([]*Layer, error) {
-	if len(data) < 2 {
-		return nil, errors.New("MVT data is too short")
-	}
 	if len(data) > MaxTileBytes {
 		return nil, fmt.Errorf("%w: data exceeds %d-byte limit", ErrTileResourceLimit, MaxTileBytes)
 	}

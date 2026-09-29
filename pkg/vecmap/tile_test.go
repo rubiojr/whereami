@@ -48,9 +48,14 @@ func TestDecodeRoadBucketRejectsInvalidTiles(t *testing.T) {
 	tile := vectorTileID{X: 250, Y: 193, Z: 9}
 
 	_, err := decodeRoadBucket([]byte{1}, tile)
-	assert.ErrorContains(t, err, "too short")
+	assert.ErrorContains(t, err, "decode MVT tile")
 
-	empty, err := decodeRoadBucket(syntheticRoadTile("water"), tile)
+	empty, err := decodeRoadBucket(nil, tile)
+	require.NoError(t, err)
+	assert.Empty(t, empty.segments)
+	assert.Empty(t, empty.sourceLayers)
+
+	empty, err = decodeRoadBucket(syntheticRoadTile("water"), tile)
 	require.NoError(t, err)
 	assert.Empty(t, empty.segments)
 

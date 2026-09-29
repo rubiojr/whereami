@@ -26,6 +26,8 @@ func TestBoundedHTTPAndCancellation(t *testing.T) {
 		switch r.URL.Path {
 		case "/missing":
 			w.WriteHeader(404)
+		case "/empty":
+			w.WriteHeader(204)
 		case "/large":
 			_, _ = w.Write(make([]byte, MaxBytes+1))
 		case "/wait":
@@ -45,6 +47,9 @@ func TestBoundedHTTPAndCancellation(t *testing.T) {
 	var status *StatusError
 	require.ErrorAs(t, err, &status)
 	assert.Equal(t, 404, status.Code)
+	data, err = Fetch(context.Background(), client, server.URL+"/empty", "application/x-protobuf")
+	require.NoError(t, err)
+	assert.Empty(t, data)
 	_, err = Fetch(context.Background(), client, server.URL+"/large", "application/x-protobuf")
 	assert.ErrorIs(t, err, ErrLimit)
 	ctx, cancel := context.WithCancel(context.Background())

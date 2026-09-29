@@ -44,6 +44,8 @@ func CheckRedirect(request *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// Fetch returns the bounded body of a 200 response. A 204 response returns no
+// data and no error; other statuses return a StatusError.
 func Fetch(ctx context.Context, client *http.Client, url, accept string) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -56,6 +58,9 @@ func Fetch(ctx context.Context, client *http.Client, url, accept string) ([]byte
 		return nil, fmt.Errorf("fetch tile: %w", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		return []byte{}, nil
+	}
 	if response.StatusCode != http.StatusOK {
 		return nil, &StatusError{response.StatusCode, response.Status}
 	}

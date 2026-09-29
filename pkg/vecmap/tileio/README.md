@@ -8,8 +8,9 @@ delegate to these helpers; decoding and preparation remain with their callers.
   policy, with fewer than ten entries in the redirect chain. Initial HTTP URLs
   remain usable for controlled local servers. A custom client owns its policy.
 - `Fetch`, `Read` and `ReadFile` cap decoded response/file bytes at **2 MiB**.
-  Fetch preserves Accept/User-Agent headers and returns a typed `StatusError` for
-  non-200 responses. `ErrLimit` identifies oversized input.
+  Fetch preserves Accept/User-Agent headers, returns no data for a 204 response and
+  a typed `StatusError` for any other non-200 response. `ErrLimit` identifies
+  oversized input.
 - `ReadCached` reads a bounded tile and optional checksum sidecar, validates the
   sidecar's SHA-256 encoding and refreshes modification times. The caller must
   call `Verify` before trusting bytes. Explicit pinned digests bypass the sidecar.

@@ -79,10 +79,16 @@ func TestParseLayerFraming(t *testing.T) {
 		require.Error(t, err)
 		assert.Nil(t, layers)
 	}
-	for _, data := range [][]byte{nil, {0, 0}, {26, 255}, {24, 0}, {11, 0}} {
+	for _, data := range [][]byte{{1}, {0, 0}, {26, 255}, {24, 0}, {11, 0}} {
 		layers, err := DecodeLayers(data)
 		require.Error(t, err)
 		assert.Nil(t, layers)
+	}
+	// Servers answer empty tiles with zero bytes.
+	for _, data := range [][]byte{nil, {}} {
+		layers, err := DecodeLayers(data)
+		require.NoError(t, err)
+		assert.Empty(t, layers)
 	}
 	// Unknown fields are skipped; extent defaults to 4096 without field 5.
 	layers, err := DecodeLayers(append(varintField(nil, 9, 10), tileMessage(varintField(nil, 15, 2))...))
