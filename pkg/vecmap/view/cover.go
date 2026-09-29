@@ -7,12 +7,19 @@ import (
 
 const (
 	maximumSourceZoom = 14
-	tilePrefetchRing  = 1
 	maximumCoverSide  = 8
 )
 
 // MaxCoarser bounds how many zoom levels below the camera zoom tiles may come from.
 const MaxCoarser = 2
+
+// PrefetchRing is how many rings of tiles VisibleTileCover and
+// VisibleTileCoverAt add around the visible tiles, so a pan finds them loaded.
+// MaxPrefetchRing bounds VisibleTileCoverRing.
+const (
+	PrefetchRing    = 1
+	MaxPrefetchRing = 2
+)
 
 type tileCandidate struct {
 	id       TileID
@@ -64,12 +71,20 @@ func VisibleTileCover(camera Camera) []TileID { return VisibleTileCoverAt(camera
 // tiles.PrepareOptions.Coarser and the style zoom of StyleZoomAt. Values outside
 // [0, MaxCoarser] are clamped.
 func VisibleTileCoverAt(camera Camera, coarser int) []TileID {
+	return VisibleTileCoverRing(camera, coarser, PrefetchRing)
+}
+
+// VisibleTileCoverRing is VisibleTileCoverAt with ring rings of tiles around the
+// visible ones. Zero covers only the visible tiles. Values outside
+// [0, MaxPrefetchRing] are clamped.
+func VisibleTileCoverRing(camera Camera, coarser, ring int) []TileID {
 	camera = camera.normalized()
 	if camera.Width <= 0 || camera.Height <= 0 {
 		return nil
 	}
 
 	coarser = max(0, min(MaxCoarser, coarser))
+	margin := int64(max(0, min(MaxPrefetchRing, ring)))
 	sourceZoom := math.Max(0, math.Min(maximumSourceZoom, math.Floor(camera.Zoom)-float64(coarser)))
 	zoom := uint32(sourceZoom)
 	dimension := int64(1) << zoom
@@ -95,10 +110,10 @@ func VisibleTileCoverAt(camera Camera, coarser int) []TileID {
 		maxY = math.Max(maxY, centerY+dy)
 	}
 
-	startX := int64(math.Floor(minX/TileSize)) - tilePrefetchRing
-	endX := int64(math.Floor(maxX/TileSize)) + tilePrefetchRing
-	startY := maxInt64(0, int64(math.Floor(minY/TileSize))-tilePrefetchRing)
-	endY := minInt64(dimension-1, int64(math.Floor(maxY/TileSize))+tilePrefetchRing)
+	startX := int64(math.Floor(minX/TileSize)) - margin
+	endX := int64(math.Floor(maxX/TileSize)) + margin
+	startY := maxInt64(0, int64(math.Floor(minY/TileSize))-margin)
+	endY := minInt64(dimension-1, int64(math.Floor(maxY/TileSize))+margin)
 	startX, endX = boundedTileRange(startX, endX, centerX/TileSize)
 	startY, endY = boundedTileRange(startY, endY, centerY/TileSize)
 	if startY > endY {

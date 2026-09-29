@@ -636,6 +636,43 @@ func TestDefaultCoverFollowsCoarser(t *testing.T) {
 	assert.Zero(t, zooms[6], "tiles at the camera zoom must not be loaded")
 }
 
+func TestLimitsChooseThePrefetchRingAndParents(t *testing.T) {
+	var mu sync.Mutex
+	var asked []view.TileID
+	limits := DefaultLimits()
+	limits.PrefetchRing, limits.Parents = 0, false
+	p, err := New(func(_ context.Context, key Key, dst io.Writer) error {
+		mu.Lock()
+		asked = append(asked, key.Tile)
+		mu.Unlock()
+		_, err := dst.Write(tilePBF())
+		return err
+	}, limits)
+	require.NoError(t, err)
+	t.Cleanup(func() { p.Close(); waitDone(t, p.Done()) })
+	r := testRequest(t)
+	r.Camera = view.NewCamera(view.Coordinate{Latitude: 40.4168, Longitude: -3.7038}, 12, 0, 800, 600)
+	r.Style.Options.Zoom = view.StyleZoomAt(r.Camera.Zoom, 0)
+	visible := view.VisibleTileCoverRing(r.Camera, 0, 0)
+	require.Less(t, len(visible), len(view.VisibleTileCover(r.Camera)))
+	revision, err := p.Submit(r)
+	require.NoError(t, err)
+	lease, status := settle(t, p, revision)
+	require.NotNil(t, lease)
+	assert.ElementsMatch(t, visible, lease.Snapshot.Cover)
+	assert.Equal(t, len(visible), status.Requested)
+	assert.Zero(t, status.Failed)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.ElementsMatch(t, visible, asked, "only the visible tiles load: no ring, no parents")
+
+	for _, ring := range []int{-1, view.MaxPrefetchRing + 1} {
+		limits.PrefetchRing = ring
+		_, err := New(func(context.Context, Key, io.Writer) error { return nil }, limits)
+		assert.ErrorIs(t, err, ErrInput, "ring %d", ring)
+	}
+}
+
 func TestSubmitRejectsCoarserOutOfRange(t *testing.T) {
 	p, _ := newControlled(t, DefaultLimits())
 	for _, coarser := range []int{-1, view.MaxCoarser + 1} {

@@ -119,6 +119,24 @@ func TestVisibleTileCoverAtDrawsCoarserTiles(t *testing.T) {
 	assert.Equal(t, VisibleTileCover(NewCamera(madrid, 11, 0, 400, 300)), coarse)
 }
 
+func TestVisibleTileCoverRingWidensTheVisibleTiles(t *testing.T) {
+	camera := NewCamera(Coordinate{Latitude: 40.4168, Longitude: -3.7038}, 12, 0, 800, 600)
+
+	visible, one, two := VisibleTileCoverRing(camera, 0, 0), VisibleTileCoverRing(camera, 0, 1), VisibleTileCoverRing(camera, 0, 2)
+
+	assert.Equal(t, VisibleTileCover(camera), one)
+	assert.Len(t, visible, 12)
+	assert.Len(t, one, 30)
+	assert.Len(t, two, 56)
+	assert.Subset(t, one, visible)
+	assert.Subset(t, two, one)
+	assert.Equal(t, visible[0], one[0], "the nearest tile comes first with any ring")
+	assertUniqueValidTileIDs(t, two)
+	assert.Equal(t, visible, VisibleTileCoverRing(camera, 0, -1))
+	assert.Equal(t, two, VisibleTileCoverRing(camera, 0, MaxPrefetchRing+1))
+	assert.Equal(t, VisibleTileCoverAt(camera, 1), VisibleTileCoverRing(camera, 1, PrefetchRing))
+}
+
 func TestVisibleTileCoverAtBoundsZoomAndCoarser(t *testing.T) {
 	madrid := Coordinate{Latitude: 40.4168, Longitude: -3.7038}
 	for _, test := range []struct {

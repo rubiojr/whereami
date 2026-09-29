@@ -85,9 +85,10 @@ type Request struct {
 	Camera view.Camera
 	Style  *Style
 	Assets *Assets
-	// Nil selects VisibleTileCoverAt with Style.Options.Coarser. A nonnil empty
-	// slice explicitly clears. Explicit targets must lie Style.Options.Coarser
-	// zoom levels below the camera zoom, or baked widths are drawn out of scale.
+	// Nil selects VisibleTileCoverRing with Style.Options.Coarser and
+	// Limits.PrefetchRing. A nonnil empty slice explicitly clears. Explicit
+	// targets must lie Style.Options.Coarser zoom levels below the camera zoom,
+	// or baked widths are drawn out of scale.
 	Targets []view.TileID
 }
 
@@ -117,12 +118,20 @@ type Limits struct {
 	// far, so a view resting at the margin does not upload and retire one tile
 	// repeatedly. Zero composes every target.
 	DrawMargin float64
+	// PrefetchRing is how many rings of tiles around the visible ones the
+	// default cover (Request.Targets nil) loads, so a pan finds them ready.
+	// Zero loads only the visible tiles; at most view.MaxPrefetchRing.
+	PrefetchRing int
+	// Parents loads each target's parent before the targets, as a coarse
+	// stand-in drawn until the targets arrive. Without it only the targets
+	// load, which costs fewer downloads; acknowledged Current still stands in.
+	Parents bool
 }
 
 func DefaultLimits() Limits {
 	return Limits{Workers: 4, Tiles: 128, Leases: 4, RawBytes: mvt.MaxTileBytes,
 		CacheBytes: 256 << 20, SnapshotBytes: 128 << 20, ProfileBytes: 64 << 20,
-		RetryDelay: 250 * time.Millisecond}
+		RetryDelay: 250 * time.Millisecond, PrefetchRing: view.PrefetchRing, Parents: true}
 }
 
 // Status is a bounded observation, not an event log. Revision is the latest
@@ -214,7 +223,7 @@ func New(loader Loader, limits Limits) (*Producer, error) {
 		limits.Leases < 1 || limits.Leases > 8 || limits.RawBytes < 1 || limits.RawBytes > mvt.MaxTileBytes ||
 		limits.CacheBytes == 0 || limits.CacheBytes > 1<<30 || limits.SnapshotBytes == 0 || limits.SnapshotBytes > 1<<30 ||
 		limits.ProfileBytes == 0 || limits.ProfileBytes > 1<<30 || limits.RetryDelay <= 0 ||
-		!(limits.DrawMargin >= 0) || limits.DrawMargin > 1<<20 {
+		!(limits.DrawMargin >= 0) || limits.DrawMargin > 1<<20 || limits.PrefetchRing < 0 || limits.PrefetchRing > view.MaxPrefetchRing {
 		return nil, ErrInput
 	}
 	set, err := tiles.New(limits.Store)

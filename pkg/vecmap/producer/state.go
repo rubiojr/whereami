@@ -182,7 +182,7 @@ func (s *state) inputs() {
 	if r != nil {
 		targets := r.Targets
 		if targets == nil {
-			targets = view.VisibleTileCoverAt(r.Camera, r.Style.Options.Coarser)
+			targets = view.VisibleTileCoverRing(r.Camera, r.Style.Options.Coarser, p.limits.PrefetchRing)
 		}
 		if !slices.Equal(targets, s.targets) {
 			if !s.advanceGeneration() {
@@ -191,7 +191,10 @@ func (s *state) inputs() {
 			clear(s.failures)
 		}
 		s.request, s.revision, s.targets = r, revision, targets
-		s.order = view.LoadOrder(targets)
+		s.order = targets
+		if p.limits.Parents {
+			s.order = view.LoadOrder(targets)
+		}
 		s.desired = make(map[view.TileID]bool, len(s.order))
 		for _, tile := range s.order {
 			s.desired[tile] = true

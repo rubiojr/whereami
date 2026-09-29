@@ -54,16 +54,19 @@ be inferred automatically. It must remain valid as a cache fills. Underdeclaring
 profile violates the budget contract. No new untrusted style/asset ingestion API is
 introduced.
 
-`Targets == nil` uses `view.VisibleTileCoverAt` with `Style.Options.Coarser`
-(zero by default, at most `view.MaxCoarser`); an explicit empty slice clears the
-cover. Explicit targets must lie `Style.Options.Coarser` zoom levels below the
+`Targets == nil` uses `view.VisibleTileCoverRing` with `Style.Options.Coarser`
+(zero by default, at most `view.MaxCoarser`) and `Limits.PrefetchRing` (one ring of
+tiles around the visible ones by default, zero for none); an explicit empty slice
+clears the cover. Explicit targets must lie `Style.Options.Coarser` zoom levels below the
 camera zoom, because baked widths and symbol spacing are converted at that scale. Explicit covers have at most 64 unique canonical tiles at one source zoom
 through 14. Submit copies that small slice. Camera updates coalesce in one slot.
 
 ## Scheduling, refresh and failure
 
 - Load immediate parents before detailed targets, preserving nearest-first order.
-  Concurrency prioritizes dispatch, not completion order. `Set.Select` supplies the
+  Concurrency prioritizes dispatch, not completion order. With `Limits.Parents`
+  off only the targets load: fewer downloads, and no coarse stand-in before they
+  arrive beyond acknowledged Current. `Set.Select` supplies the
   existing requested-sibling refinement and ancestor/descendant continuity policy.
 - Cancel obsolete loads and loads from an obsolete source. Raw data belongs to the
   immutable source, so keep useful loads across style, cover and asset updates. Their original
