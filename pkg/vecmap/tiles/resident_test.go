@@ -1,6 +1,7 @@
 package tiles
 
 import (
+	"math"
 	"testing"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
@@ -403,6 +404,128 @@ func FuzzResidentSymbolTile(f *testing.F) {
 		// The test style changes sizes only, so symbols outlive the zoom step.
 		if next != nil && len(next.Symbols) == len(resident.Symbols) {
 			require.Equal(t, fragmentMesh(resident, compiler.SymbolMesh), fragmentMesh(next, compiler.SymbolMesh))
+		}
+	})
+}
+
+func TestResidentDashesAcrossStyleZooms(t *testing.T) {
+	layers := residentStyle(t)
+	build := func(zoom float64, geometry, symbols, dashes bool) *Fragment {
+		p, err := Prepare(residentPBF(), layers, PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: true, ResidentGeometry: geometry, ResidentSymbols: symbols, ResidentDashes: dashes})
+		require.NoError(t, err)
+		result, err := p.BuildOwned(prepareAssets(), 1<<20)
+		require.NoError(t, err)
+		require.NoError(t, result.Fragment.Scene.Validate())
+		return result.Fragment
+	}
+	legacy := build(3, false, false, false)
+	first, next := build(3, true, true, true), build(3.0625, true, true, true)
+	assert.Equal(t, legacy.Draws, first.Draws, "provenance and order are unchanged")
+	assert.Equal(t, legacy.Symbols, first.Symbols)
+	require.Len(t, first.Scene.Draws, len(legacy.Scene.Draws))
+	dashes := 0
+	for i, draw := range first.Scene.Draws {
+		assert.Equal(t, legacy.Scene.Draws[i].Material.Color, draw.Material.Color)
+		assert.Equal(t, legacy.Scene.Draws[i].Clip, draw.Clip)
+		if draw.Material.Kind != scene.Dashed {
+			assert.Equal(t, legacy.Scene.Draws[i].Count, draw.Count)
+			continue
+		}
+		dashes++
+		// One quad per segment replaces the baked dashes of the rail.
+		assert.Equal(t, uint32(12), draw.Count)
+		assert.Equal(t, uint64(compiler.StableMesh), draw.Mesh)
+		assert.Equal(t, [4]float32{2, 2}, draw.Material.Dashes)
+		assert.Equal(t, float32(0.75), draw.Material.OffsetScale, "half of the rail width at zoom 3")
+		assert.Equal(t, float32(1.5), draw.Material.DashUnit, "the rail width in tile units at the source zoom")
+		assert.Equal(t, scene.Material{Kind: scene.Dashed, Color: draw.Material.Color, MapAligned: true, OffsetScale: 1.53125 / 2, DashUnit: float32(1.53125 / math.Exp2(0.0625)), Dashes: [4]float32{2, 2}}, next.Scene.Draws[i].Material)
+	}
+	assert.Equal(t, 1, dashes)
+	var ids []uint64
+	for _, mesh := range first.Scene.Meshes {
+		ids = append(ids, mesh.ID)
+	}
+	assert.Equal(t, []uint64{compiler.StableMesh, compiler.SymbolMesh}, ids, "no zoom-baked geometry remains")
+	assert.Equal(t, first.Scene.Meshes, next.Scene.Meshes)
+	assert.Equal(t, first.Scene.Textures, next.Scene.Textures)
+
+	// A style-zoom change is published as draws, without any upload.
+	set := newSet(t, retained.Limits{})
+	camera := testCamera(testTile)
+	require.NoError(t, set.Apply([]Change{{testTile, first}}))
+	before := selectTiles(t, set, []view.TileID{testTile}, nil, camera)
+	planner, err := retained.NewPlanner(retained.ResidencyLimits{})
+	require.NoError(t, err)
+	settle := func() (uploads int) {
+		for {
+			batch, err := planner.Next(retained.Budget{Bytes: 1 << 20, Resources: 8})
+			require.NoError(t, err)
+			if batch == nil {
+				return uploads
+			}
+			uploads += len(batch.Uploads)
+			require.NoError(t, planner.Acknowledge(batch.Ticket, true))
+		}
+	}
+	require.NoError(t, planner.SetTarget(before.Scene))
+	assert.Equal(t, len(before.Scene.Meshes)+len(before.Scene.Textures), settle())
+	require.NoError(t, set.Apply([]Change{{testTile, next}}))
+	after := selectTiles(t, set, []view.TileID{testTile}, before.Cover, camera)
+	require.NoError(t, planner.SetTarget(after.Scene))
+	assert.Zero(t, settle())
+	assert.Same(t, after.Scene, planner.Current())
+	assert.NotEqual(t, before.Scene.Draws, after.Scene.Draws)
+
+	// Dashes alone are resident in the single mesh of the default layout, and
+	// without the option nothing is dashed by the consumer.
+	alone := build(3, false, false, true)
+	require.Len(t, alone.Scene.Meshes, 1)
+	assert.Equal(t, legacy.Draws, alone.Draws)
+	for _, draw := range build(3, true, true, false).Scene.Draws {
+		assert.NotEqual(t, scene.Dashed, draw.Material.Kind)
+	}
+}
+
+func FuzzResidentDashTile(f *testing.F) {
+	f.Add(residentPBF(), true, uint8(1))
+	f.Add(preparePBF(), false, uint8(16))
+	f.Add([]byte{0}, false, uint8(0))
+	f.Fuzz(func(t *testing.T, data []byte, indexed bool, step uint8) {
+		if len(data) > 32<<10 {
+			return
+		}
+		layers := residentStyle(t)
+		build := func(zoom float64, resident bool) *Fragment {
+			p, err := Prepare(data, layers, PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: indexed, ResidentGeometry: resident, ResidentSymbols: resident, ResidentDashes: resident,
+				TriangleLimit: 1024, CandidateLimit: 16, ElementLimit: 32768, DrawLimit: 256})
+			if err != nil {
+				require.Nil(t, p)
+				return nil
+			}
+			built, err := p.Build(prepareAssets())
+			if err != nil {
+				require.Nil(t, built)
+				return nil
+			}
+			require.NoError(t, built.Fragment.Scene.Validate())
+			return built.Fragment
+		}
+		zoom := 3 + float64(step%64)/16
+		legacy, resident, next := build(zoom, false), build(zoom, true), build(zoom+1.0/16, true)
+		if resident == nil {
+			// One quad per segment never needs more than the baked dashes.
+			require.Nil(t, legacy)
+			return
+		}
+		if legacy != nil {
+			require.Equal(t, legacy.Draws, resident.Draws)
+			require.Equal(t, legacy.Symbols, resident.Symbols)
+		}
+		for _, draw := range resident.Scene.Draws {
+			require.NotEqual(t, uint64(compiler.DynamicMesh), draw.Mesh, "the test style has no baked lines left")
+		}
+		if next != nil && len(next.Symbols) == len(resident.Symbols) {
+			require.Equal(t, resident.Scene.Meshes, next.Scene.Meshes)
 		}
 	})
 }

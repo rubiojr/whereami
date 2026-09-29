@@ -28,6 +28,9 @@ const (
 	Pattern
 	SDFHalo
 	SDFFill
+	// Dashed is Solid geometry whose fragments are kept only on the dashes of
+	// Material.Dashes. Vertex U carries the distance along the line.
+	Dashed
 )
 
 // Material contains drawing semantics rather than a toolkit-specific shader or
@@ -43,6 +46,14 @@ type Material struct {
 	// lines store unit directions as offsets and their half width in logical
 	// pixels here, so one resident mesh serves every evaluated line width.
 	OffsetScale float32 `json:",omitempty"`
+	// Dashes and DashUnit apply to Dashed materials. Dashes alternates dash and
+	// gap lengths in multiples of DashUnit, which is the line width in the unit
+	// of vertex U, the distance along the line from its first point. A fragment
+	// is drawn where its distance modulo the pattern length lies in a dash. The
+	// pattern does not change with the line width, so a resident mesh serves
+	// every evaluated width.
+	Dashes   [4]float32 `json:",omitzero"`
+	DashUnit float32    `json:",omitempty"`
 }
 
 type Mesh struct {
@@ -181,13 +192,13 @@ func (draw Draw) validate(meshes map[uint64]int, textures map[uint64]bool) error
 }
 
 func (m Material) validate() error {
-	if m.Kind > SDFFill {
+	if m.Kind > Dashed {
 		return fmt.Errorf("invalid material kind")
 	}
 	if !validColor(m.Color) {
 		return fmt.Errorf("invalid color")
 	}
-	for _, v := range [...]float32{m.FontScale, m.HaloWidth, m.HaloBlur, m.PatternSize[0], m.PatternSize[1], m.PatternPhase[0], m.PatternPhase[1], m.OffsetScale} {
+	for _, v := range [...]float32{m.FontScale, m.HaloWidth, m.HaloBlur, m.PatternSize[0], m.PatternSize[1], m.PatternPhase[0], m.PatternPhase[1], m.OffsetScale, m.Dashes[0], m.Dashes[1], m.Dashes[2], m.Dashes[3], m.DashUnit} {
 		if !finite(v) {
 			return fmt.Errorf("non-finite material")
 		}
@@ -200,6 +211,9 @@ func (m Material) validate() error {
 	}
 	if (m.Kind == SDFHalo || m.Kind == SDFFill) && (m.FontScale <= 0 || m.HaloWidth < 0 || m.HaloBlur < 0) {
 		return fmt.Errorf("invalid SDF material")
+	}
+	if m.Kind == Dashed && (m.DashUnit <= 0 || m.Dashes[0] <= 0 || m.Dashes[1] < 0 || m.Dashes[2] < 0 || m.Dashes[3] < 0) {
+		return fmt.Errorf("invalid dash pattern")
 	}
 	return nil
 }

@@ -119,6 +119,16 @@ lines, so there the change still uploads one small dynamic mesh per tile. The
 option is independent of `ResidentGeometry`, off by default, and adds a third mesh
 resource to tiles that have all three kinds of geometry.
 
+`PrepareOptions.ResidentDashes` removes that third resource for the common case.
+Butt-capped, unoffset dashed lines with at most four dash entries are packed as one
+width-independent quad per path segment, with the distance along the path in vertex
+`U`, and drawn with `scene.Dashed` materials that carry the width and the pattern.
+With `ResidentGeometry` they join the stable mesh. On the captured Madrid cover all
+dashed lines qualify: with the three options a tile is two mesh resources, 17 to 20
+of 20 tiles publish a sixteenth step as draws with no upload, and the step across
+zoom 10 uploads the 20 symbol meshes. The backend must implement `scene.Dashed`;
+the QRhi adapter does. The default is off.
+
 ### Preparation bounds
 
 - MVT bytes retain the decoder's **2 MiB** limit and feature/geometry/work limits.

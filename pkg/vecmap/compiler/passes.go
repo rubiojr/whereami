@@ -46,7 +46,9 @@ func (b *SceneBuilder) primitive(tile view.TileID, wrap int, primitive Primitive
 	if primitive.Dynamic {
 		b.class = dynamicClass
 	}
-	if primitive.Directions != nil {
+	if primitive.Distances != nil {
+		b.Dashed(primitive.Mesh, primitive.Directions, primitive.Distances, primitive.HalfWidth, primitive.DashUnit, primitive.Dashes, material, clip)
+	} else if primitive.Directions != nil {
 		b.Extruded(primitive.Mesh, primitive.Directions, primitive.HalfWidth, material, clip)
 	} else {
 		b.Geometry(primitive.Mesh, material, clip)

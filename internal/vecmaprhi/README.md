@@ -23,6 +23,18 @@ evaluated icon size or text size over 24. The shader needed no change. A second
 integration test renders both alignments baked and scaled, requires agreement
 within edge rounding, and requires a doubled size to reuse the mesh.
 
+## Dashed materials
+
+For `scene.Dashed` the second component of `parameters` is `Material.DashUnit` and
+`pattern` holds the four `Material.Dashes`. The fragment shader reads the distance
+along the line from the interpolated `uv.x`, takes it modulo the pattern length in
+multiples of the unit, and discards fragments in a gap. Dash ends are therefore
+cut per fragment, like the pixel-centre coverage of baked dash quads; they do not
+gain multisample edges on a multisampled target. The integration test renders two
+paths with baked and with shader dashes under a rotated, scaled transform. At most
+one of 2,870 covered pixels differs on Vulkan and none on OpenGL. A pattern change
+reuses the resident mesh.
+
 ## Revision-aware resource staging
 
 Mesh and texture caches use exact **ID/revision pairs**, in separate namespaces.

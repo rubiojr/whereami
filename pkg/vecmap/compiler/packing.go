@@ -236,7 +236,7 @@ func (b *SceneBuilder) Geometry(mesh geometry.Mesh, material scene.Material, cli
 	if !b.check(len(mesh.Vertices), mesh.Indices) {
 		return
 	}
-	b.geometry(mesh, nil, material, clip)
+	b.geometry(mesh, nil, nil, material, clip)
 }
 
 // Extruded packs width-independent line geometry: anchors as tile-local XY and
@@ -247,6 +247,10 @@ func (b *SceneBuilder) Extruded(mesh geometry.Mesh, directions []geometry.Point,
 	if !b.ready() {
 		return
 	}
+	b.extruded(mesh, directions, nil, halfWidth, material, clip)
+}
+
+func (b *SceneBuilder) extruded(mesh geometry.Mesh, directions []geometry.Point, distances []float64, halfWidth float64, material scene.Material, clip [4]float32) {
 	if len(directions) != len(mesh.Vertices) || !(halfWidth > 0) || math.IsInf(halfWidth, 0) {
 		b.err = ErrPackingInput
 		return
@@ -255,15 +259,38 @@ func (b *SceneBuilder) Extruded(mesh geometry.Mesh, directions []geometry.Point,
 		return
 	}
 	material.MapAligned, material.OffsetScale = true, float32(halfWidth)
-	b.geometry(mesh, directions, material, clip)
+	b.geometry(mesh, directions, distances, material, clip)
 }
 
-func (b *SceneBuilder) geometry(mesh geometry.Mesh, directions []geometry.Point, material scene.Material, clip [4]float32) {
+// Dashed packs Extruded geometry with the distance along each path in vertex U
+// and makes the material scene.Dashed: unit is the line width in tile units and
+// pattern its dash array in multiples of it. distances parallels mesh.Vertices.
+// The same vertices serve every evaluated width and every scale of the pattern.
+func (b *SceneBuilder) Dashed(mesh geometry.Mesh, directions []geometry.Point, distances []float64, halfWidth, unit float64, pattern geometry.DashPattern, material scene.Material, clip [4]float32) {
+	if !b.ready() {
+		return
+	}
+	if len(distances) != len(mesh.Vertices) || !(unit > 0) || math.IsInf(unit, 0) || !(pattern[0] > 0) {
+		b.err = ErrPackingInput
+		return
+	}
+	material.Kind, material.DashUnit = scene.Dashed, float32(unit)
+	for i, dash := range pattern {
+		material.Dashes[i] = float32(dash)
+	}
+	// Extruded checks the remaining input before anything is packed.
+	b.extruded(mesh, directions, distances, halfWidth, material, clip)
+}
+
+func (b *SceneBuilder) geometry(mesh geometry.Mesh, directions []geometry.Point, distances []float64, material scene.Material, clip [4]float32) {
 	vertex := func(index int) scene.Vertex {
 		point := mesh.Vertices[index]
 		packed := scene.Vertex{X: float32(point.X), Y: float32(point.Y)}
 		if directions != nil {
 			packed.OffsetX, packed.OffsetY = float32(directions[index].X), float32(directions[index].Y)
+		}
+		if distances != nil {
+			packed.U = float32(distances[index])
 		}
 		return packed
 	}

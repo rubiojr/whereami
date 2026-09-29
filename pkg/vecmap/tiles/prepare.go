@@ -46,6 +46,14 @@ type PrepareOptions struct {
 	// style zoom, so a layout change replaces the symbol mesh. The backend must
 	// scale vertex offsets by OffsetScale. False preserves the existing output.
 	ResidentSymbols bool
+	// ResidentDashes keeps butt-capped, unoffset dashed lines with at most four
+	// dash entries byte-identical across style-zoom changes. They are packed as
+	// one width-independent quad per path segment with the distance along the
+	// path in vertex U; the width and the dash pattern travel on scene.Dashed
+	// draws. With ResidentGeometry they join compiler.StableMesh. Other dashed
+	// lines stay baked. The backend must implement scene.Dashed. False preserves
+	// the existing output.
+	ResidentDashes bool
 }
 
 // Prepared owns reusable primitives and evaluated candidates, not source features
@@ -101,7 +109,7 @@ func Prepare(data []byte, layers []style.CompiledLayer, options PrepareOptions) 
 	}
 	err = compiler.CompileTile(layers, source.Layers, compiler.LayerOptions{
 		SourceZoom: int(options.Tile.Z), Zoom: options.Zoom, Indexed: options.Indexed, TriangleLimit: options.TriangleLimit,
-		ExtrudeLines: options.ResidentGeometry,
+		ExtrudeLines: options.ResidentGeometry, ShaderDashes: options.ResidentDashes,
 	}, func(primitive compiler.Primitive) error {
 		p.primitives = append(p.primitives, primitive)
 		return nil

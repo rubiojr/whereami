@@ -24,7 +24,7 @@ import (
 )
 
 func TestViewerStream(t *testing.T) {
-	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}, {"basic", "tiles"}, {"threaded", "tiles"}, {"basic", "live"}, {"threaded", "live"}, {"basic", "live-command"}, {"threaded", "live-command"}, {"basic", "live-command-resident"}, {"threaded", "live-command-resident"}, {"basic", "live-command-symbols"}, {"threaded", "live-command-symbols"}} {
+	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}, {"basic", "tiles"}, {"threaded", "tiles"}, {"basic", "live"}, {"threaded", "live"}, {"basic", "live-command"}, {"threaded", "live-command"}, {"basic", "live-command-resident"}, {"threaded", "live-command-resident"}, {"basic", "live-command-symbols"}, {"threaded", "live-command-symbols"}, {"basic", "live-command-dashes"}, {"threaded", "live-command-dashes"}} {
 		t.Run("test"+scenario.loop+"-"+scenario.name, func(t *testing.T) {
 			binary, err := os.Executable()
 			require.NoError(t, err)
@@ -50,7 +50,9 @@ func TestViewerStreamProcess(t *testing.T) {
 		return
 	}
 	if scenario := os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO"); strings.HasPrefix(scenario, "live-command") {
-		testViewerLiveCommand(t, scenario != "live-command", scenario == "live-command-symbols")
+		// Each scenario adds one resident option to the previous one.
+		dashes := scenario == "live-command-dashes"
+		testViewerLiveCommand(t, scenario != "live-command", dashes || scenario == "live-command-symbols", dashes)
 		return
 	}
 	app := qt.NewQApplication([]string{"vecmap-stream-test"})

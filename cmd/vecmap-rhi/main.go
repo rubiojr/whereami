@@ -48,6 +48,7 @@ func main() {
 	flag.BoolVar(&live.cacheOnly, "cache-only", false, "live replay from verified cached tiles only; never fetch missing entries")
 	flag.BoolVar(&live.residentGeometry, "resident-geometry", false, "keep fills and shader-extruded lines resident across style-zoom changes")
 	flag.BoolVar(&live.residentSymbols, "resident-symbols", false, "keep icon and text quads resident across style-zoom changes that preserve symbol layout")
+	flag.BoolVar(&live.residentDashes, "resident-dashes", false, "keep butt-capped dashed lines resident and dash them in the fragment shader")
 	flag.Parse()
 	if err := run(*path, benchmarkOptions{liveOptions: live, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -186,7 +187,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes)
 	if options.diagnostics {
 		pacing.report()
 	}

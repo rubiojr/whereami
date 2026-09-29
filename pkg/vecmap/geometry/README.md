@@ -58,6 +58,34 @@ geometry within `1e-9` relative tolerance for every cap and join, four widths fr
 1/32 to 40, expanded and indexed output, and 200 random path sets. The existing
 arithmetic is untouched for the legacy renderer and pinned fixtures.
 
+### Width-independent dashes
+
+Dash lengths are multiples of the line width, so `TessellateLines` bakes them and
+a width change replaces every vertex. `TessellateDashedLines` emits one butt-capped
+quad per path segment instead. Each `DashedVertex` has an `Anchor`, a unit normal
+`Direction` and the `Distance` of its anchor along the path in tile units; both
+vertices across the line share the distance, so its interpolation over a quad is
+the centerline distance of a fragment. Distances restart at every path and skip
+segments no longer than `Epsilon`, as the baked walk does. There are no joins,
+as in the baked form.
+
+`NewDashPattern` turns an evaluated dash array into a `DashPattern` of at most
+four entries and reports whether the consumer can reproduce the baked output.
+It refuses arrays of more than four entries once an odd array is repeated,
+negative or nonfinite entries, entries the baked walk would skip as shorter than
+`Epsilon`, values float32 cannot carry, and a first dash of zero. Round and square
+dash caps and path offsets are the caller's to exclude. `DashPattern.Covers` is
+the reference for the per-fragment test: half-open dash intervals from the first
+point of the path.
+
+Tests prove the equivalence for eight patterns, four widths from 1/32 to 40, six
+paths including duplicate points, a closed ring and sub-`Epsilon` segments, and
+200 random paths: every baked dash lies on one segment quad with the same lateral
+extent, and 512 sampled distances per segment are covered exactly where a baked
+dash is. The mesh is identical for every width and pattern. One difference is
+deliberate: the baked walk fails beyond 100,000 dashes per path, and the mesh has
+no such limit.
+
 ## Fixture integration
 
 `TriangulatePolygonExpanded` serves existing triangle-list consumers. It expands

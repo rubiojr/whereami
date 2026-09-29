@@ -30,6 +30,13 @@ type Primitive struct {
 	// Dynamic marks geometry whose vertices depend on the evaluated style zoom
 	// (dashed or offset lines). It is set only with LayerOptions.ExtrudeLines.
 	Dynamic bool
+	// Distances, when set with Directions, parallels Mesh.Vertices and holds the
+	// tile-unit distance of each vertex along its path. The line is drawn where
+	// that distance, in multiples of DashUnit (the line width in tile units),
+	// lies on a dash of Dashes. Only LayerOptions.ShaderDashes produces it.
+	Distances []float64
+	Dashes    geometry.DashPattern
+	DashUnit  float64
 }
 
 // CompileTile traverses visible layers in document order and emits geometry with
@@ -81,6 +88,17 @@ func (a *tileAssembly) layer(layer style.CompiledLayer, features []mvt.Feature, 
 				Mesh: geometry.Mesh{Vertices: make([]geometry.Point, len(mesh.Vertices)), Indices: mesh.Indices}, Directions: make([]geometry.Point, len(mesh.Vertices))}
 			for i, vertex := range mesh.Vertices {
 				primitive.Mesh.Vertices[i], primitive.Directions[i] = vertex.Anchor, vertex.Direction
+			}
+			return a.append(primitive, false)
+		}
+	}
+	if options.ShaderDashes {
+		lines.dashed = func(mesh geometry.DashedMesh, color style.Color, pixels, width float64, pattern geometry.DashPattern) error {
+			count := len(mesh.Vertices)
+			primitive := Primitive{Order: layer.Order, LayerID: layer.ID, Color: color, HalfWidth: pixels / 2, Dashes: pattern, DashUnit: width,
+				Mesh: geometry.Mesh{Vertices: make([]geometry.Point, count), Indices: mesh.Indices}, Directions: make([]geometry.Point, count), Distances: make([]float64, count)}
+			for i, vertex := range mesh.Vertices {
+				primitive.Mesh.Vertices[i], primitive.Directions[i], primitive.Distances[i] = vertex.Anchor, vertex.Direction, vertex.Distance
 			}
 			return a.append(primitive, false)
 		}

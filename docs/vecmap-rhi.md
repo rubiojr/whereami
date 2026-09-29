@@ -3646,6 +3646,147 @@ MapLibre claim follows.
   adapter and viewer suites, the OpenGL suites under the race detector and tagged
   staticcheck pass.
 
+### Resident dashed lines
+
+Checkpoint **yj2k** moves dashes into the fragment shader. It is opt-in
+(`tiles.PrepareOptions.ResidentDashes`, viewer `-resident-dashes`, default off) and
+independent of the other two resident options; with the option off every package
+produces its previous output byte for byte.
+
+1. **One quad per segment.** `geometry.TessellateDashedLines` emits a butt-capped
+   quad per path segment with anchors, unit normals and the distance of each
+   anchor along its path. The baked walk emits one quad per dash, in tile units
+   that follow the evaluated width.
+2. **Pattern as draw state.** `scene.Dashed` materials carry the half width in
+   logical pixels (`OffsetScale`), the width in tile units (`DashUnit`) and up to
+   four dash lengths in multiples of it (`Dashes`). A style-zoom change alters
+   those values and no vertex.
+3. **Rendering.** The fragment shader takes the interpolated distance modulo the
+   pattern length and discards gaps. The uniform block is unchanged: the dash
+   unit and the pattern use fields that solid geometry left unused. Only the
+   fragment shader package was regenerated; no handwritten C++ was added.
+4. **Scope.** Round and square dash caps, path offsets and patterns of more than
+   four entries keep their baked geometry. All 17 dashed layers of the Liberty
+   style have two entries, butt caps and no offset, so none is left baked.
+
+Decisions that the issue left open: dashes have butt caps only; no join is drawn
+inside a dash, as in the baked output; the dash phase restarts at the first point
+of every path, as in the baked output, so it is not continuous across tile
+boundaries in either form. Dash ends are cut per fragment and would not gain
+multisample edges on a multisampled target. The baked walk fails beyond 100,000
+dashes per path; one quad per segment has no such limit, so a tile that exceeded
+it now succeeds.
+
+Measured on the final moving Madrid cover with the three resident options on (20
+tiles, 84.3 MiB of packed mesh, 40 mesh resources, 45 dashed draws), per sixteenth
+step between style zooms 9.75 and 10.25:
+
+| Step | Meshes uploaded, dashes baked | MiB | Meshes uploaded, dashes in shader | MiB | Tiles without upload |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 9.7500 to 9.8125 | 20 | 3.2 | 0 | 0.0 | 20 of 20 |
+| 9.8125 to 9.8750 | 20 | 3.3 | 0 | 0.0 | 20 of 20 |
+| 9.8750 to 9.9375 | 20 | 3.3 | 0 | 0.0 | 20 of 20 |
+| 9.9375 to 10.0000 | 40 | 19.7 | 20 | 16.2 | 0 of 20 |
+| 10.0000 to 10.0625 | 23 | 6.1 | 3 | 2.6 | 17 of 20 |
+| 10.0625 to 10.1250 | 23 | 6.3 | 3 | 2.6 | 17 of 20 |
+| 10.1250 to 10.1875 | 21 | 4.6 | 1 | 0.9 | 19 of 20 |
+| 10.1875 to 10.2500 | 21 | 4.7 | 1 | 0.8 | 19 of 20 |
+
+A step with unchanged symbol layout is now a draw-only update. What remains is
+the symbol mesh of the tiles whose line-label anchors change, and every symbol
+mesh at zoom 10, where layers appear. The dynamic mesh is gone from this cover, so
+a tile is two mesh resources, as under **yfq2**.
+
+#### Replay observations
+
+Same corpus, host and arguments as **s834** (four-resource upload batches,
+eight-resource release batches, 32 MiB per batch). All rows come from one binary
+and differ only in the three resident flags. Each mode ran two passes of three
+moving runs and one static run per backend, the second pass in reverse mode
+order, on an unlocked desktop. Every series started at a one-minute host load of
+1.19–1.48. An earlier complete series is discarded because another job held the
+load at 2.4–6.4. All 64 runs exit 0 with zero pending, failed and batch failures
+and end at 20 tiles / 94 labels (static 42 / 130). Ranges cover the six moving or
+two static runs of a mode.
+
+| Replay | Mode | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Mesh uploads | Uploaded MB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | single mesh | 6.47–6.79 | 10–13 | 1.02–1.25 | 0.38–0.49 | 118–129 | 159–190 | 636–678 |
+| Vulkan moving | geometry | 6.64–7.18 | 9–10 | 1.25–1.48 | 0.45–0.54 | 131–138 | 228–234 | 350–358 |
+| Vulkan moving | geometry, symbols | 6.98–7.50 | 9–10 | 1.52–1.85 | 0.62–0.64 | 138–150 | 282–297 | 279–300 |
+| Vulkan moving | geometry, symbols, dashes | 6.57–6.72 | 10–11 | 1.22–1.38 | 0.29–0.36 | 121–125 | 167–174 | 300–307 |
+| Vulkan static | single mesh | 5.12–5.15 | 5 | 2.48–2.53 | 0.47 | 64 | 58 | 187 |
+| Vulkan static | geometry | 5.13–5.16 | 5 | 2.01–2.03 | 0.57 | 78–79 | 116 | 187 |
+| Vulkan static | geometry, symbols | 5.13–5.15 | 4–5 | 1.57–2.24 | 0.65–0.77 | 84–91 | 156–168 | 173–187 |
+| Vulkan static | geometry, symbols, dashes | 5.13–5.14 | 4–5 | 2.00–2.27 | 0.57–0.66 | 73–79 | 108–116 | 172–186 |
+| llvmpipe moving | single mesh | 8.57–10.03 | 5–7 | 2.65–4.11 | 0.90–1.08 | 64–71 | 92–108 | 378–454 |
+| llvmpipe moving | geometry | 8.95–11.30 | 6–7 | 2.12–3.68 | 0.89–1.49 | 67–78 | 105–157 | 215–246 |
+| llvmpipe moving | geometry, symbols | 9.21–11.58 | 5–7 | 2.63–4.62 | 0.95–1.22 | 71–84 | 160–200 | 180–210 |
+| llvmpipe moving | geometry, symbols, dashes | 7.86–9.73 | 6–7 | 2.98–4.10 | 0.65–0.93 | 64–72 | 124–133 | 196–225 |
+| llvmpipe static | single mesh | 7.64–8.13 | 5 | 4.52–4.77 | 1.24–1.32 | 64 | 58 | 187 |
+| llvmpipe static | geometry | 8.97–10.65 | 5 | 5.56–5.89 | 1.66–1.76 | 78–79 | 116 | 187 |
+| llvmpipe static | geometry, symbols | 10.83–12.07 | 5 | 6.01–6.60 | 1.79–1.99 | 91 | 168 | 187 |
+| llvmpipe static | geometry, symbols, dashes | 7.07–8.78 | 4–5 | 4.86–5.39 | 1.44–1.48 | 69–78 | 102–116 | 161–186 |
+
+With dashes in the shader the three options together are the first resident mode
+that does not cost time. Against geometry and symbols alone, Vulkan moving
+settles 0.3–0.9 s sooner with half the mean Current age and 40% fewer mesh
+uploads, and llvmpipe static settles 2–5 s sooner.
+
+Against the default single mesh under motion, uploaded bytes fall by about half
+on both backends and the mean Current age falls by about a quarter (Vulkan
+0.29–0.36 s against 0.38–0.49 s, llvmpipe 0.65–0.93 s against 0.90–1.08 s).
+Settlement is within the single-mesh range on Vulkan and at or below it on
+llvmpipe. Completed covers are equal on llvmpipe and 10–11 against 10–13 on
+Vulkan, where the longest hold is 0.1–0.2 s worse.
+
+Static loads still pay for two mesh resources per tile: 69–79 upload batches
+against 64, a mean Current age 0.1–0.2 s worse on both backends, and a longest
+hold 0.1–0.9 s worse on llvmpipe. Vulkan static settles alike; llvmpipe static
+ranges from 0.6 s sooner to 0.6 s later. Previous-frame GPU p95 under motion is
+unchanged (Vulkan 4.0–4.1 ms, llvmpipe 53–61 ms).
+
+All three options stay off. Whether they become the default is an owner decision:
+the evidence is half the uploaded bytes and fresher covers under motion against a
+slower first load of a static view.
+These are matched input replays, not matched frame work; no presentation pacing or
+MapLibre claim follows.
+
+#### Verification
+
+- Geometry: for eight patterns, four widths from 1/32 to 40, six paths and 200
+  random paths, expanded and indexed, every baked dash lies on one segment quad
+  with the same lateral extent, and 512 sampled distances per segment are covered
+  exactly where a baked dash is. One mesh is byte-identical for every width and
+  pattern. Pattern acceptance is tested for 23 arrays. A 40-second fuzz run made
+  **429,950 executions**; it found that the proof must follow dash direction on
+  paths that fold back, and the baked 100,000-dash limit. The package is at
+  **98.0%**.
+- Scene: `Dashed` materials validate their unit and pattern, split batches per
+  draw, and leave existing scene files unchanged when absent.
+- Compiler: eligible dashed layers emit the dashed mesh, half width, dash unit
+  and pattern; round and square caps, offsets, six-entry patterns and a zero
+  first dash stay baked; another style zoom changes draw values only; packing
+  puts distances in `U`, routes to the stable mesh and rejects mismatched or
+  invalid input. Coverage stays at **100%**.
+- Tiles and residency: a tile with fills, plain lines, a dashed line and a label,
+  prepared at two style zooms with the three options, keeps both meshes and its
+  textures byte-identical, and the Planner publishes the new draws with **no
+  upload**. Provenance and placement metrics equal the default output. A
+  20-second fuzz run over arbitrary MVT input made **770,859 executions**.
+  Coverage is **98.8%**.
+- Native: the adapter test renders two paths with a four-entry pattern baked and
+  in the shader under a rotated, scaled transform. One of 2,870 covered pixels
+  differs on Vulkan and none on OpenGL; a pattern change reuses the mesh. Static
+  screenshots of the Madrid cover (42 tiles, 978 draws, 130 labels) in the default
+  mode and with the three options differ in 43 of 1,920,000 pixels on Vulkan and
+  30 on OpenGL. The viewer's live command runs with the three options on basic and
+  threaded loops.
+- Race, GOARCH=386, vet and staticcheck pass on geometry, scene, compiler, tiles,
+  retained and producer; the full pinned pkg/vecmap suite, the tagged Vulkan and
+  OpenGL adapter and viewer suites, the OpenGL suites under the race detector and
+  tagged staticcheck pass.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and
@@ -3668,8 +3809,8 @@ are open. This prototype adds explicit opt-in build/test targets.
 - Continue moving the CPU engine out of its Qt-bound package; camera, projection,
   tile coverage and transforms have been extracted into `pkg/vecmap/view`.
 - Reuse geometry across live style-zoom changes. Fills and shader-extruded lines
-  (**yfq2**) and symbols (**s834**) now stay resident behind opt-ins; dashes
-  (**yj2k**) and CPU-side reuse of tessellation remain.
+  (**yfq2**), symbols (**s834**) and dashed lines (**yj2k**) now stay resident
+  behind opt-ins; CPU-side reuse of tessellation and the default remain.
 - Replace the fixture with incremental live tile/placement updates and bounded
   upload scheduling. Validate fallback clipping and world wraps under motion.
 - Validate multiple simultaneous maps and GPU resource sharing where safe.

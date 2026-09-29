@@ -66,3 +66,44 @@ func TestAdjacentBatchingPreservesOrder(t *testing.T) {
 	draws = AppendDraw(draws, Draw{Mesh: 1, First: 12, Count: 3, Material: red, Clip: [4]float32{0, 0, 10, 10}})
 	assert.Len(t, draws, 4, "clip changes must split a batch")
 }
+
+func TestDashedMaterialValidatesAndSerializes(t *testing.T) {
+	s := Scene{Meshes: []Mesh{{ID: 1, Vertices: make([]Vertex, 3)}}, Draws: []Draw{{Mesh: 1, Count: 3}}}
+	dashed := Material{Kind: Dashed, Color: [4]float32{1, 0, 0, 1}, MapAligned: true, OffsetScale: 1.5, DashUnit: 0.75, Dashes: [4]float32{2, 1, 0, 3}}
+	s.Draws[0].Material = dashed
+	require.NoError(t, s.Validate())
+	for name, change := range map[string]func(*Material){
+		"kind":       func(m *Material) { m.Kind = Dashed + 1 },
+		"zero unit":  func(m *Material) { m.DashUnit = 0 },
+		"nan unit":   func(m *Material) { m.DashUnit = float32(math.NaN()) },
+		"first dash": func(m *Material) { m.Dashes[0] = 0 },
+		"gap":        func(m *Material) { m.Dashes[1] = -1 },
+		"dash":       func(m *Material) { m.Dashes[2] = -1 },
+		"last gap":   func(m *Material) { m.Dashes[3] = float32(math.Inf(1)) },
+		"negative":   func(m *Material) { m.Dashes[3] = -1 },
+	} {
+		s.Draws[0].Material = dashed
+		change(&s.Draws[0].Material)
+		assert.Error(t, s.Validate(), name)
+	}
+	// Other kinds ignore the pattern but still require finite values.
+	s.Draws[0].Material = Material{Dashes: [4]float32{0, -1}}
+	require.NoError(t, s.Validate())
+	s.Draws[0].Material.Dashes[0] = float32(math.NaN())
+	assert.Error(t, s.Validate())
+
+	other := dashed
+	other.DashUnit = 1
+	draws := AppendDraw(nil, Draw{Mesh: 1, Count: 3, Material: dashed})
+	draws = AppendDraw(draws, Draw{Mesh: 1, First: 3, Count: 3, Material: dashed})
+	draws = AppendDraw(draws, Draw{Mesh: 1, First: 6, Count: 3, Material: other})
+	require.Len(t, draws, 2, "dash units are per draw")
+	encoded, err := json.Marshal(Material{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "Dash", "existing scene files are unchanged")
+	encoded, err = json.Marshal(dashed)
+	require.NoError(t, err)
+	var decoded Material
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, dashed, decoded)
+}

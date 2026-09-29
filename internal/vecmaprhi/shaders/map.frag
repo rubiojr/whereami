@@ -11,8 +11,8 @@ layout(std140,binding=0) uniform State {
     vec4 transformY;
     vec4 color;
     vec4 clipRect;
-    vec4 parameters;
-    vec4 pattern;
+    vec4 parameters; // kind, font scale or dash unit, halo width, halo blur
+    vec4 pattern; // width, height, phase x, phase y, or four dash lengths
     vec4 view;
 } state;
 void main() {
@@ -23,7 +23,15 @@ void main() {
     vec4 c = state.color;
     if (kind == 1) c *= texture(atlas, uv);
     if (kind == 2) c *= texture(atlas, (localPosition + state.pattern.zw) / state.pattern.xy);
-    if (kind >= 3) {
+    if (kind == 5) {
+        // uv.x is the distance along the line. Dashes are half-open intervals in
+        // multiples of the dash unit, as geometry.DashPattern.Covers.
+        vec4 dashes = state.pattern;
+        float position = mod(uv.x / state.parameters.y, dashes.x + dashes.y + dashes.z + dashes.w);
+        float gap = dashes.x + dashes.y;
+        if (position >= dashes.x && (position < gap || position >= gap + dashes.z)) discard;
+    }
+    if (kind == 3 || kind == 4) {
         float distance = texture(atlas, uv).r;
         float scale = max(state.parameters.y, 0.0001);
         float edgeGamma = 0.105 / max(state.view.x,1.0);

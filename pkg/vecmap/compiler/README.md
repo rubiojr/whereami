@@ -312,6 +312,22 @@ Tile clipping evaluates the anchor: a line is cut perpendicular to its direction
 where its centerline crosses the clip rectangle, and neighbouring tiles complement
 each other without overlap.
 
+### Shader dashes
+
+`LayerOptions.ShaderDashes` is opt-in. A dashed line with a butt cap, no offset and
+a pattern `geometry.NewDashPattern` accepts becomes one primitive from
+`geometry.TessellateDashedLines`: anchors in `Mesh`, `Directions`, `Distances`,
+`HalfWidth` in logical pixels, `DashUnit` (the width in tile units) and `Dashes`.
+It is not `Dynamic`. Batching, ordering and colors equal the baked output, and one
+primitive is emitted where one was before. Round or square caps, offsets and longer
+patterns keep their baked tessellation.
+
+`SceneBuilder.Dashed` packs it like `Extruded`, with the distance in vertex `U`,
+and makes the material `scene.Dashed` with `DashUnit` and `Dashes`. With `Split`
+the geometry goes to `StableMesh`. Another evaluated width changes `OffsetScale`
+and `DashUnit` on the draw and nothing in the mesh. The triangle limit now counts
+two triangles per path segment, not two per dash.
+
 ### Resident symbols across style zooms
 
 Icon and glyph quads are proportional to the evaluated icon or text size: the

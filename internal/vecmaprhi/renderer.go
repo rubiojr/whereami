@@ -183,6 +183,10 @@ func (r *Renderer) prepare() {
 		u[32], u[33], u[34], u[35] = float32(draw.Material.Kind), draw.Material.FontScale, draw.Material.HaloWidth, draw.Material.HaloBlur
 		copy(u[36:38], draw.Material.PatternSize[:])
 		copy(u[38:40], draw.Material.PatternPhase[:])
+		if draw.Material.Kind == scene.Dashed {
+			u[33] = draw.Material.DashUnit
+			copy(u[36:40], draw.Material.Dashes[:])
+		}
 		u[40], u[41], u[42] = pixelRatio, opacity, draw.Material.OffsetScale
 	}
 	projection.Delete()

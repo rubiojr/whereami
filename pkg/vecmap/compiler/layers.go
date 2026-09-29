@@ -30,6 +30,11 @@ type LayerOptions struct {
 	// outlines as width-independent extruded primitives, and marks the remaining
 	// zoom-baked line geometry Dynamic. False preserves the existing output.
 	ExtrudeLines bool
+	// ShaderDashes makes CompileTile emit butt-capped, unoffset dashed lines
+	// whose pattern fits geometry.DashPattern as width-independent primitives
+	// that leave dashing to the consumer. Other dashed lines keep their baked
+	// geometry. False preserves the existing output.
+	ShaderDashes bool
 }
 
 func (o LayerOptions) validated() (float64, int, error) {
@@ -51,10 +56,16 @@ type SolidSink func(geometry.Mesh, style.Color) error
 // and its half width in logical pixels.
 type ExtrudedSink func(geometry.ExtrudedMesh, style.Color, float64) error
 
-// lineSinks routes tessellated lines. A nil extruded sink keeps every line baked.
+// DashedSink consumes an owned width-independent dashed line mesh, its evaluated
+// color, its width in logical pixels and in tile units, and its dash pattern.
+type DashedSink func(mesh geometry.DashedMesh, color style.Color, pixels, width float64, pattern geometry.DashPattern) error
+
+// lineSinks routes tessellated lines. A nil extruded or dashed sink keeps those
+// lines baked.
 type lineSinks struct {
 	baked    SolidSink
 	extruded ExtrudedSink
+	dashed   DashedSink
 }
 
 // PatternSink consumes an owned mesh, logical sprite name, tile-unit scale and
@@ -268,6 +279,19 @@ func emitLines(batches []lineBatch, indexed bool, limit int, sinks lineSinks) er
 				return resourceError(err)
 			}
 			if err := sinks.extruded(mesh, paint.color, paint.pixels/2); err != nil {
+				return err
+			}
+			continue
+		}
+		// Dash lengths are multiples of the width, so a pattern and the distance
+		// along each path replace baked dashes. Dash caps and joins, path offsets
+		// and longer patterns have no such form here.
+		if pattern, ok := geometry.NewDashPattern(paint.dashes, paint.width); ok && sinks.dashed != nil && paint.offset == 0 && paint.lineCap != "round" && paint.lineCap != "square" {
+			mesh, err := geometry.TessellateDashedLines(batch.paths, limit, indexed)
+			if err != nil {
+				return resourceError(err)
+			}
+			if err := sinks.dashed(mesh, paint.color, paint.pixels, paint.width, pattern); err != nil {
 				return err
 			}
 			continue
