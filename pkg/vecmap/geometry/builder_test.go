@@ -111,6 +111,7 @@ func TestBuilderReserveKeepsContentsAndAvoidsGrowth(t *testing.T) {
 		}
 		assert.Equal(t, plain.Vertices, reserved.Vertices)
 		assert.Equal(t, plain.Indices, reserved.Indices)
+		assert.Equal(t, 12, vertices, "room is reserved exactly, so a full buffer needs no compaction")
 		assert.Equal(t, vertices, cap(reserved.Vertices), "reserved room is used, not replaced")
 		assert.Equal(t, indices, cap(reserved.Indices))
 		assert.Equal(t, indexed, indices > 0, "an expanded builder has no index buffer")
@@ -120,11 +121,15 @@ func TestBuilderReserveKeepsContentsAndAvoidsGrowth(t *testing.T) {
 func TestBuilderReserveIsBoundedByTheLimit(t *testing.T) {
 	b := NewBuilder[int](true, 6)
 	b.Reserve(math.MaxInt, math.MaxInt)
-	assert.LessOrEqual(t, cap(b.Vertices), 8)
-	assert.LessOrEqual(t, cap(b.Indices), 8)
+	assert.Equal(t, 6, cap(b.Vertices))
+	assert.Equal(t, 6, cap(b.Indices))
 	require.NoError(t, b.Triangle(1, 2, 3))
+	first := &b.Vertices[0]
 	b.Reserve(math.MaxInt, math.MaxInt)
-	assert.LessOrEqual(t, cap(b.Indices), 8)
+	assert.Equal(t, 6, cap(b.Indices))
+	assert.Same(t, first, &b.Vertices[0], "room that is there is not reserved again")
+	b.Reserve(2, 2)
+	assert.Same(t, first, &b.Vertices[0])
 	b.Reserve(-1, -1)
 	assert.Equal(t, []int{1, 2, 3}, b.Vertices)
 	assert.ErrorIs(t, b.Quad(4, 5, 6, 7), ErrGeometryLimit, "room reserved is not room allowed")

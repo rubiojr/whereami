@@ -109,6 +109,9 @@ func (s *sections) mesh(id uint64) (scene.Mesh, [3]uint32) {
 		mesh.Indices = make([]uint32, 0, len(s.full.Indices)+len(s.offsets.Indices)+len(s.positions.Indices))
 		mesh.Indices = append(append(append(mesh.Indices, s.full.Indices...), s.offsets.Indices...), s.positions.Indices...)
 	}
+	// The scene a builder returns keeps the builder alive. Let go of the
+	// sections' own index buffers, which the shared one has replaced.
+	*s = sections{}
 	return mesh, first
 }
 

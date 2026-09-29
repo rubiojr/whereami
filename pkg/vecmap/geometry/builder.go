@@ -103,10 +103,22 @@ func (b *Builder[T]) appendIndexed(vertices []T, indices []uint32) {
 // index buffer; pass the expanded vertex count.
 func (b *Builder[T]) Reserve(vertices, indices int) {
 	room := max(b.limit-b.Count(), 0)
-	b.Vertices = slices.Grow(b.Vertices, max(min(vertices, room), 0))
+	b.Vertices = reserve(b.Vertices, max(min(vertices, room), 0))
 	if b.indexed {
-		b.Indices = slices.Grow(b.Indices, max(min(indices, room), 0))
+		b.Indices = reserve(b.Indices, max(min(indices, room), 0))
 	}
+}
+
+// reserve makes room for exactly n further values. Growing by append would
+// round the capacity up, and Compact would then copy a buffer that was reserved
+// at its final length.
+func reserve[S ~[]E, E any](values S, n int) S {
+	if cap(values)-len(values) >= n {
+		return values
+	}
+	exact := make(S, len(values), len(values)+n)
+	copy(exact, values)
+	return exact
 }
 
 // Compact replaces buffers that hold unused capacity with copies of their exact

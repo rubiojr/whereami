@@ -4203,20 +4203,31 @@ precision when tiles are overzoomed.
 #### Static views
 
 Viewer on llvmpipe, default flags, without and with compact vertices, one run
-each (zoom 13: three):
+each:
 
 | Camera zoom | Uploaded MB | Peak cache MiB | Peak RSS MiB | Pixels that differ |
 | ---: | ---: | ---: | ---: | ---: |
-| 9 | 191 → 152 | 224 → 187 | 742 → 705 | 0 |
-| 11 | 120 → 94 | 136 → 110 | 546 → 507 | 0 |
-| 12 | 126 → 101 | 140 → 115 | 554 → 537 | 0 |
-| 13 | 318–324 → 236–247 | 322 → 255 | 973–991 → 914–944 | 0 |
-| 14 | 194 → 155 | 229 → 191 | 718 → 684 | 0 |
-| 14.5 | 139 → 110 | 204 → 169 | 659 → 622 | 0 |
-| 15 | 98 → 82 | 223 → 191 | 603 → 590 | 0 |
-| 16 | 98 → 77 | 217 → 198 | 610 → 568 | 0 |
+| 9 | 191 → 152 | 224 → 187 | 743 → 659 | 0 |
+| 11 | 120 → 96 | 136 → 113 | 540 → 495 | 0 |
+| 12 | 126 → 101 | 140 → 115 | 553 → 496 | 0 |
+| 13 | 324 → 248 | 328 → 255 | 969 → 817 | 0 |
+| 14 | 194 → 155 | 229 → 191 | 739 → 645 | 0 |
+| 14.5 | 139 → 110 | 204 → 169 | 653 → 578 | 0 |
+| 15 | 98 → 82 | 223 → 192 | 606 → 563 | 0 |
+| 16 | 98 → 84 | 229 → 209 | 604 → 579 | 0 |
 
-Uploads fall by 16–23% and the compiled tile cache by 9–21%. On Vulkan the zoom
+Uploads fall by 14–23%, the compiled tile cache by 9–22% and peak memory by
+4–16%. In the headless probe the zoom 14 view keeps a live heap of 140 MiB
+against 165 MiB and peaks at 309 MiB against 343–350 MiB.
+
+A first version of this change saved nothing in the heap, although every charge
+fell. A scene points into the builder that packed it, so the builder stays
+allocated with it, and it still held the index buffer of each section next to the
+shared one it had published: 25 MiB in that view. The builder now lets go of
+its sections on publication. `Reserve` also allocates exact capacities, so a
+buffer reserved at its final length is not copied again by `Compact`; building
+the view allocates 1.7 GiB against 1.9 GiB. The numbers in this section are from
+the corrected build; the zoom 13 pixel comparison is from the first. On Vulkan the zoom
 13 view uploads 249 MB against 326 MB and settles in 4.3 s in both modes, with
 no differing pixel at 1600x1200. On llvmpipe that view settles in 11–14 s and
 misses the 15-second limit in some runs of either mode.
@@ -4226,27 +4237,27 @@ misses the 15-second limit in some runs of either mode.
 Same corpus, host and arguments as the draw margin series. Both modes from one
 binary, two passes of three moving runs and one static run per backend, the
 second pass in reverse order, on an unlocked desktop. Every series started at a
-one-minute host load of 1.11–1.48. All 32 runs exit 0 with zero pending, failed
+one-minute host load of 1.33–1.44. All 32 runs exit 0 with zero pending, failed
 and batch failures and end at 16 tiles / 94 labels (static 42 / 130).
 
 | Replay | Vertices | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Uploaded MB | Peak RSS MiB | GPU p95 ms |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Vulkan moving | full | 5.82–6.26 | 13–16 | 0.91–1.25 | 0.23–0.31 | 99–105 | 251–267 | 670–741 | 3.6–4.3 |
-| Vulkan moving | compact | 5.72–6.09 | 15–19 | 0.87–1.17 | 0.18–0.24 | 101–104 | 204–215 | 623–686 | 3.6–4.1 |
-| Vulkan static | full | 5.12–5.13 | 5 | 1.96–1.97 | 0.57 | 79 | 186 | 425 | 3.2–3.3 |
-| Vulkan static | compact | 5.11–5.13 | 4 | 2.27–2.29 | 0.66 | 73 | 139 | 423–429 | 2.6–2.9 |
-| llvmpipe moving | full | 8.33–10.91 | 7–8 | 2.37–3.54 | 0.58–1.10 | 61–73 | 180–202 | 850–964 | 58.4–66.4 |
-| llvmpipe moving | compact | 7.84–8.99 | 6–7 | 1.83–2.84 | 0.83–1.00 | 58–64 | 149–164 | 852–909 | 61.0–66.7 |
-| llvmpipe static | full | 7.50–9.82 | 4–5 | 5.22–6.08 | 1.62 | 69–78 | 161–186 | 693–721 | 62.7–64.4 |
-| llvmpipe static | compact | 8.94–10.06 | 4–5 | 5.50–5.85 | 1.67–1.85 | 74–79 | 143–150 | 672–676 | 64.4–65.9 |
+| Vulkan moving | full | 5.87–6.15 | 14–16 | 0.88–1.28 | 0.21–0.26 | 98–103 | 253–259 | 642–778 | 3.6–4.0 |
+| Vulkan moving | compact | 5.83–6.07 | 14–16 | 0.88–1.20 | 0.21–0.26 | 102–108 | 206–218 | 581–657 | 3.9–4.2 |
+| Vulkan static | full | 5.11–5.12 | 5 | 1.99–2.04 | 0.55–0.57 | 78–79 | 186 | 423–433 | 3.6–4.1 |
+| Vulkan static | compact | 5.12–5.13 | 4–5 | 1.96–2.24 | 0.57–0.67 | 74–78 | 143–150 | 383–390 | 3.4–3.9 |
+| llvmpipe moving | full | 8.41–10.06 | 6–7 | 2.68–3.34 | 0.74–1.13 | 65–73 | 204–208 | 946–989 | 58.4–61.3 |
+| llvmpipe moving | compact | 7.72–8.99 | 6–8 | 2.10–3.21 | 0.67–0.95 | 58–67 | 152–170 | 764–846 | 58.3–63.7 |
+| llvmpipe static | full | 7.10–8.69 | 4–5 | 4.93–5.35 | 1.49–1.61 | 69–78 | 161–186 | 696–731 | 59.2–59.4 |
+| llvmpipe static | compact | 6.83–6.92 | 4 | 4.68–4.81 | 1.42–1.51 | 69 | 131 | 620–622 | 56.5–57.2 |
 
-Under motion about a fifth fewer bytes are uploaded on both backends. Times are
-within or slightly below the range of full vertices, and the six pipelines cost
-no GPU time. Static loads differ by which intermediate covers a run uploads, as
-in the draw margin series, not by mode.
+Under motion about a fifth fewer bytes are uploaded on both backends and peak
+memory is about a tenth lower on Vulkan and a sixth on llvmpipe. Times are
+within the range of full vertices on Vulkan and at or below it on llvmpipe, and
+the six pipelines cost no GPU time.
 
 Since the start of **g1av** the viewer's peak memory for the zoom 14 view on
-llvmpipe went from 961 MiB, with an incomplete cover, to 684 MiB with a complete
+llvmpipe went from 961 MiB, with an incomplete cover, to 645 MiB with a complete
 one, and its uploads for the complete cover from 194 MB to 155 MB.
 
 #### Verification
@@ -4258,7 +4269,8 @@ one, and its uploads for the complete cover from 194 MB to 155 MB.
 - Compiler: for indexed and expanded output, split and unsplit, with and without
   resident symbols and reservation, every draw of a compact fragment expands to
   exactly the vertices of the full fragment, with equal draw sources, textures
-  and mesh count and buffers of exact length. Coverage stays at **100%**.
+  and mesh count and buffers of exact length. A finished builder holds no
+  buffer of its own. Coverage stays at **100%**.
 - Tiles: a tile with fills, outlines, plain and dashed lines and a label draws
   the same vertices in both modes and keeps its stable mesh across a style-zoom
   change.

@@ -177,3 +177,28 @@ func TestCompactVerticesChooseTheSmallestSection(t *testing.T) {
 	_, err := late.Finish()
 	assert.ErrorIs(t, err, ErrPackingInput, "the layout is chosen before packing")
 }
+
+func TestFinishedBuilderKeepsNoBufferOfItsOwn(t *testing.T) {
+	// A scene points into its builder, so whatever the builder still holds
+	// stays allocated for as long as the scene does.
+	for _, compact := range []bool{false, true} {
+		b := NewSceneBuilder(true, 0)
+		if compact {
+			b.CompactVertices()
+		}
+		quad := geometry.Mesh{Vertices: []geometry.Point{{}, {X: 4}, {X: 4, Y: 4}, {Y: 4}}, Indices: []uint32{0, 1, 2, 0, 2, 3}}
+		b.Geometry(quad, scene.Material{Color: [4]float32{0, 0, 0, 1}}, [4]float32{})
+		b.Extruded(quad, []geometry.Point{{X: 1}, {X: 1}, {X: 1}, {X: 1}}, 2, scene.Material{Color: [4]float32{0, 0, 0, 1}}, [4]float32{})
+		result, err := b.Finish()
+		require.NoError(t, err)
+		require.Len(t, result.Meshes, 1)
+		require.Len(t, result.Meshes[0].Indices, 12)
+		for _, s := range []*sections{&b.mesh, &b.dynamic, &b.symbols} {
+			assert.Zero(t, cap(s.full.Vertices)+cap(s.offsets.Vertices)+cap(s.positions.Vertices), "compact=%t", compact)
+			assert.Zero(t, cap(s.full.Indices)+cap(s.offsets.Indices)+cap(s.positions.Indices), "compact=%t", compact)
+		}
+		again, err := b.Finish()
+		require.NoError(t, err)
+		assert.Same(t, result, again)
+	}
+}
