@@ -3746,9 +3746,10 @@ hold 0.1–0.9 s worse on llvmpipe. Vulkan static settles alike; llvmpipe static
 ranges from 0.6 s sooner to 0.6 s later. Previous-frame GPU p95 under motion is
 unchanged (Vulkan 4.0–4.1 ms, llvmpipe 53–61 ms).
 
-All three options stay off. Whether they become the default is an owner decision:
-the evidence is half the uploaded bytes and fresher covers under motion against a
-slower first load of a static view.
+All three options stay off at this checkpoint. Whether they become the default is
+an owner decision, taken in **kykh** below: the evidence is half the uploaded
+bytes and fresher covers under motion against a slower first load of a static
+view.
 These are matched input replays, not matched frame work; no presentation pacing or
 MapLibre claim follows.
 
@@ -3787,6 +3788,55 @@ MapLibre claim follows.
   OpenGL adapter and viewer suites, the OpenGL suites under the race detector and
   tagged staticcheck pass.
 
+### Resident options on by default
+
+Checkpoint **kykh** changes the viewer defaults of `-resident-geometry`,
+`-resident-symbols` and `-resident-dashes` to **true**, an owner decision recorded
+on 2026-09-29: the main use of the map will be to search, zoom and pan. The
+library defaults (`tiles.PrepareOptions` zero value), the upload and release
+budgets and the residency limits are unchanged. `=false` on the three flags
+selects the single-mesh mode.
+
+Same corpus, host and arguments as **yj2k**; both modes from the new binary, two
+passes of three moving runs and one static run per backend, the second pass in
+reverse order, every series started at a one-minute host load of 0.84–1.47 on an
+unlocked desktop. All 32 runs exit 0 with zero pending, failed and batch failures
+and end at 20 tiles / 94 labels (static 42 / 130).
+
+| Replay | Mode | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Mesh uploads | Uploaded MB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | options off | 6.39–6.80 | 10–12 | 1.13–1.29 | 0.40–0.47 | 121–131 | 162–204 | 629–722 |
+| Vulkan moving | default | 6.43–7.09 | 10–14 | 1.20–1.45 | 0.30–0.37 | 113–131 | 155–180 | 286–311 |
+| Vulkan static | options off | 5.13–5.14 | 5 | 2.49–2.51 | 0.46–0.47 | 63–64 | 58 | 187 |
+| Vulkan static | default | 5.13–5.16 | 5 | 1.96–1.99 | 0.58 | 79 | 116 | 186 |
+| llvmpipe moving | options off | 8.89–10.77 | 5–7 | 2.68–4.00 | 0.95–1.27 | 62–73 | 86–106 | 377–446 |
+| llvmpipe moving | default | 8.81–10.14 | 6–7 | 2.36–3.15 | 0.98–1.12 | 65–75 | 91–121 | 192–230 |
+| llvmpipe static | options off | 6.48–8.00 | 5 | 4.08–4.68 | 1.07–1.31 | 57–64 | 52–58 | 165–187 |
+| llvmpipe static | default | 9.48–9.97 | 5 | 5.62–5.91 | 1.55–1.64 | 79 | 116 | 186 |
+
+The series confirms **yj2k** on Vulkan: under motion the default uploads less
+than half the bytes and the mean Current age is about a quarter lower, settlement
+is within 0.3 s, and the longest hold is 0.1–0.2 s worse. A static view settles
+alike, with a shorter longest hold and a mean age 0.1 s worse.
+
+On llvmpipe it confirms the bytes and a shorter longest hold under motion, but
+not the lower mean age, which here is within the control range. The static cost
+is larger than in **yj2k**: the first load settles in 9.5–10.0 s against
+6.5–8.0 s, where **yj2k** measured 7.1–8.8 s against 7.6–8.1 s. Over both
+series the default takes 7.1–10.0 s and the single mesh 6.5–8.1 s. Software
+rendering pays most for the second mesh resource per tile; this is the known
+cost of the decision and the reason the flags remain.
+
+Peak process memory is lower under motion (Vulkan 1,050–1,088 MiB against
+1,108–1,207 MiB) and higher on a static load (718–724 MiB against 637 MiB).
+Previous-frame GPU p95 is unchanged. These are matched input replays, not matched
+frame work; no presentation pacing or MapLibre claim follows.
+
+Verification: the viewer reports the three options as true without flags and as
+false with `=false`; the tagged adapter and viewer suites pass on Vulkan and
+OpenGL, and tagged staticcheck passes. Only flag defaults changed, so headless
+packages are unaffected.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and
@@ -3809,8 +3859,8 @@ are open. This prototype adds explicit opt-in build/test targets.
 - Continue moving the CPU engine out of its Qt-bound package; camera, projection,
   tile coverage and transforms have been extracted into `pkg/vecmap/view`.
 - Reuse geometry across live style-zoom changes. Fills and shader-extruded lines
-  (**yfq2**), symbols (**s834**) and dashed lines (**yj2k**) now stay resident
-  behind opt-ins; CPU-side reuse of tessellation and the default remain.
+  (**yfq2**), symbols (**s834**) and dashed lines (**yj2k**) now stay resident,
+  by default in the viewer (**kykh**); CPU-side reuse of tessellation remains.
 - Replace the fixture with incremental live tile/placement updates and bounded
   upload scheduling. Validate fallback clipping and world wraps under motion.
 - Validate multiple simultaneous maps and GPU resource sharing where safe.

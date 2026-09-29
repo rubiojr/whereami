@@ -46,9 +46,9 @@ func main() {
 	flag.Uint64Var(&live.cacheBytes, "cpu-cache-bytes", 256<<20, "live raw/prepared/fragment/profile cache budget")
 	flag.IntVar(&live.workers, "tile-workers", 4, "live transport workers (1-4); use 1 for ordered cache replay")
 	flag.BoolVar(&live.cacheOnly, "cache-only", false, "live replay from verified cached tiles only; never fetch missing entries")
-	flag.BoolVar(&live.residentGeometry, "resident-geometry", false, "keep fills and shader-extruded lines resident across style-zoom changes")
-	flag.BoolVar(&live.residentSymbols, "resident-symbols", false, "keep icon and text quads resident across style-zoom changes that preserve symbol layout")
-	flag.BoolVar(&live.residentDashes, "resident-dashes", false, "keep butt-capped dashed lines resident and dash them in the fragment shader")
+	flag.BoolVar(&live.residentGeometry, "resident-geometry", true, "keep fills and shader-extruded lines resident across style-zoom changes")
+	flag.BoolVar(&live.residentSymbols, "resident-symbols", true, "keep icon and text quads resident across style-zoom changes that preserve symbol layout")
+	flag.BoolVar(&live.residentDashes, "resident-dashes", true, "keep butt-capped dashed lines resident and dash them in the fragment shader")
 	flag.Parse()
 	if err := run(*path, benchmarkOptions{liveOptions: live, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
