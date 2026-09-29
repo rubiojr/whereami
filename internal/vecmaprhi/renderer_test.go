@@ -34,6 +34,8 @@ func TestRenderer(t *testing.T) {
 	testResidentSymbols(t)
 	testDashedLines(t, false)
 	testDashedLines(t, true)
+	testVertexSections(t, false)
+	testVertexSections(t, true)
 }
 
 func testRendererLifetime(t *testing.T, indexed bool) {

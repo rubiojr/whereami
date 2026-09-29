@@ -4,13 +4,14 @@ import "math"
 
 // IndexMesh replaces repeated, bit-identical vertices with uint32 indices when
 // this reduces total buffer bytes. Triangle order and all draw ranges stay valid.
-// The input is never modified; already indexed meshes are returned unchanged.
+// The input is never modified; already indexed meshes and meshes with more than
+// the Vertices section are returned unchanged.
 // Use before publication, or advance Revision before publishing a replacement.
 func IndexMesh(mesh Mesh) (Mesh, error) {
 	if err := mesh.Validate(); err != nil {
 		return Mesh{}, err
 	}
-	if len(mesh.Indices) > 0 || len(mesh.Vertices) < 6 {
+	if len(mesh.Indices) > 0 || len(mesh.Vertices) < 6 || len(mesh.Offsets) > 0 || len(mesh.Positions) > 0 {
 		return mesh, nil
 	}
 	unique := make([]Vertex, 0, min(len(mesh.Vertices), 4096))

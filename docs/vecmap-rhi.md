@@ -4052,12 +4052,6 @@ With the new default budgets all eight views are complete, at a peak of
 so the larger scene budget costs little while both hold the same tiles, but the
 documented worst case of cache plus four leases rises from 768 MiB to 1,408 MiB.
 
-#### Not done
-
-- The vertex format. Dropping unused fields would save about 28% of vertex
-  bytes; a quantized 12-byte vertex would save half. Both change the scene
-  format, the shaders and the adapter.
-
 #### Verification
 
 - Geometry: reserved builders produce the same buffers without reallocating;
@@ -4179,6 +4173,104 @@ every direction, as it did at a whole zoom before, where it used to find up to
   negative, not finite or above 2^20 are rejected. The tests ran 200 times.
 - Race, vet and staticcheck pass on view and producer; the full pkg/vecmap suite
   and the tagged viewer suite on OpenGL pass.
+
+### Compact vertices
+
+This closes the last open item of **g1av**. A `scene.Vertex` is 24 bytes:
+position, pixel offset and texture coordinate. Fills and patterns use the
+position only and extruded lines no texture coordinate, which is 62% of the
+vertices of a dense view.
+
+`tiles.PrepareOptions.CompactVertices` (viewer `-compact-vertices`, default on;
+library default off) packs fills and patterns as `scene.PositionVertex` (8
+bytes) and extruded lines as `scene.OffsetVertex` (16 bytes). Dashed lines,
+icons and text keep every attribute. A mesh holds the three kinds as sections
+(`Vertices`, `Offsets`, `Positions`) and a draw names its section in
+`Draw.Layout`; indices and unindexed ranges count from the start of the section.
+A tile still has the same meshes, so nothing is added to the count of uploads,
+which is the binding limit (**s834**). Scene files without sections are
+unchanged.
+
+The adapter packs the sections into one vertex buffer and keeps one input layout
+per section. A section without an attribute reads the position in its place, and
+the vertex shader, told the layout in `view.w`, uses zero instead. Only
+`map.vert.qsb` is regenerated. Pipelines go from two to six.
+
+No value is rounded or quantized, so the output is the same: a quantized 12-byte
+vertex would save half instead of a quarter of the vertex bytes, at a loss of
+precision when tiles are overzoomed.
+
+#### Static views
+
+Viewer on llvmpipe, default flags, without and with compact vertices, one run
+each (zoom 13: three):
+
+| Camera zoom | Uploaded MB | Peak cache MiB | Peak RSS MiB | Pixels that differ |
+| ---: | ---: | ---: | ---: | ---: |
+| 9 | 191 → 152 | 224 → 187 | 742 → 705 | 0 |
+| 11 | 120 → 94 | 136 → 110 | 546 → 507 | 0 |
+| 12 | 126 → 101 | 140 → 115 | 554 → 537 | 0 |
+| 13 | 318–324 → 236–247 | 322 → 255 | 973–991 → 914–944 | 0 |
+| 14 | 194 → 155 | 229 → 191 | 718 → 684 | 0 |
+| 14.5 | 139 → 110 | 204 → 169 | 659 → 622 | 0 |
+| 15 | 98 → 82 | 223 → 191 | 603 → 590 | 0 |
+| 16 | 98 → 77 | 217 → 198 | 610 → 568 | 0 |
+
+Uploads fall by 16–23% and the compiled tile cache by 9–21%. On Vulkan the zoom
+13 view uploads 249 MB against 326 MB and settles in 4.3 s in both modes, with
+no differing pixel at 1600x1200. On llvmpipe that view settles in 11–14 s and
+misses the 15-second limit in some runs of either mode.
+
+#### Replay observations
+
+Same corpus, host and arguments as the draw margin series. Both modes from one
+binary, two passes of three moving runs and one static run per backend, the
+second pass in reverse order, on an unlocked desktop. Every series started at a
+one-minute host load of 1.11–1.48. All 32 runs exit 0 with zero pending, failed
+and batch failures and end at 16 tiles / 94 labels (static 42 / 130).
+
+| Replay | Vertices | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Uploaded MB | Peak RSS MiB | GPU p95 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | full | 5.82–6.26 | 13–16 | 0.91–1.25 | 0.23–0.31 | 99–105 | 251–267 | 670–741 | 3.6–4.3 |
+| Vulkan moving | compact | 5.72–6.09 | 15–19 | 0.87–1.17 | 0.18–0.24 | 101–104 | 204–215 | 623–686 | 3.6–4.1 |
+| Vulkan static | full | 5.12–5.13 | 5 | 1.96–1.97 | 0.57 | 79 | 186 | 425 | 3.2–3.3 |
+| Vulkan static | compact | 5.11–5.13 | 4 | 2.27–2.29 | 0.66 | 73 | 139 | 423–429 | 2.6–2.9 |
+| llvmpipe moving | full | 8.33–10.91 | 7–8 | 2.37–3.54 | 0.58–1.10 | 61–73 | 180–202 | 850–964 | 58.4–66.4 |
+| llvmpipe moving | compact | 7.84–8.99 | 6–7 | 1.83–2.84 | 0.83–1.00 | 58–64 | 149–164 | 852–909 | 61.0–66.7 |
+| llvmpipe static | full | 7.50–9.82 | 4–5 | 5.22–6.08 | 1.62 | 69–78 | 161–186 | 693–721 | 62.7–64.4 |
+| llvmpipe static | compact | 8.94–10.06 | 4–5 | 5.50–5.85 | 1.67–1.85 | 74–79 | 143–150 | 672–676 | 64.4–65.9 |
+
+Under motion about a fifth fewer bytes are uploaded on both backends. Times are
+within or slightly below the range of full vertices, and the six pipelines cost
+no GPU time. Static loads differ by which intermediate covers a run uploads, as
+in the draw margin series, not by mode.
+
+Since the start of **g1av** the viewer's peak memory for the zoom 14 view on
+llvmpipe went from 961 MiB, with an incomplete cover, to 684 MiB with a complete
+one, and its uploads for the complete cover from 194 MB to 155 MB.
+
+#### Verification
+
+- Scene: sections validate their vertices and bound the indices of each draw by
+  its own section, indexed and unindexed; draws of different sections never
+  merge; scenes without sections serialize as before and sectioned scenes
+  survive a round trip. `IndexMesh` leaves sectioned meshes alone.
+- Compiler: for indexed and expanded output, split and unsplit, with and without
+  resident symbols and reservation, every draw of a compact fragment expands to
+  exactly the vertices of the full fragment, with equal draw sources, textures
+  and mesh count and buffers of exact length. Coverage stays at **100%**.
+- Tiles: a tile with fills, outlines, plain and dashed lines and a label draws
+  the same vertices in both modes and keeps its stable mesh across a style-zoom
+  change.
+- Retained: a changed section is a new revision, identical sections keep the
+  resident one, and the byte limit counts every section.
+- Native: fills, an extruded line and a dashed line drawn from sections, with
+  draws alternating between them, match the same geometry with full vertices in
+  every pixel, as one mesh upload of fewer bytes, indexed and unindexed. The
+  existing adapter tests pass unchanged on the six pipelines.
+- Race, vet and staticcheck pass on scene, compiler, retained, tiles and
+  producer; the full pkg/vecmap suite, the tagged adapter and viewer suites on
+  Vulkan and OpenGL and tagged staticcheck pass.
 
 ## Flatpak integration
 

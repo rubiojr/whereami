@@ -23,6 +23,19 @@ evaluated icon size or text size over 24. The shader needed no change. A second
 integration test renders both alignments baked and scaled, requires agreement
 within edge rounding, and requires a doubled size to reuse the mesh.
 
+## Vertex sections
+
+A mesh can store vertices without the attributes they leave at zero
+(`scene.Mesh.Offsets` and `Positions`). The adapter packs the sections into one
+vertex buffer, in the order of their layouts, and creates one input layout per
+section, each without and with the stencil test: six pipelines. A draw binds the
+buffer at the start of its section. In a section without an attribute that input
+reads the position instead, and the vertex shader replaces it with zero
+according to the fourth component of the `view` uniform, which carries
+`Draw.Layout`. The integration test draws fills, an extruded line and a dashed
+line from sections, alternating between them, and requires every pixel to equal
+the same geometry drawn with full vertices.
+
 ## Dashed materials
 
 For `scene.Dashed` the second component of `parameters` is `Material.DashUnit` and

@@ -24,9 +24,14 @@ var fragmentShader []byte
 
 const uniformBytes = 176
 
+// vertexLayouts is the number of vertex sections a mesh can hold.
+const vertexLayouts = int(scene.PositionLayout) + 1
+
 type gpuMesh struct {
 	buffer  *rhi.QRhiBuffer
 	indices *rhi.QRhiBuffer
+	// sections is the byte at which each vertex section starts in buffer.
+	sections [vertexLayouts]uint32
 }
 
 func (m gpuMesh) release() {
@@ -73,7 +78,7 @@ type Renderer struct {
 	uniform    *rhi.QRhiBuffer
 	uniforms   []float32
 	stride     int
-	pipelines  [2]*rhi.QRhiGraphicsPipeline
+	pipelines  [2 * vertexLayouts]*rhi.QRhiGraphicsPipeline
 	passFormat []uint32
 	samples    int
 	stats      Stats
@@ -187,7 +192,7 @@ func (r *Renderer) prepare() {
 			u[33] = draw.Material.DashUnit
 			copy(u[36:40], draw.Material.Dashes[:])
 		}
-		u[40], u[41], u[42] = pixelRatio, opacity, draw.Material.OffsetScale
+		u[40], u[41], u[42], u[43] = pixelRatio, opacity, draw.Material.OffsetScale, float32(draw.Layout)
 	}
 	projection.Delete()
 	if len(r.uniforms) > 0 {
@@ -272,7 +277,10 @@ func (r *Renderer) prepareResources(updates *rhi.QRhiResourceUpdateBatch) error 
 
 func (r *Renderer) createMesh(mesh scene.Mesh) (gpuMesh, error) {
 	gpu := gpuMesh{}
-	gpu.buffer = r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__VertexBuffer, uint32(len(mesh.Vertices)*24))
+	gpu.buffer = r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__VertexBuffer, uint32(mesh.VertexBytes()))
+	for layout := range gpu.sections {
+		gpu.sections[layout] = uint32(mesh.SectionOffset(scene.Layout(layout)))
+	}
 	if !gpu.buffer.Create() {
 		gpu.release()
 		return gpuMesh{}, fmt.Errorf("create mesh %d", mesh.ID)
@@ -337,7 +345,7 @@ func (r *Renderer) preparePipelines() error {
 		r.passFormat = format
 		r.samples = samples
 	}
-	if r.pipelines[0] != nil && r.pipelines[1] != nil {
+	if !slices.Contains(r.pipelines[:], nil) {
 		return nil
 	}
 	vertex := rhi.QShader_FromSerialized(vertexShader)
@@ -351,17 +359,27 @@ func (r *Renderer) preparePipelines() error {
 	defer vs.Delete()
 	fs := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Fragment, fragment)
 	defer fs.Delete()
-	binding := rhi.NewQRhiVertexInputBinding2(24)
-	defer binding.Delete()
-	attributes := make([]rhi.QRhiVertexInputAttribute, 3)
-	for i := range attributes {
-		attributes[i] = *rhi.NewQRhiVertexInputAttribute2(0, i, rhi.QRhiVertexInputAttribute__Float2, uint32(i*8))
-		defer attributes[i].Delete()
+	// One input layout per vertex section. A section without an attribute
+	// reads the position in its place, and the vertex shader ignores it.
+	var layouts [vertexLayouts]*rhi.QRhiVertexInputLayout
+	for section := range layouts {
+		stride := scene.Layout(section).Bytes()
+		binding := rhi.NewQRhiVertexInputBinding2(uint32(stride))
+		defer binding.Delete()
+		attributes := make([]rhi.QRhiVertexInputAttribute, 3)
+		for i := range attributes {
+			offset := i * 8
+			if offset >= stride {
+				offset = 0
+			}
+			attributes[i] = *rhi.NewQRhiVertexInputAttribute2(0, i, rhi.QRhiVertexInputAttribute__Float2, uint32(offset))
+			defer attributes[i].Delete()
+		}
+		layouts[section] = rhi.NewQRhiVertexInputLayout()
+		defer layouts[section].Delete()
+		layouts[section].SetBindings([]rhi.QRhiVertexInputBinding{*binding})
+		layouts[section].SetAttributes(attributes)
 	}
-	layout := rhi.NewQRhiVertexInputLayout()
-	defer layout.Delete()
-	layout.SetBindings([]rhi.QRhiVertexInputBinding{*binding})
-	layout.SetAttributes(attributes)
 	blend := rhi.NewQRhiGraphicsPipeline__TargetBlend()
 	defer blend.Delete()
 	blend.SetEnable(true)
@@ -373,13 +391,13 @@ func (r *Renderer) preparePipelines() error {
 		pipeline.SetSampleCount(samples)
 		pipeline.SetFlags(rhi.QRhiGraphicsPipeline__UsesScissor | rhi.QRhiGraphicsPipeline__UsesStencilRef)
 		pipeline.SetShaderStages([]rhi.QRhiShaderStage{*vs, *fs})
-		pipeline.SetVertexInputLayout(layout)
+		pipeline.SetVertexInputLayout(layouts[index/2])
 		pipeline.SetShaderResourceBindings(r.textures[resourceKey{}].bindings[0])
 		pipeline.SetRenderPassDescriptor(target.RenderPassDescriptor())
 		pipeline.SetTargetBlends([]rhi.QRhiGraphicsPipeline__TargetBlend{*blend})
 		pipeline.SetDepthTest(false)
 		pipeline.SetDepthWrite(false)
-		if index == 1 {
+		if index%2 == 1 {
 			stencil := rhi.NewQRhiGraphicsPipeline__StencilOpState()
 			stencil.SetCompareOp(rhi.QRhiGraphicsPipeline__Equal)
 			pipeline.SetStencilTest(true)
@@ -426,22 +444,28 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 		pipeline = 1
 		cb.SetStencilRef(uint32(state.StencilValue()))
 	}
-	cb.SetGraphicsPipeline(r.pipelines[pipeline])
+	// Pipelines come in pairs, without and with the stencil test, one pair per
+	// vertex section. A new pipeline needs its vertex input set again.
+	bound, section := -1, scene.FullLayout
 	var current resourceKey
 	for index, draw := range r.frame.Scene.Draws {
 		keys := r.drawKeys[index]
 		mesh := r.meshes[keys.mesh]
-		if current != keys.mesh {
+		if selected := int(draw.Layout)*2 + pipeline; selected != bound {
+			cb.SetGraphicsPipeline(r.pipelines[selected])
+			bound, current = selected, resourceKey{}
+		}
+		if current != keys.mesh || section != draw.Layout {
 			binding := struct {
 				First  *rhi.QRhiBuffer
 				Second uint32
-			}{mesh.buffer, 0}
+			}{mesh.buffer, mesh.sections[draw.Layout]}
 			if mesh.indices != nil {
 				cb.SetVertexInput4(0, 1, binding, mesh.indices, 0, rhi.QRhiCommandBuffer__IndexUInt32)
 			} else {
 				cb.SetVertexInput(0, 1, binding)
 			}
-			current = keys.mesh
+			current, section = keys.mesh, draw.Layout
 		}
 		sampler := 0
 		if draw.Material.Kind == scene.Pattern {
@@ -498,7 +522,7 @@ func (r *Renderer) release() {
 			sampler.DeleteLater()
 		}
 	}
-	r.pipelines = [2]*rhi.QRhiGraphicsPipeline{}
+	r.pipelines = [2 * vertexLayouts]*rhi.QRhiGraphicsPipeline{}
 	r.textures = nil
 	r.meshes = nil
 	r.drawKeys = nil

@@ -56,20 +56,111 @@ type Material struct {
 	DashUnit float32    `json:",omitempty"`
 }
 
+// OffsetVertex is a Vertex without a texture coordinate, which reads as zero.
+type OffsetVertex struct {
+	X, Y             float32
+	OffsetX, OffsetY float32
+}
+
+// PositionVertex is a Vertex with a position only. Its pixel offset and texture
+// coordinate read as zero.
+type PositionVertex struct{ X, Y float32 }
+
+// Layout names the vertex section of a mesh that a draw reads.
+type Layout uint8
+
+const (
+	// FullLayout reads Mesh.Vertices.
+	FullLayout Layout = iota
+	// OffsetLayout reads Mesh.Offsets.
+	OffsetLayout
+	// PositionLayout reads Mesh.Positions.
+	PositionLayout
+)
+
+// Bytes is the packed size of one vertex of the layout, zero if it is unknown.
+func (l Layout) Bytes() int {
+	switch l {
+	case FullLayout:
+		return 24
+	case OffsetLayout:
+		return 16
+	case PositionLayout:
+		return 8
+	}
+	return 0
+}
+
+// Mesh holds up to three vertex sections. Vertices carries every attribute.
+// Offsets and Positions leave out attributes that are zero for all of their
+// vertices, which are most vertices of a basemap. A draw names its section in
+// Draw.Layout, and its indices or vertex range count from the start of that
+// section. A backend packs the sections into one buffer, in the order Vertices,
+// Offsets, Positions.
 type Mesh struct {
 	ID, Revision uint64
 	Vertices     []Vertex
+	Offsets      []OffsetVertex   `json:",omitempty"`
+	Positions    []PositionVertex `json:",omitempty"`
 	// Optional uint32 indices. Draw.First/Count address this array when set,
-	// otherwise they address Vertices. Neither representation reorders draws.
+	// otherwise they address the section of the draw. Neither representation
+	// reorders draws.
 	Indices []uint32 `json:",omitempty"`
 }
 
-// BufferBytes is the packed size of the vertex and optional index buffers.
-func (m Mesh) BufferBytes() uint64 { return uint64(len(m.Vertices))*24 + uint64(len(m.Indices))*4 }
+// Len is the number of vertices in the section of a layout.
+func (m Mesh) Len(layout Layout) int {
+	switch layout {
+	case FullLayout:
+		return len(m.Vertices)
+	case OffsetLayout:
+		return len(m.Offsets)
+	case PositionLayout:
+		return len(m.Positions)
+	}
+	return 0
+}
 
-// Validate checks resource bounds and every referenced vertex before GPU upload.
+// At returns vertex index of a section with every attribute. It panics like a
+// slice when the index is out of range.
+func (m Mesh) At(layout Layout, index int) Vertex {
+	switch layout {
+	case OffsetLayout:
+		v := m.Offsets[index]
+		return Vertex{X: v.X, Y: v.Y, OffsetX: v.OffsetX, OffsetY: v.OffsetY}
+	case PositionLayout:
+		v := m.Positions[index]
+		return Vertex{X: v.X, Y: v.Y}
+	}
+	return m.Vertices[index]
+}
+
+// SectionOffset is the byte at which the section of a layout starts in the
+// packed vertex buffer.
+func (m Mesh) SectionOffset(layout Layout) uint64 {
+	switch layout {
+	case OffsetLayout:
+		return uint64(len(m.Vertices)) * 24
+	case PositionLayout:
+		return uint64(len(m.Vertices))*24 + uint64(len(m.Offsets))*16
+	}
+	return 0
+}
+
+// VertexBytes is the packed size of the vertex buffer.
+func (m Mesh) VertexBytes() uint64 {
+	return uint64(len(m.Vertices))*24 + uint64(len(m.Offsets))*16 + uint64(len(m.Positions))*8
+}
+
+// BufferBytes is the packed size of the vertex and optional index buffers.
+func (m Mesh) BufferBytes() uint64 { return m.VertexBytes() + uint64(len(m.Indices))*4 }
+
+// Validate checks resource bounds and every vertex before GPU upload. Indices
+// are checked against the largest section here and against the section of each
+// draw by Scene.Validate.
 func (m Mesh) Validate() error {
-	if m.ID == 0 || len(m.Vertices) == 0 || len(m.Vertices) > (1<<31-1)/24 || len(m.Indices) > (1<<31-1)/4 {
+	count := uint64(len(m.Vertices)) + uint64(len(m.Offsets)) + uint64(len(m.Positions))
+	if m.ID == 0 || count == 0 || m.VertexBytes() > 1<<31-1 || len(m.Indices) > (1<<31-1)/4 {
 		return fmt.Errorf("invalid mesh %d", m.ID)
 	}
 	for _, v := range m.Vertices {
@@ -79,8 +170,21 @@ func (m Mesh) Validate() error {
 			}
 		}
 	}
+	for _, v := range m.Offsets {
+		for _, f := range [...]float32{v.X, v.Y, v.OffsetX, v.OffsetY} {
+			if !finite(f) {
+				return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
+			}
+		}
+	}
+	for _, v := range m.Positions {
+		if !finite(v.X) || !finite(v.Y) {
+			return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
+		}
+	}
+	largest := max(len(m.Vertices), len(m.Offsets), len(m.Positions))
 	for _, index := range m.Indices {
-		if uint64(index) >= uint64(len(m.Vertices)) {
+		if uint64(index) >= uint64(largest) {
 			return fmt.Errorf("index out of bounds in mesh %d", m.ID)
 		}
 	}
@@ -104,6 +208,8 @@ type Draw struct {
 	// Clip is a local-coordinate rectangle [left,top,right,bottom]. A zero
 	// rectangle disables clipping. It never clips screen-space label offsets.
 	Clip [4]float32
+	// Layout is the vertex section of the mesh this draw reads.
+	Layout Layout `json:",omitempty"`
 }
 
 type Scene struct {
@@ -141,19 +247,17 @@ func (s *Scene) Validate() error {
 	return nil
 }
 
-func validateMeshes(values []Mesh) (map[uint64]int, error) {
-	meshes := make(map[uint64]int, len(values))
-	for _, mesh := range values {
+func validateMeshes(values []Mesh) (map[uint64]*Mesh, error) {
+	meshes := make(map[uint64]*Mesh, len(values))
+	for i := range values {
+		mesh := &values[i]
 		if err := mesh.Validate(); err != nil {
 			return nil, err
 		}
 		if _, exists := meshes[mesh.ID]; exists {
 			return nil, fmt.Errorf("duplicate mesh %d", mesh.ID)
 		}
-		meshes[mesh.ID] = len(mesh.Vertices)
-		if len(mesh.Indices) > 0 {
-			meshes[mesh.ID] = len(mesh.Indices)
-		}
+		meshes[mesh.ID] = mesh
 	}
 	return meshes, nil
 }
@@ -172,10 +276,26 @@ func validateTextures(values []Texture) (map[uint64]bool, error) {
 	return textures, nil
 }
 
-func (draw Draw) validate(meshes map[uint64]int, textures map[uint64]bool) error {
-	n, exists := meshes[draw.Mesh]
-	if !exists || draw.Count == 0 || draw.Count%3 != 0 || uint64(draw.First)+uint64(draw.Count) > uint64(n) || draw.Transform < 0 {
+func (draw Draw) validate(meshes map[uint64]*Mesh, textures map[uint64]bool) error {
+	mesh, exists := meshes[draw.Mesh]
+	if !exists || draw.Layout > PositionLayout || draw.Count == 0 || draw.Count%3 != 0 || draw.Transform < 0 {
 		return fmt.Errorf("invalid mesh range or transform")
+	}
+	section, elements := mesh.Len(draw.Layout), mesh.Len(draw.Layout)
+	if len(mesh.Indices) > 0 {
+		elements = len(mesh.Indices)
+	}
+	if uint64(draw.First)+uint64(draw.Count) > uint64(elements) {
+		return fmt.Errorf("invalid mesh range or transform")
+	}
+	// Mesh.Validate bounds indices by the largest section, which is the section
+	// of every draw of a mesh with one section.
+	if len(mesh.Indices) > 0 && section < max(len(mesh.Vertices), len(mesh.Offsets), len(mesh.Positions)) {
+		for _, index := range mesh.Indices[draw.First : draw.First+draw.Count] {
+			if uint64(index) >= uint64(section) {
+				return fmt.Errorf("index out of bounds of its vertex section")
+			}
+		}
 	}
 	if !textures[draw.Material.Texture] {
 		return fmt.Errorf("missing texture")
@@ -234,7 +354,7 @@ func validColor(color [4]float32) bool {
 func AppendDraw(draws []Draw, draw Draw) []Draw {
 	if len(draws) > 0 {
 		last := &draws[len(draws)-1]
-		if last.Mesh == draw.Mesh && last.Transform == draw.Transform && last.Material == draw.Material && last.Clip == draw.Clip && uint64(last.First)+uint64(last.Count) == uint64(draw.First) && uint64(last.Count)+uint64(draw.Count) <= math.MaxUint32 {
+		if last.Mesh == draw.Mesh && last.Layout == draw.Layout && last.Transform == draw.Transform && last.Material == draw.Material && last.Clip == draw.Clip && uint64(last.First)+uint64(last.Count) == uint64(draw.First) && uint64(last.Count)+uint64(draw.Count) <= math.MaxUint32 {
 			last.Count += draw.Count
 			return draws
 		}

@@ -62,6 +62,13 @@ type PrepareOptions struct {
 	// lines stay baked. The backend must implement scene.Dashed. False preserves
 	// the existing output.
 	ResidentDashes bool
+	// CompactVertices packs fills and patterns as scene.PositionVertex and
+	// extruded lines as scene.OffsetVertex, in sections of the same meshes.
+	// Vertices lose only attributes that are zero, so the rendered output does
+	// not change, and a dense tile keeps about a quarter less vertex storage.
+	// The backend must implement scene.Draw.Layout. False preserves the
+	// existing output.
+	CompactVertices bool
 }
 
 // Prepared owns reusable primitives and evaluated candidates, not source features
@@ -214,6 +221,9 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	}
 	if p.options.ResidentSymbols {
 		packing.ResidentSymbols()
+	}
+	if p.options.CompactVertices {
+		packing.CompactVertices()
 	}
 	var atlasID uint64
 	if len(renderable) > 0 {

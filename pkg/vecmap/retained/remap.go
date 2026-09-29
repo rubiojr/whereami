@@ -75,9 +75,10 @@ func remap(input *scene.Scene, old *fragment, nextID *uint64) (*fragment, int, e
 
 // Payload equality is exact and validated input has no NaN, so float comparison
 // is total. Indices compare by length and content: an unindexed mesh never equals
-// an indexed one.
+// an indexed one. Every vertex section must match.
 func sameMesh(a, b *scene.Mesh) bool {
-	return len(a.Indices) == len(b.Indices) && slices.Equal(a.Vertices, b.Vertices) && slices.Equal(a.Indices, b.Indices)
+	return len(a.Indices) == len(b.Indices) && slices.Equal(a.Vertices, b.Vertices) && slices.Equal(a.Offsets, b.Offsets) &&
+		slices.Equal(a.Positions, b.Positions) && slices.Equal(a.Indices, b.Indices)
 }
 
 func sameTexture(a, b *scene.Texture) bool {

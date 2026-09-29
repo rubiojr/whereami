@@ -134,6 +134,12 @@ of 20 tiles publish a sixteenth step as draws with no upload, and the step acros
 zoom 10 uploads the 20 symbol meshes. The backend must implement `scene.Dashed`;
 the QRhi adapter does. The default is off.
 
+`PrepareOptions.CompactVertices` packs fills and patterns as `scene.PositionVertex`
+and extruded lines as `scene.OffsetVertex`, in sections of the same meshes. They
+lose only attributes that are zero, so the output is the same and a dense tile
+uploads about a fifth less. Draws name their section in `scene.Draw.Layout`, which
+the backend must implement; the QRhi adapter does. The default is off.
+
 ### Preparation bounds
 
 - MVT bytes retain the decoder's **2 MiB** limit and feature/geometry/work limits.

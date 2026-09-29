@@ -56,6 +56,10 @@ func TestIndexMeshSkipsLargerAndExistingRepresentations(t *testing.T) {
 	indexed, err = IndexMesh(mesh)
 	require.NoError(t, err)
 	assert.Same(t, &mesh.Indices[0], &indexed.Indices[0])
+	sectioned := Mesh{ID: 1, Vertices: []Vertex{{X: 1}, {X: 1}, {X: 1}, {X: 1}, {X: 1}, {X: 1}}, Positions: make([]PositionVertex, 3)}
+	indexed, err = IndexMesh(sectioned)
+	require.NoError(t, err)
+	assert.Empty(t, indexed.Indices, "draw ranges of other sections would not survive indexing")
 	mesh.Vertices[0].U = float32(math.Inf(1))
 	_, err = IndexMesh(mesh)
 	assert.Error(t, err)

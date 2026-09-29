@@ -89,7 +89,16 @@ func (r *Renderer) recordResources(stage *resourceStage, updates *rhi.QRhiResour
 		if m.gpu.indices != nil {
 			updates.UploadStaticBuffer3(m.gpu.indices, unsafe.Pointer(unsafe.SliceData(m.source.Indices)))
 		}
-		updates.UploadStaticBuffer3(m.gpu.buffer, unsafe.Pointer(unsafe.SliceData(m.source.Vertices)))
+		// Sections are packed in the order of their layouts.
+		if len(m.source.Vertices) > 0 {
+			updates.UploadStaticBuffer(m.gpu.buffer, m.gpu.sections[scene.FullLayout], uint32(len(m.source.Vertices)*24), unsafe.Pointer(unsafe.SliceData(m.source.Vertices)))
+		}
+		if len(m.source.Offsets) > 0 {
+			updates.UploadStaticBuffer(m.gpu.buffer, m.gpu.sections[scene.OffsetLayout], uint32(len(m.source.Offsets)*16), unsafe.Pointer(unsafe.SliceData(m.source.Offsets)))
+		}
+		if len(m.source.Positions) > 0 {
+			updates.UploadStaticBuffer(m.gpu.buffer, m.gpu.sections[scene.PositionLayout], uint32(len(m.source.Positions)*8), unsafe.Pointer(unsafe.SliceData(m.source.Positions)))
+		}
 		r.meshes[resourceKey{m.source.ID, m.source.Revision}] = m.gpu
 		r.stats.MeshUploads++
 		r.stats.UploadedBytes += m.source.BufferBytes()

@@ -57,33 +57,40 @@ func (b *FragmentBuilder) Split() { b.packing.Split() }
 // ResidentSymbols packs size-independent symbols as SceneBuilder.ResidentSymbols.
 func (b *FragmentBuilder) ResidentSymbols() { b.packing.ResidentSymbols() }
 
+// CompactVertices packs vertices without unused attributes as
+// SceneBuilder.CompactVertices.
+func (b *FragmentBuilder) CompactVertices() { b.packing.CompactVertices() }
+
 // Reserve makes room for the geometry of primitives before packing them, as
 // SceneBuilder.Reserve. A primitive that packs nothing (a missing sprite) only
-// leaves room unused until Finish.
+// leaves room unused until Finish. Call after Split and CompactVertices.
 func (b *FragmentBuilder) Reserve(primitives []Primitive) {
-	var stable, dynamic [2]int
+	// Vertices and indices by mesh (stable, dynamic) and layout.
+	var counts [2][3][2]int
 	for _, primitive := range primitives {
-		counts := &stable
-		if primitive.Dynamic {
-			counts = &dynamic
+		mesh := 0
+		if primitive.Dynamic && b.packing.split {
+			mesh = 1
 		}
+		room := &counts[mesh][b.packing.Layout(primitive.Directions != nil, primitive.Distances != nil)]
 		indices := len(primitive.Mesh.Indices)
 		if primitive.Mesh.Indices == nil {
 			indices = len(primitive.Mesh.Vertices)
 		}
 		if b.packing.indexed {
-			counts[0] += len(primitive.Mesh.Vertices)
+			room[0] += len(primitive.Mesh.Vertices)
 		} else {
-			counts[0] += indices
+			room[0] += indices
 		}
-		counts[1] += indices
+		room[1] += indices
 	}
-	if !b.packing.split {
-		stable[0], stable[1] = stable[0]+dynamic[0], stable[1]+dynamic[1]
-		dynamic = [2]int{}
+	for mesh := range counts {
+		for layout, room := range counts[mesh] {
+			if room[0] > 0 {
+				b.packing.Reserve(mesh == 1, scene.Layout(layout), room[0], room[1])
+			}
+		}
 	}
-	b.packing.Reserve(false, stable[0], stable[1])
-	b.packing.Reserve(true, dynamic[0], dynamic[1])
 }
 
 // Primitive packs base geometry at wrap zero and preserves its exact period for

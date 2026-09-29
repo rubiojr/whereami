@@ -166,7 +166,8 @@ func measure(value *scene.Scene, limit Limits) (Limits, error) {
 	}
 	for _, mesh := range value.Meshes {
 		// Check lengths before byte multiplication, including on 32-bit systems.
-		if uint64(len(mesh.Vertices)) > limit.Bytes/24 || uint64(len(mesh.Indices)) > limit.Bytes/4 {
+		if uint64(len(mesh.Vertices)) > limit.Bytes/24 || uint64(len(mesh.Offsets)) > limit.Bytes/16 ||
+			uint64(len(mesh.Positions)) > limit.Bytes/8 || uint64(len(mesh.Indices)) > limit.Bytes/4 {
 			return Limits{}, ErrLimit
 		}
 		u.Bytes += mesh.BufferBytes()

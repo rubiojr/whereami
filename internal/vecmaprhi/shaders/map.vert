@@ -12,14 +12,16 @@ layout(std140,binding=0) uniform State {
     vec4 clipRect;
     vec4 parameters; // kind, font scale, halo width, halo blur
     vec4 pattern; // width, height, phase x, phase y
-    vec4 view; // DPR, inherited opacity, pixel offset scale (zero means one), reserved
+    vec4 view; // DPR, inherited opacity, pixel offset scale (zero means one), vertex layout
 } state;
 void main() {
     localPosition = position;
-    uv = texcoord;
+    // Layout one has no texture coordinate and layout two a position only. Their
+    // inputs for the missing attributes alias the position and read as zero here.
+    uv = state.view.w > 0.5 ? vec2(0.0) : texcoord;
     vec3 p = vec3(position,1.0);
     vec2 screen = vec2(dot(state.transformX.xyz,p),dot(state.transformY.xyz,p));
-    vec2 offset = pixelOffset;
+    vec2 offset = state.view.w > 1.5 ? vec2(0.0) : pixelOffset;
     if (state.transformX.w != 0.0) {
         float scale = max(length(vec2(state.transformX.x,state.transformY.x)),0.0001);
         offset = vec2(dot(state.transformX.xy,pixelOffset),dot(state.transformY.xy,pixelOffset)) / scale;

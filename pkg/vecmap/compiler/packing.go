@@ -27,14 +27,15 @@ var (
 // Texture pixel slices are borrowed immutably; geometry inputs are copied. The
 // builder is single-owner and must not be copied or used concurrently.
 type SceneBuilder struct {
-	mesh geometry.Builder[scene.Vertex]
+	mesh sections
 	// dynamic receives zoom-dependent geometry when split; see Split.
-	dynamic geometry.Builder[scene.Vertex]
+	dynamic sections
 	// symbols receives icon and text quads with resident symbols; see
 	// ResidentSymbols.
-	symbols   geometry.Builder[scene.Vertex]
+	symbols   sections
 	split     bool
 	resident  bool
+	compact   bool
 	class     meshClass
 	result    scene.Scene
 	textures  map[string]uint64
@@ -56,10 +57,59 @@ func NewSceneBuilder(indexed bool, maximumElements int) *SceneBuilder {
 	if maximumElements < 0 || maximumElements > MaxSceneElements {
 		b.err = geometry.ErrGeometryLimit
 	}
-	b.mesh = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
-	b.dynamic = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
-	b.symbols = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
+	b.mesh = newSections(indexed, maximumElements)
+	b.dynamic = newSections(indexed, maximumElements)
+	b.symbols = newSections(indexed, maximumElements)
 	return b
+}
+
+// sections builds the vertex sections of one mesh. Only full is used unless the
+// builder packs compact vertices.
+type sections struct {
+	full      geometry.Builder[scene.Vertex]
+	offsets   geometry.Builder[scene.OffsetVertex]
+	positions geometry.Builder[scene.PositionVertex]
+}
+
+func newSections(indexed bool, maximumElements int) sections {
+	return sections{full: geometry.NewBuilder[scene.Vertex](indexed, maximumElements),
+		offsets:   geometry.NewBuilder[scene.OffsetVertex](indexed, maximumElements),
+		positions: geometry.NewBuilder[scene.PositionVertex](indexed, maximumElements)}
+}
+
+// Count is the number of draw elements in every section.
+func (s *sections) Count() int { return s.full.Count() + s.offsets.Count() + s.positions.Count() }
+
+func (s *sections) vertices() int {
+	return len(s.full.Vertices) + len(s.offsets.Vertices) + len(s.positions.Vertices)
+}
+
+// count is the number of draw elements in the section of a layout.
+func (s *sections) count(layout scene.Layout) int {
+	switch layout {
+	case scene.OffsetLayout:
+		return s.offsets.Count()
+	case scene.PositionLayout:
+		return s.positions.Count()
+	}
+	return s.full.Count()
+}
+
+// mesh publishes the sections with buffers of their exact length, and the
+// position of each section's indices in the shared index buffer.
+func (s *sections) mesh(id uint64) (scene.Mesh, [3]uint32) {
+	s.full.Compact()
+	s.offsets.Compact()
+	s.positions.Compact()
+	mesh := scene.Mesh{ID: id, Revision: 1, Vertices: s.full.Vertices, Offsets: s.offsets.Vertices, Positions: s.positions.Vertices, Indices: s.full.Indices}
+	var first [3]uint32
+	first[scene.OffsetLayout] = uint32(len(s.full.Indices))
+	first[scene.PositionLayout] = first[scene.OffsetLayout] + uint32(len(s.offsets.Indices))
+	if len(s.offsets.Indices)+len(s.positions.Indices) > 0 {
+		mesh.Indices = make([]uint32, 0, len(s.full.Indices)+len(s.offsets.Indices)+len(s.positions.Indices))
+		mesh.Indices = append(append(append(mesh.Indices, s.full.Indices...), s.offsets.Indices...), s.positions.Indices...)
+	}
+	return mesh, first
 }
 
 // StableMesh, DynamicMesh and SymbolMesh are the fixed scene-local mesh IDs of a
@@ -106,6 +156,18 @@ func (b *SceneBuilder) ResidentSymbols() {
 	}
 }
 
+// CompactVertices packs vertices without the attributes they do not use: fills
+// and patterns as scene.PositionVertex and extruded lines as scene.OffsetVertex,
+// in sections of the same meshes. Dashed lines, icons and text keep every
+// attribute. Draws name their section in scene.Draw.Layout. Positions, draw
+// order and materials are unchanged, so the rendered output is too. The backend
+// must implement the sections. Call before packing.
+func (b *SceneBuilder) CompactVertices() {
+	if b.unused() {
+		b.compact = true
+	}
+}
+
 func (b *SceneBuilder) unused() bool {
 	if !b.ready() {
 		return false
@@ -122,7 +184,7 @@ func (b *SceneBuilder) elements() int {
 }
 
 // target selects the mesh receiving the next geometry and its scene-local ID.
-func (b *SceneBuilder) target() (*geometry.Builder[scene.Vertex], uint64) {
+func (b *SceneBuilder) target() (*sections, uint64) {
 	switch {
 	case b.resident && b.class == symbolClass:
 		return &b.symbols, SymbolMesh
@@ -134,10 +196,11 @@ func (b *SceneBuilder) target() (*geometry.Builder[scene.Vertex], uint64) {
 
 // Reserve makes room for geometry that Geometry, Extruded or Dashed will pack,
 // so packing it does not reallocate. dynamic selects the mesh that receives
-// Dynamic geometry when split. It is a hint and never an error: a builder that
-// is not ready ignores it, and Finish publishes buffers of their exact length
-// either way. Call after Split.
-func (b *SceneBuilder) Reserve(dynamic bool, vertices, indices int) {
+// Dynamic geometry when split, and layout the section as Layout reports it. It
+// is a hint and never an error: a builder that is not ready ignores it, and
+// Finish publishes buffers of their exact length either way. Call after Split
+// and CompactVertices.
+func (b *SceneBuilder) Reserve(dynamic bool, layout scene.Layout, vertices, indices int) {
 	if b.err != nil || b.closed || vertices < 0 || indices < 0 {
 		return
 	}
@@ -145,7 +208,42 @@ func (b *SceneBuilder) Reserve(dynamic bool, vertices, indices int) {
 	if dynamic && b.split {
 		target = &b.dynamic
 	}
-	target.Reserve(vertices, indices)
+	switch layout {
+	case scene.OffsetLayout:
+		target.offsets.Reserve(vertices, indices)
+	case scene.PositionLayout:
+		target.positions.Reserve(vertices, indices)
+	default:
+		target.full.Reserve(vertices, indices)
+	}
+}
+
+// Layout is the vertex section that geometry with these attributes is packed
+// into: every attribute unless the builder packs compact vertices.
+func (b *SceneBuilder) Layout(directions, distances bool) scene.Layout {
+	switch {
+	case !b.compact || distances:
+		return scene.FullLayout
+	case directions:
+		return scene.OffsetLayout
+	}
+	return scene.PositionLayout
+}
+
+// publish adds a mesh of exact buffers: growth slack would stay allocated, and
+// charged, for as long as the scene is retained. It moves the draws of an
+// indexed mesh from their section's indices to the shared index buffer.
+func (b *SceneBuilder) publish(s *sections, id uint64) {
+	mesh, first := s.mesh(id)
+	b.result.Meshes = append(b.result.Meshes, mesh)
+	if !b.indexed {
+		return
+	}
+	for i := range b.result.Draws {
+		if draw := &b.result.Draws[i]; draw.Mesh == id {
+			draw.First += first[draw.Layout]
+		}
+	}
 }
 
 // offsetScale reports whether size can travel as Material.OffsetScale, where
@@ -227,7 +325,7 @@ func (b *SceneBuilder) check(vertices int, indices []uint32) bool {
 	if indices != nil {
 		count = len(indices)
 	}
-	used, usedVertices := b.elements(), len(b.mesh.Vertices)+len(b.dynamic.Vertices)+len(b.symbols.Vertices)
+	used, usedVertices := b.elements(), b.mesh.vertices()+b.dynamic.vertices()+b.symbols.vertices()
 	if vertices > b.limit || count > b.limit-used || (b.indexed && vertices > b.limit-usedVertices) {
 		b.err = geometry.ErrGeometryLimit
 		return false
@@ -311,23 +409,45 @@ func (b *SceneBuilder) geometry(mesh geometry.Mesh, directions []geometry.Point,
 		return packed
 	}
 	target, id := b.target()
-	first := target.Count()
-	if b.indexed {
-		vertices := make([]scene.Vertex, len(mesh.Vertices))
+	layout := b.Layout(directions != nil, distances != nil)
+	first := target.count(layout)
+	switch layout {
+	case scene.OffsetLayout:
+		b.err = appendGeometry(&target.offsets, b.indexed, mesh, func(index int) scene.OffsetVertex {
+			v := vertex(index)
+			return scene.OffsetVertex{X: v.X, Y: v.Y, OffsetX: v.OffsetX, OffsetY: v.OffsetY}
+		})
+	case scene.PositionLayout:
+		b.err = appendGeometry(&target.positions, b.indexed, mesh, func(index int) scene.PositionVertex {
+			v := vertex(index)
+			return scene.PositionVertex{X: v.X, Y: v.Y}
+		})
+	default:
+		b.err = appendGeometry(&target.full, b.indexed, mesh, vertex)
+	}
+	b.draw(target, id, layout, first, material, clip)
+}
+
+// appendGeometry packs a checked mesh. Expanded output writes directly into its
+// final buffer; indexed output preserves source topology through the builder.
+func appendGeometry[T any](target *geometry.Builder[T], indexed bool, mesh geometry.Mesh, vertex func(int) T) error {
+	if indexed {
+		vertices := make([]T, len(mesh.Vertices))
 		for i := range mesh.Vertices {
 			vertices[i] = vertex(i)
 		}
-		b.err = target.Append(vertices, mesh.Indices)
-	} else if mesh.Indices != nil {
+		return target.Append(vertices, mesh.Indices)
+	}
+	if mesh.Indices != nil {
 		for _, index := range mesh.Indices {
 			target.Vertices = append(target.Vertices, vertex(int(index)))
 		}
-	} else {
-		for i := range mesh.Vertices {
-			target.Vertices = append(target.Vertices, vertex(i))
-		}
+		return nil
 	}
-	b.draw(target, id, first, material, clip)
+	for i := range mesh.Vertices {
+		target.Vertices = append(target.Vertices, vertex(i))
+	}
+	return nil
 }
 
 // ExpandedText consumes packed XYUV triangles for an expanded builder only.
@@ -344,13 +464,13 @@ func (b *SceneBuilder) ExpandedText(anchor geometry.Point, vertices []float32, o
 		return
 	}
 	target, id := b.target()
-	first := target.Count()
+	first := target.full.Count()
 	sin, cos := math.Sincos(angle)
 	for i := 0; i < len(vertices); i += 4 {
 		vertex := geometry.TextVertex{X: vertices[i], Y: vertices[i+1], U: vertices[i+2], V: vertices[i+3]}
-		target.Vertices = append(target.Vertices, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
+		target.full.Vertices = append(target.full.Vertices, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
 	}
-	b.draw(target, id, first, material, [4]float32{})
+	b.draw(target, id, scene.FullLayout, first, material, [4]float32{})
 }
 
 // IndexedText accepts known topology in either output mode (including icon quads
@@ -360,22 +480,24 @@ func (b *SceneBuilder) IndexedText(anchor geometry.Point, vertices []geometry.Te
 		return
 	}
 	target, id := b.target()
-	first := target.Count()
+	first := target.full.Count()
 	sin, cos := math.Sincos(angle)
 	packed := make([]scene.Vertex, len(vertices))
 	for i, vertex := range vertices {
 		packed[i] = geometry.TransformTextVertex(anchor, vertex, offset, sin, cos)
 	}
-	b.err = target.Append(packed, indices)
-	b.draw(target, id, first, material, [4]float32{})
+	b.err = target.full.Append(packed, indices)
+	b.draw(target, id, scene.FullLayout, first, material, [4]float32{})
 }
 
-func (b *SceneBuilder) draw(target *geometry.Builder[scene.Vertex], id uint64, first int, material scene.Material, clip [4]float32) {
-	count := target.Count() - first
+// draw records a range of one section. Its First counts from the start of that
+// section until Finish places the sections' indices in one buffer.
+func (b *SceneBuilder) draw(target *sections, id uint64, layout scene.Layout, first int, material scene.Material, clip [4]float32) {
+	count := target.count(layout) - first
 	if b.err != nil || count == 0 {
 		return
 	}
-	draw := scene.Draw{Mesh: id, First: uint32(first), Count: uint32(count), Material: material, Clip: clip}
+	draw := scene.Draw{Mesh: id, First: uint32(first), Count: uint32(count), Material: material, Clip: clip, Layout: layout}
 	if b.breakDraw {
 		if len(b.result.Draws) >= b.drawLimit {
 			b.err = geometry.ErrGeometryLimit
@@ -407,25 +529,19 @@ func (b *SceneBuilder) finish(allowEmpty bool) (*scene.Scene, error) {
 		return nil, b.err
 	}
 	b.closed = true
-	// Publish buffers of their exact length: growth slack would stay allocated,
-	// and charged, for as long as the scene is retained.
-	b.mesh.Compact()
-	b.dynamic.Compact()
-	b.symbols.Compact()
 	if allowEmpty && b.elements() == 0 {
 		b.result = scene.Scene{} // no empty mesh or unused atlas allocation
 	} else if !b.split && !b.resident {
-		b.result.Meshes = []scene.Mesh{{ID: StableMesh, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices}}
+		b.publish(&b.mesh, StableMesh)
 	} else {
 		// A mesh without geometry is omitted; its ID keeps its meaning.
-		if b.mesh.Count() > 0 {
-			b.result.Meshes = append(b.result.Meshes, scene.Mesh{ID: StableMesh, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices})
-		}
-		if b.dynamic.Count() > 0 {
-			b.result.Meshes = append(b.result.Meshes, scene.Mesh{ID: DynamicMesh, Revision: 1, Vertices: b.dynamic.Vertices, Indices: b.dynamic.Indices})
-		}
-		if b.symbols.Count() > 0 {
-			b.result.Meshes = append(b.result.Meshes, scene.Mesh{ID: SymbolMesh, Revision: 1, Vertices: b.symbols.Vertices, Indices: b.symbols.Indices})
+		for _, mesh := range []struct {
+			sections *sections
+			id       uint64
+		}{{&b.mesh, StableMesh}, {&b.dynamic, DynamicMesh}, {&b.symbols, SymbolMesh}} {
+			if mesh.sections.Count() > 0 {
+				b.publish(mesh.sections, mesh.id)
+			}
 		}
 	}
 	if err := b.result.Validate(); err != nil {

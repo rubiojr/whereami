@@ -240,3 +240,56 @@ func BenchmarkSnapshot(b *testing.B) {
 		}
 	}
 }
+
+func TestVertexSectionsDecideWhetherAMeshIsReused(t *testing.T) {
+	sectioned := func() *scene.Scene {
+		return &scene.Scene{
+			Meshes: []scene.Mesh{{ID: 1, Vertices: []scene.Vertex{{}, {X: 1}, {Y: 1}}, Offsets: []scene.OffsetVertex{{}, {X: 1, OffsetX: 1}, {Y: 1}},
+				Positions: []scene.PositionVertex{{}, {X: 1}, {Y: 1}}, Indices: []uint32{0, 1, 2, 0, 1, 2, 0, 1, 2}}},
+			Draws: []scene.Draw{{Mesh: 1, Count: 3}, {Mesh: 1, First: 3, Count: 3, Layout: scene.OffsetLayout}, {Mesh: 1, First: 6, Count: 3, Layout: scene.PositionLayout}},
+		}
+	}
+	s := newStore(t, Limits{})
+	snapshot := func(t *testing.T, s *Store, key string) *scene.Scene {
+		t.Helper()
+		result, err := s.Snapshot([]Range{{Key: key, Count: 3}})
+		require.NoError(t, err)
+		return result
+	}
+	first := sectioned()
+	require.NoError(t, s.Apply([]Change{{"a", first}}))
+	before := snapshot(t, s, "a")
+	require.NoError(t, before.Validate())
+	assert.Equal(t, first.Meshes[0].BufferBytes(), before.Meshes[0].BufferBytes())
+	assert.Same(t, &first.Meshes[0].Offsets[0], &before.Meshes[0].Offsets[0], "sections are borrowed like vertices")
+	assert.Same(t, &first.Meshes[0].Positions[0], &before.Meshes[0].Positions[0])
+	assert.Equal(t, []scene.Layout{scene.FullLayout, scene.OffsetLayout, scene.PositionLayout},
+		[]scene.Layout{before.Draws[0].Layout, before.Draws[1].Layout, before.Draws[2].Layout})
+
+	require.NoError(t, s.Apply([]Change{{"a", sectioned()}}))
+	same := snapshot(t, s, "a")
+	assert.Equal(t, before.Meshes[0].Revision, same.Meshes[0].Revision, "identical sections keep the resident revision")
+	reused := s.ReusedVersions()
+	assert.NotZero(t, reused)
+
+	for _, change := range []func(*scene.Mesh){
+		func(m *scene.Mesh) { m.Offsets[1].OffsetX = 2 },
+		func(m *scene.Mesh) { m.Positions[2].Y = 3 },
+	} {
+		changed := sectioned()
+		change(&changed.Meshes[0])
+		previous := snapshot(t, s, "a").Meshes[0].Revision
+		require.NoError(t, s.Apply([]Change{{"a", changed}}))
+		assert.Greater(t, snapshot(t, s, "a").Meshes[0].Revision, previous, "a changed section is a new revision")
+		assert.Equal(t, reused, s.ReusedVersions())
+	}
+
+	for _, limit := range []uint64{24*3 + 16*3 + 8*3 + 4*9 - 1, 16*3 - 1, 8*3 - 1} {
+		small, err := New(Limits{Bytes: limit})
+		require.NoError(t, err)
+		assert.ErrorIs(t, small.Apply([]Change{{"a", sectioned()}}), ErrLimit, "limit %d", limit)
+	}
+	exact, err := New(Limits{Bytes: 24*3 + 16*3 + 8*3 + 4*9})
+	require.NoError(t, err)
+	require.NoError(t, exact.Apply([]Change{{"a", sectioned()}}))
+}

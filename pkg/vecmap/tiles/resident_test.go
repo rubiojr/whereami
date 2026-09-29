@@ -529,3 +529,65 @@ func FuzzResidentDashTile(f *testing.F) {
 		}
 	})
 }
+
+// drawnVertices lists what a fragment draws: for every draw its vertices in
+// draw order with all attributes, whatever section stores them.
+func drawnVertices(t *testing.T, f *Fragment) [][]scene.Vertex {
+	t.Helper()
+	require.NoError(t, f.Scene.Validate())
+	result := make([][]scene.Vertex, 0, len(f.Scene.Draws))
+	for _, draw := range f.Scene.Draws {
+		mesh := fragmentMesh(f, draw.Mesh)
+		require.NotNil(t, mesh)
+		vertices := make([]scene.Vertex, 0, draw.Count)
+		for i := draw.First; i < draw.First+draw.Count; i++ {
+			index := int(i)
+			if len(mesh.Indices) > 0 {
+				index = int(mesh.Indices[i])
+			}
+			vertices = append(vertices, mesh.At(draw.Layout, index))
+		}
+		result = append(result, vertices)
+	}
+	return result
+}
+
+func TestCompactVerticesDrawTheSameTile(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		for _, resident := range []bool{false, true} {
+			build := func(zoom float64, compact bool) *Fragment {
+				p, err := Prepare(residentPBF(), residentStyle(t), PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: indexed,
+					ResidentGeometry: resident, ResidentSymbols: resident, ResidentDashes: resident, CompactVertices: compact})
+				require.NoError(t, err)
+				result, err := p.BuildOwned(prepareAssets(), 1<<20)
+				require.NoError(t, err)
+				return result.Fragment
+			}
+			plain, compact := build(3, false), build(3, true)
+			assert.Equal(t, drawnVertices(t, plain), drawnVertices(t, compact), "indexed=%t resident=%t", indexed, resident)
+			assert.Equal(t, plain.Draws, compact.Draws)
+			assert.Equal(t, plain.Symbols, compact.Symbols)
+			assert.Equal(t, plain.Scene.Textures, compact.Scene.Textures)
+			require.Len(t, compact.Scene.Draws, len(plain.Scene.Draws))
+			for i, draw := range compact.Scene.Draws {
+				assert.Equal(t, plain.Scene.Draws[i].Material, draw.Material)
+				assert.Equal(t, plain.Scene.Draws[i].Mesh, draw.Mesh)
+				assert.Equal(t, plain.Scene.Draws[i].Count, draw.Count)
+			}
+			require.Len(t, compact.Scene.Meshes, len(plain.Scene.Meshes), "sections add no resource to upload")
+			assert.Less(t, compact.RetainedBytes(), plain.RetainedBytes())
+			var positions, offsets int
+			for _, mesh := range compact.Scene.Meshes {
+				positions, offsets = positions+len(mesh.Positions), offsets+len(mesh.Offsets)
+			}
+			assert.NotZero(t, positions, "fills carry positions only")
+			assert.Equal(t, resident, offsets > 0, "only extruded lines carry an offset without a texture coordinate")
+
+			// A style-zoom change keeps what it kept without compact vertices.
+			if resident && indexed {
+				next := build(3.0625, true)
+				assert.Equal(t, fragmentMesh(compact, compiler.StableMesh), fragmentMesh(next, compiler.StableMesh))
+			}
+		}
+	}
+}

@@ -69,7 +69,7 @@ func sceneBytes(s *scene.Scene) uint64 {
 	}
 	n := uint64(unsafe.Sizeof(*s)) + arrayBytes(s.Meshes) + arrayBytes(s.Textures) + arrayBytes(s.Draws)
 	for _, m := range s.Meshes {
-		n += arrayBytes(m.Vertices) + arrayBytes(m.Indices)
+		n += arrayBytes(m.Vertices) + arrayBytes(m.Offsets) + arrayBytes(m.Positions) + arrayBytes(m.Indices)
 	}
 	for _, t := range s.Textures {
 		n += arrayBytes(t.RGBA)
