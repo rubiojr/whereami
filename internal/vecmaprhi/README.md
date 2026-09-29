@@ -5,6 +5,18 @@ QRhi context and command buffer. Native handles and render-thread lifetimes live
 here; geometry, style, packing and retained upload planning live in shared Go
 packages. Bindings in `internal/qtrhi` are generated for **Qt 6.11.2**.
 
+## Per-draw offset scale
+
+`Material.OffsetScale` reaches the vertex shader through the third component of
+the `view` uniform. Zero keeps vertex pixel offsets unchanged, as labels expect.
+A positive value multiplies the offset after map alignment. Extruded lines store
+unit directions as offsets and their half width in logical pixels as the scale, so
+a width change is a uniform update on a resident mesh, never an upload. The
+integration test renders one path baked and extruded under a rotated, scaled
+transform on Vulkan and OpenGL, requires the pictures to agree within edge
+rounding, and requires a doubled width to reuse the mesh. Shader packages are
+regenerated with `make rhi-shaders`; there is no handwritten C++.
+
 ## Revision-aware resource staging
 
 Mesh and texture caches use exact **ID/revision pairs**, in separate namespaces.

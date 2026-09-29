@@ -3331,6 +3331,134 @@ to the release budget. No presentation pacing or MapLibre claim follows.
   suite and the tagged OpenGL adapter/viewer suites, including the race detector,
   are recorded in the kata issue.
 
+### Resident line and fill geometry across style zooms
+
+Checkpoint **yfq2** stops re-uploading geometry that a style-zoom change does not
+alter. It is opt-in (`tiles.PrepareOptions.ResidentGeometry`, viewer
+`-resident-geometry`, default off); with the option off every package produces its
+previous output byte for byte.
+
+Measured first, on the final moving Madrid cover (20 tiles, 89 MB of packed mesh
+per style epoch): lines are 81% of base geometry bytes and none survived a 1/16
+step, because widths were baked in tile units; fill polygons were already
+byte-identical but shared each tile's single mesh; undashed, unoffset lines are 94%
+of line bytes; symbols are about 15% of elements and change at every step.
+
+1. **Width-independent lines.** Every vertex the line engine emits is
+   `anchor + halfWidth * direction` with a direction that does not depend on the
+   width: segment normals, square-cap diagonals, disk ring directions, miter
+   vectors and the four-half-width miter fallback. `geometry.TessellateExtrudedLines`
+   emits the same triangles in the same order with anchors and directions kept
+   apart. The existing arithmetic is untouched.
+2. **Compiler and packing.** With `LayerOptions.ExtrudeLines`, undashed, unoffset
+   lines and fill outlines become extruded primitives carrying their half width in
+   logical pixels; dashed and offset lines keep baked geometry and are marked
+   dynamic. A split fragment has a stable mesh (fills, patterns, extruded lines;
+   local ID 1) and a dynamic mesh (baked lines, symbols; local ID 2). Draw order,
+   provenance, materials and counts equal the single-mesh output.
+3. **Rendering.** `Material.OffsetScale` reaches the vertex shader in the reserved
+   third component of the `view` uniform and multiplies map-aligned vertex offsets;
+   zero keeps label behaviour. A width change is a uniform update on a resident
+   mesh. Tile clipping evaluates the anchor, so a line is cut perpendicular to its
+   direction where its centerline crosses the tile edge and neighbouring tiles
+   complement each other. No handwritten C++ was added; shader packages were
+   regenerated with `make rhi-shaders`.
+4. **Residency.** The Store's byte-identical comparison (**twd2**) keeps the stable
+   mesh's revision, so the Planner uploads only the dynamic mesh and the scene's
+   new draws.
+
+On the same 20 tiles the stable mesh is 69.4 MB of 89.4 MB (77.6%) and identical in
+every tile across steps of 1, 2, 4 and 8 sixteenths, including the step across
+zoom 10. Bytes to upload for a style-zoom change fall to 22.4–23.5% of the
+single-mesh output. Prepare plus Build wall time is unchanged (16 ms per tile in
+both forms). A static 800×600 Vulkan screenshot differs from the single-mesh
+rendering in 21 of 1,920,000 pixels.
+
+#### Replay observations
+
+Same corpus and arguments as **vtgd** (two-resource upload batches, eight-resource
+release batches, 32 MiB per batch); `-resident-geometry` is the only difference
+between control and resident rows, which come from one binary. Each mode ran two
+passes of three moving runs, the second pass in reverse order, on an unlocked
+desktop at host load 0.8–5.3. All rows exit 0 with zero pending, failed and batch
+failures and end at 20 tiles / 598 draws / 94 labels (static 42 / 978 / 130).
+Ranges cover the six moving runs or two static runs of a mode.
+
+| Replay | Mode | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Mesh uploads | Uploaded MB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | control | 6.47–7.45 | 6–8 | 1.28–1.97 | 0.60–1.05 | 150–177 | 96–124 | 356–515 |
+| Vulkan moving | resident | 6.34–7.51 | 5–7 | 1.40–3.15 | 0.67–0.99 | 148–181 | 118–169 | 222–282 |
+| Vulkan static | control | 5.14–5.16 | 4 | 2.30–2.92 | 1.05–1.09 | 112–126 | 52–58 | 166–187 |
+| Vulkan static | resident | 5.26–6.00 | 4 | 3.63–3.64 | 1.30–1.34 | 138–154 | 104–116 | 166–187 |
+| llvmpipe moving | control | 11.19–14.10 | 5–6 | 3.91–5.87 | 1.38–2.48 | 105–121 | 49–89 | 230–364 |
+| llvmpipe moving | resident | 10.42–13.47 | 5 | 4.15–5.95 | 1.61–2.54 | 103–123 | 83–103 | 165–187 |
+| llvmpipe static | control | 12.50–12.97 | 5 | 5.42–5.62 | 2.22–2.31 | 122 | 56 | 179–180 |
+| llvmpipe static | resident | 10.73–11.31 | 4 | 8.94–9.44 | 2.47–2.60 | 131 | 98 | 155 |
+
+Resident geometry removes 40–45% of uploaded bytes under motion on both backends.
+The remainder is first uploads of tiles entering the cover, textures and the
+dynamic meshes. It does not make motion settle sooner on Vulkan, and five of six
+llvmpipe runs settle in 10.4–10.9 s against 11.2–14.1 s for control. It has a
+cost: every tile now contributes two mesh resources, and batches are bounded at two
+resources, so a cover of new tiles needs more batches. Static loads need 8–25% more
+upload batches, Vulkan static settles up to 0.9 s later, and the longest hold is
+worse in static runs on both backends and in five of six Vulkan moving runs. The
+count of uploads per style epoch is unchanged at about one mesh per tile, because
+symbols still change at every step.
+
+A supplementary series raised the upload count to four resources per batch under
+the same 32 MiB bound, which admits the bytes that two single-mesh tiles needed
+before. The desktop was locked during three of the four Vulkan control runs, which
+are discarded, so Vulkan control has one valid moving run.
+
+| Replay, four resources | Mode | Elapsed s | Current changes | Longest hold s | Mean age s | Uploaded MB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | control (one run) | 7.36 | 11 | 1.46 | 0.52 | 671 |
+| Vulkan moving | resident | 7.06–7.11 | 9–10 | 1.43–1.45 | 0.47–0.50 | 351–353 |
+| Vulkan static | resident | 5.14 | 5 | 2.01 | 0.57 | 187 |
+| llvmpipe moving | control | 9.39–10.15 | 7 | 2.65–3.39 | 0.94–1.00 | 426–444 |
+| llvmpipe moving | resident | 9.47–10.03 | 6 | 2.69–3.38 | 1.07–1.25 | 218–227 |
+| llvmpipe static | control | 7.19 | 5 | 4.32 | 1.32 | 187 |
+| llvmpipe static | resident | 8.76 | 5 | 5.46 | 1.45 | 187 |
+
+At four resources both modes progress alike and resident uploads half the bytes.
+The batch count is a separate policy decision: the viewer defaults stay at two
+upload resources, and no time claim for this checkpoint depends on changing them.
+These are matched input replays, not matched frame work; no presentation pacing or
+MapLibre claim follows.
+
+#### Verification
+
+- Geometry: extruded output equals the baked tessellation within `1e-9` relative
+  tolerance for every cap and join, widths from 1/32 to 40, expanded and indexed
+  topology, near-duplicate points and 200 random path sets; one mesh is
+  byte-identical for every width. A 20-second fuzz run made **1,735,484
+  executions**. New code is fully covered; the package is at **97.8%**.
+- Compiler: extruded primitives match the baked positions, order, colors and
+  indices; dashed, offset and gap lines stay baked and dynamic; another style zoom
+  changes only half widths; split packing preserves draws and provenance, keeps
+  fixed mesh IDs when one mesh is empty, bounds both meshes by one element limit
+  and rejects late `Split`, mismatched directions and invalid half widths. Coverage
+  stays at **100%**.
+- Tiles and residency: a tile prepared at two style zooms keeps its stable mesh
+  byte-identical, the Store keeps that revision, and the Planner uploads exactly
+  the dynamic mesh before publishing the new draws. A 20-second fuzz run over
+  arbitrary MVT input made **777,930 executions** comparing split and single-mesh
+  fragments. Tiles coverage is **98.7%**.
+- Native: the adapter test renders one path baked and extruded under a rotated,
+  scaled transform, requires agreement within edge rounding, and requires a
+  doubled width to reuse the resident mesh; it passes on Vulkan and OpenGL. The
+  viewer's live command runs in both modes on basic and threaded loops.
+- Race, GOARCH=386, vet and staticcheck pass on geometry, compiler, scene, tiles,
+  retained and producer; the full pinned pkg/vecmap suite and the tagged OpenGL
+  adapter and viewer suites pass with and without the race detector.
+
+Follow-ups: pack glyph quads at a base size so text size becomes a per-draw scale
+and symbols join the stable mesh; move dashes into the fragment shader; reuse
+decoded and tessellated primitives across style zooms so a sixteenth change costs
+paint evaluation only. With symbols stable, most style-zoom changes would publish
+as draw-only updates without any upload.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and
@@ -3352,8 +3480,9 @@ are open. This prototype adds explicit opt-in build/test targets.
 
 - Continue moving the CPU engine out of its Qt-bound package; camera, projection,
   tile coverage and transforms have been extracted into `pkg/vecmap/view`.
-- Reuse geometry across live style-zoom changes; add shader-driven line
-  extrusion/dashes where appropriate instead of repeatedly rebuilding triangles.
+- Reuse geometry across live style-zoom changes. Fills and shader-extruded lines
+  now stay resident behind an opt-in (**yfq2**); symbols, dashes and CPU-side reuse
+  of tessellation remain.
 - Replace the fixture with incremental live tile/placement updates and bounded
   upload scheduling. Validate fallback clipping and world wraps under motion.
 - Validate multiple simultaneous maps and GPU resource sharing where safe.

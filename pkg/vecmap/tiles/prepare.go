@@ -29,6 +29,15 @@ type PrepareOptions struct {
 	Indexed                       bool
 	TriangleLimit, CandidateLimit int
 	ElementLimit, DrawLimit       int
+	// ResidentGeometry keeps geometry that does not depend on the evaluated zoom
+	// byte-identical across style-zoom changes. Undashed, unoffset lines and fill
+	// outlines are packed as width-independent extrusions whose half width is a
+	// per-draw value, and the fragment is split into compiler.StableMesh (fills,
+	// patterns, extruded lines) and compiler.DynamicMesh (dashed or offset lines,
+	// symbols). A retained store can then keep the stable mesh resident while only
+	// draws and the dynamic mesh change. The backend must scale map-aligned
+	// offsets by Material.OffsetScale. False preserves the single-mesh output.
+	ResidentGeometry bool
 }
 
 // Prepared owns reusable primitives and evaluated candidates, not source features
@@ -84,6 +93,7 @@ func Prepare(data []byte, layers []style.CompiledLayer, options PrepareOptions) 
 	}
 	err = compiler.CompileTile(layers, source.Layers, compiler.LayerOptions{
 		SourceZoom: int(options.Tile.Z), Zoom: options.Zoom, Indexed: options.Indexed, TriangleLimit: options.TriangleLimit,
+		ExtrudeLines: options.ResidentGeometry,
 	}, func(primitive compiler.Primitive) error {
 		p.primitives = append(p.primitives, primitive)
 		return nil
@@ -171,6 +181,9 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 		return nil, err
 	}
 	packing := compiler.NewFragmentBuilder(p.options.Indexed, p.options.ElementLimit, p.options.DrawLimit)
+	if p.options.ResidentGeometry {
+		packing.Split()
+	}
 	var atlasID uint64
 	if len(renderable) > 0 {
 		atlasID = packing.GlyphAtlas(atlas)

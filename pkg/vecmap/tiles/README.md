@@ -93,6 +93,19 @@ pixels remain immutable borrows. Font maps and layout scratch are not retained b
 the built fragment. Style zoom, visibility and paint are frozen at Prepare; prepare
 again when the producer's style-zoom/epoch changes.
 
+`PrepareOptions.ResidentGeometry` keeps zoom-independent geometry byte-identical
+across those preparations. The fragment then has up to two meshes with fixed local
+IDs: `compiler.StableMesh` holds fills, patterns and width-independent extruded
+lines, and `compiler.DynamicMesh` holds dashed or offset lines and symbols. Line
+widths travel as `Material.OffsetScale` on draws. After `Set.Apply`, the Store's
+byte-identical comparison keeps the stable mesh's revision, so a style-zoom change
+uploads only the dynamic mesh and new draws. On the captured Madrid cover the
+stable mesh is 77% of mesh bytes and identical in every tile across steps from one
+to eight sixteenths. Each tile contributes two mesh resources instead of one, so
+initial coverage needs more upload operations. Backends must scale map-aligned
+vertex offsets by `OffsetScale`; the QRhi adapter does. The default is off and
+preserves the single-mesh output exactly.
+
 ### Preparation bounds
 
 - MVT bytes retain the decoder's **2 MiB** limit and feature/geometry/work limits.

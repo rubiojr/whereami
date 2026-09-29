@@ -26,6 +26,7 @@ type liveOptions struct {
 	cacheBytes                uint64
 	workers                   int
 	cacheOnly                 bool
+	residentGeometry          bool
 }
 
 type liveSource struct {
@@ -88,7 +89,7 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 		return nil, err
 	}
 	l := &liveSource{p: p, bridge: b, initial: initial, request: producer.Request{Camera: camera,
-		Style:  &producer.Style{Source: options.template, Epoch: 1, Layers: layers, Options: tiles.PrepareOptions{Zoom: view.StyleZoom(camera.Zoom), Indexed: true}, Bytes: 4 << 20},
+		Style:  &producer.Style{Source: options.template, Epoch: 1, Layers: layers, Options: tiles.PrepareOptions{Zoom: view.StyleZoom(camera.Zoom), Indexed: true, ResidentGeometry: options.residentGeometry}, Bytes: 4 << 20},
 		Assets: &producer.Assets{Epoch: 1, Bytes: 60 << 20, Value: tiles.Assets{Fonts: fonts, Sprite: liberty.Sprite, SpriteEntry: liberty.SpriteEntry, FallbackEligible: glyph.LegacyFallbackEligible}},
 	}}
 	l.revision, err = p.Submit(l.request)

@@ -29,6 +29,8 @@ func TestRenderer(t *testing.T) {
 	testResourceStaging(t, true)
 	testBatchExecution(t, false)
 	testBatchExecution(t, true)
+	testExtrudedLines(t, false)
+	testExtrudedLines(t, true)
 }
 
 func testRendererLifetime(t *testing.T, indexed bool) {

@@ -290,6 +290,28 @@ Packing limits bound arrays and draw work, not all caller-owned assets or retain
 snapshots. Store and Planner byte/resource admission is still required. The
 provenance path is opt-in; the existing fixture path retains its old output.
 
+### Resident geometry across style zooms
+
+`LayerOptions.ExtrudeLines` is opt-in. Undashed, unoffset lines and fill outlines
+are then tessellated with `geometry.TessellateExtrudedLines`: a `Primitive` carries
+centerline anchors in `Mesh`, parallel unit `Directions`, and `HalfWidth` in logical
+pixels. Batching, ordering, colors and topology equal the baked output; only vertex
+contents differ. Dashed and offset lines, whose geometry depends on the evaluated
+width or offset, keep their baked tessellation and are marked `Dynamic`. Widths at
+or below `geometry.Epsilon` tile units emit nothing in either form.
+
+`SceneBuilder.Extruded` packs anchors as tile-local XY and directions as vertex
+offsets, with `Material.MapAligned` and `Material.OffsetScale` set to the half
+width. `Split` (also on `FragmentBuilder`) routes `Dynamic` primitives and every
+symbol pass to `DynamicMesh` (scene-local ID 2) and everything else to `StableMesh`
+(ID 1). IDs keep their meaning when a mesh is empty and omitted. Draw order,
+provenance, materials and counts equal the unsplit output; the element limit bounds
+both meshes together. A different evaluated width changes draws, never the stable
+mesh, so a retained store can keep it resident across style-zoom changes.
+Tile clipping evaluates the anchor: a line is cut perpendicular to its direction
+where its centerline crosses the clip rectangle, and neighbouring tiles complement
+each other without overlap.
+
 Checkpoint **re90** keeps compiler coverage at **100%**, including provenance,
 pass order, boundary-preserving coalescing, precise periods, empty output, draw and
 element limits, failure atomicity and sealed publication.

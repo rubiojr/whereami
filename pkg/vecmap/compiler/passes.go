@@ -42,7 +42,14 @@ func (b *SceneBuilder) primitive(tile view.TileID, wrap int, primitive Primitive
 		material = scene.Material{Kind: scene.Pattern, Texture: b.Texture("pattern/"+primitive.PatternName, image.Width, image.Height, image.Pixels),
 			Color: [4]float32{1, 1, 1, float32(primitive.Opacity)}, PatternSize: [2]float32{float32(width), float32(height)}, PatternPhase: [2]float32{float32(x), float32(y)}}
 	}
-	b.Geometry(primitive.Mesh, material, [4]float32{0, 0, view.TileSize, view.TileSize})
+	clip := [4]float32{0, 0, view.TileSize, view.TileSize}
+	b.volatile = primitive.Dynamic
+	if primitive.Directions != nil {
+		b.Extruded(primitive.Mesh, primitive.Directions, primitive.HalfWidth, material, clip)
+	} else {
+		b.Geometry(primitive.Mesh, material, clip)
+	}
+	b.volatile = false
 	return period
 }
 
@@ -95,6 +102,9 @@ func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, e
 }
 
 func (b *SceneBuilder) symbolPass(kind scene.Kind, item RenderSymbol, atlas uint64, lookup SpriteLookup) bool {
+	// Label offsets follow the evaluated text and icon sizes.
+	b.volatile = true
+	defer func() { b.volatile = false }()
 	if kind == scene.Image {
 		if item.Accepted.Icon && item.Symbol.IconName != "" {
 			b.icon(item.Symbol, lookup)

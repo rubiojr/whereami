@@ -21,6 +21,15 @@ type Primitive struct {
 	PatternName  string
 	PatternScale float64
 	Opacity      float64
+	// Directions, when set, parallels Mesh.Vertices. Mesh then holds centerline
+	// anchors and the rendered position is the anchor plus HalfWidth logical
+	// pixels along the map-aligned direction, so the geometry is independent of
+	// the evaluated line width. Only LayerOptions.ExtrudeLines produces it.
+	Directions []geometry.Point
+	HalfWidth  float64
+	// Dynamic marks geometry whose vertices depend on the evaluated style zoom
+	// (dashed or offset lines). It is set only with LayerOptions.ExtrudeLines.
+	Dynamic bool
 }
 
 // CompileTile traverses visible layers in document order and emits geometry with
@@ -62,6 +71,20 @@ func (a *tileAssembly) layer(layer style.CompiledLayer, features []mvt.Feature, 
 	solid := func(mesh geometry.Mesh, color style.Color) error {
 		return a.append(Primitive{Order: layer.Order, LayerID: layer.ID, Mesh: mesh, Color: color}, false)
 	}
+	lines := lineSinks{baked: solid}
+	if options.ExtrudeLines {
+		lines.baked = func(mesh geometry.Mesh, color style.Color) error {
+			return a.append(Primitive{Order: layer.Order, LayerID: layer.ID, Mesh: mesh, Color: color, Dynamic: true}, false)
+		}
+		lines.extruded = func(mesh geometry.ExtrudedMesh, color style.Color, halfWidth float64) error {
+			primitive := Primitive{Order: layer.Order, LayerID: layer.ID, Color: color, HalfWidth: halfWidth,
+				Mesh: geometry.Mesh{Vertices: make([]geometry.Point, len(mesh.Vertices)), Indices: mesh.Indices}, Directions: make([]geometry.Point, len(mesh.Vertices))}
+			for i, vertex := range mesh.Vertices {
+				primitive.Mesh.Vertices[i], primitive.Directions[i] = vertex.Anchor, vertex.Direction
+			}
+			return a.append(primitive, false)
+		}
+	}
 	switch layer.Kind {
 	case "background":
 		context := style.Context{Zoom: options.Zoom}
@@ -72,11 +95,11 @@ func (a *tileAssembly) layer(layer style.CompiledLayer, features []mvt.Feature, 
 		opacity := layer.NumberValue("background-opacity", context, 1)
 		return solid(BackgroundGeometry(options.Indexed), style.ColorWithOpacity(color, opacity))
 	case "fill", "fill-extrusion":
-		return CompileFill(features, layer, options, solid, func(mesh geometry.Mesh, name string, scale, opacity float64) error {
+		return compileFill(features, layer, options, solid, func(mesh geometry.Mesh, name string, scale, opacity float64) error {
 			return a.append(Primitive{Order: layer.Order, LayerID: layer.ID, Mesh: mesh, PatternName: name, PatternScale: scale, Opacity: opacity}, true)
-		})
+		}, lines)
 	case "line":
-		return CompileLine(features, layer, options, solid)
+		return compileLine(features, layer, options, lines)
 	case "symbol":
 		if symbols != nil {
 			return symbols(layer)

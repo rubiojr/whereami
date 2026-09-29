@@ -39,6 +39,10 @@ type Material struct {
 	FontScale, HaloWidth, HaloBlur float32
 	PatternSize, PatternPhase      [2]float32
 	MapAligned                     bool
+	// OffsetScale multiplies vertex pixel offsets; zero means one. Extruded
+	// lines store unit directions as offsets and their half width in logical
+	// pixels here, so one resident mesh serves every evaluated line width.
+	OffsetScale float32 `json:",omitempty"`
 }
 
 type Mesh struct {
@@ -183,10 +187,13 @@ func (m Material) validate() error {
 	if !validColor(m.Color) {
 		return fmt.Errorf("invalid color")
 	}
-	for _, v := range [...]float32{m.FontScale, m.HaloWidth, m.HaloBlur, m.PatternSize[0], m.PatternSize[1], m.PatternPhase[0], m.PatternPhase[1]} {
+	for _, v := range [...]float32{m.FontScale, m.HaloWidth, m.HaloBlur, m.PatternSize[0], m.PatternSize[1], m.PatternPhase[0], m.PatternPhase[1], m.OffsetScale} {
 		if !finite(v) {
 			return fmt.Errorf("non-finite material")
 		}
+	}
+	if m.OffsetScale < 0 {
+		return fmt.Errorf("invalid offset scale")
 	}
 	if m.Kind == Pattern && (m.PatternSize[0] <= 0 || m.PatternSize[1] <= 0) {
 		return fmt.Errorf("invalid pattern size")

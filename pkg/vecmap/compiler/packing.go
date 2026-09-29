@@ -27,7 +27,11 @@ var (
 // Texture pixel slices are borrowed immutably; geometry inputs are copied. The
 // builder is single-owner and must not be copied or used concurrently.
 type SceneBuilder struct {
-	mesh      geometry.Builder[scene.Vertex]
+	mesh geometry.Builder[scene.Vertex]
+	// dynamic receives zoom-dependent geometry when split; see Split.
+	dynamic   geometry.Builder[scene.Vertex]
+	split     bool
+	volatile  bool
 	result    scene.Scene
 	textures  map[string]uint64
 	indexed   bool
@@ -49,7 +53,40 @@ func NewSceneBuilder(indexed bool, maximumElements int) *SceneBuilder {
 		b.err = geometry.ErrGeometryLimit
 	}
 	b.mesh = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
+	b.dynamic = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
 	return b
+}
+
+// StableMesh and DynamicMesh are the fixed scene-local mesh IDs of a split
+// builder. They never change meaning between builds of one fragment, so a
+// retained store can compare each mesh with its predecessor.
+const (
+	StableMesh  = 1
+	DynamicMesh = 2
+)
+
+// Split routes geometry whose vertices depend on the evaluated style zoom
+// (Dynamic primitives and all symbol passes) to DynamicMesh, keeping fills,
+// patterns and extruded lines in StableMesh. Draw order is unchanged: draws name
+// their mesh. The element limit still bounds both meshes together. Call before
+// packing; an unsplit builder packs everything into mesh one as before.
+func (b *SceneBuilder) Split() {
+	if !b.ready() {
+		return
+	}
+	if b.mesh.Count() != 0 || b.dynamic.Count() != 0 {
+		b.err = ErrPackingInput
+		return
+	}
+	b.split = true
+}
+
+// target selects the mesh receiving the next geometry and its scene-local ID.
+func (b *SceneBuilder) target() (*geometry.Builder[scene.Vertex], uint64) {
+	if b.split && b.volatile {
+		return &b.dynamic, DynamicMesh
+	}
+	return &b.mesh, StableMesh
 }
 
 func (b *SceneBuilder) ready() bool {
@@ -124,7 +161,8 @@ func (b *SceneBuilder) check(vertices int, indices []uint32) bool {
 	if indices != nil {
 		count = len(indices)
 	}
-	if vertices > b.limit || count > b.limit-b.mesh.Count() || (b.indexed && vertices > b.limit-len(b.mesh.Vertices)) {
+	used, usedVertices := b.mesh.Count()+b.dynamic.Count(), len(b.mesh.Vertices)+len(b.dynamic.Vertices)
+	if vertices > b.limit || count > b.limit-used || (b.indexed && vertices > b.limit-usedVertices) {
 		b.err = geometry.ErrGeometryLimit
 		return false
 	}
@@ -148,24 +186,55 @@ func (b *SceneBuilder) Geometry(mesh geometry.Mesh, material scene.Material, cli
 	if !b.check(len(mesh.Vertices), mesh.Indices) {
 		return
 	}
-	first := b.mesh.Count()
+	b.geometry(mesh, nil, material, clip)
+}
+
+// Extruded packs width-independent line geometry: anchors as tile-local XY and
+// unit directions as offsets. The material's OffsetScale supplies the half width
+// in logical pixels and its offsets follow the map. directions parallels
+// mesh.Vertices. The same vertices serve every evaluated width.
+func (b *SceneBuilder) Extruded(mesh geometry.Mesh, directions []geometry.Point, halfWidth float64, material scene.Material, clip [4]float32) {
+	if !b.ready() {
+		return
+	}
+	if len(directions) != len(mesh.Vertices) || !(halfWidth > 0) || math.IsInf(halfWidth, 0) {
+		b.err = ErrPackingInput
+		return
+	}
+	if !b.check(len(mesh.Vertices), mesh.Indices) {
+		return
+	}
+	material.MapAligned, material.OffsetScale = true, float32(halfWidth)
+	b.geometry(mesh, directions, material, clip)
+}
+
+func (b *SceneBuilder) geometry(mesh geometry.Mesh, directions []geometry.Point, material scene.Material, clip [4]float32) {
+	vertex := func(index int) scene.Vertex {
+		point := mesh.Vertices[index]
+		packed := scene.Vertex{X: float32(point.X), Y: float32(point.Y)}
+		if directions != nil {
+			packed.OffsetX, packed.OffsetY = float32(directions[index].X), float32(directions[index].Y)
+		}
+		return packed
+	}
+	target, id := b.target()
+	first := target.Count()
 	if b.indexed {
 		vertices := make([]scene.Vertex, len(mesh.Vertices))
-		for i, point := range mesh.Vertices {
-			vertices[i] = scene.Vertex{X: float32(point.X), Y: float32(point.Y)}
+		for i := range mesh.Vertices {
+			vertices[i] = vertex(i)
 		}
-		b.err = b.mesh.Append(vertices, mesh.Indices)
+		b.err = target.Append(vertices, mesh.Indices)
 	} else if mesh.Indices != nil {
 		for _, index := range mesh.Indices {
-			point := mesh.Vertices[index]
-			b.mesh.Vertices = append(b.mesh.Vertices, scene.Vertex{X: float32(point.X), Y: float32(point.Y)})
+			target.Vertices = append(target.Vertices, vertex(int(index)))
 		}
 	} else {
-		for _, point := range mesh.Vertices {
-			b.mesh.Vertices = append(b.mesh.Vertices, scene.Vertex{X: float32(point.X), Y: float32(point.Y)})
+		for i := range mesh.Vertices {
+			target.Vertices = append(target.Vertices, vertex(i))
 		}
 	}
-	b.draw(first, material, clip)
+	b.draw(target, id, first, material, clip)
 }
 
 // ExpandedText consumes packed XYUV triangles for an expanded builder only.
@@ -181,13 +250,14 @@ func (b *SceneBuilder) ExpandedText(anchor geometry.Point, vertices []float32, o
 	if !b.check(len(vertices)/4, nil) {
 		return
 	}
-	first := b.mesh.Count()
+	target, id := b.target()
+	first := target.Count()
 	sin, cos := math.Sincos(angle)
 	for i := 0; i < len(vertices); i += 4 {
 		vertex := geometry.TextVertex{X: vertices[i], Y: vertices[i+1], U: vertices[i+2], V: vertices[i+3]}
-		b.mesh.Vertices = append(b.mesh.Vertices, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
+		target.Vertices = append(target.Vertices, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
 	}
-	b.draw(first, material, [4]float32{})
+	b.draw(target, id, first, material, [4]float32{})
 }
 
 // IndexedText accepts known topology in either output mode (including icon quads
@@ -196,22 +266,23 @@ func (b *SceneBuilder) IndexedText(anchor geometry.Point, vertices []geometry.Te
 	if !b.check(len(vertices), indices) {
 		return
 	}
-	first := b.mesh.Count()
+	target, id := b.target()
+	first := target.Count()
 	sin, cos := math.Sincos(angle)
 	packed := make([]scene.Vertex, len(vertices))
 	for i, vertex := range vertices {
 		packed[i] = geometry.TransformTextVertex(anchor, vertex, offset, sin, cos)
 	}
-	b.err = b.mesh.Append(packed, indices)
-	b.draw(first, material, [4]float32{})
+	b.err = target.Append(packed, indices)
+	b.draw(target, id, first, material, [4]float32{})
 }
 
-func (b *SceneBuilder) draw(first int, material scene.Material, clip [4]float32) {
-	count := b.mesh.Count() - first
+func (b *SceneBuilder) draw(target *geometry.Builder[scene.Vertex], id uint64, first int, material scene.Material, clip [4]float32) {
+	count := target.Count() - first
 	if b.err != nil || count == 0 {
 		return
 	}
-	draw := scene.Draw{Mesh: 1, First: uint32(first), Count: uint32(count), Material: material, Clip: clip}
+	draw := scene.Draw{Mesh: id, First: uint32(first), Count: uint32(count), Material: material, Clip: clip}
 	if b.breakDraw {
 		if len(b.result.Draws) >= b.drawLimit {
 			b.err = geometry.ErrGeometryLimit
@@ -243,10 +314,18 @@ func (b *SceneBuilder) finish(allowEmpty bool) (*scene.Scene, error) {
 		return nil, b.err
 	}
 	b.closed = true
-	if allowEmpty && b.mesh.Count() == 0 {
+	if allowEmpty && b.mesh.Count() == 0 && b.dynamic.Count() == 0 {
 		b.result = scene.Scene{} // no empty mesh or unused atlas allocation
+	} else if !b.split {
+		b.result.Meshes = []scene.Mesh{{ID: StableMesh, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices}}
 	} else {
-		b.result.Meshes = []scene.Mesh{{ID: 1, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices}}
+		// A mesh without geometry is omitted; its ID keeps its meaning.
+		if b.mesh.Count() > 0 {
+			b.result.Meshes = append(b.result.Meshes, scene.Mesh{ID: StableMesh, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices})
+		}
+		if b.dynamic.Count() > 0 {
+			b.result.Meshes = append(b.result.Meshes, scene.Mesh{ID: DynamicMesh, Revision: 1, Vertices: b.dynamic.Vertices, Indices: b.dynamic.Indices})
+		}
 	}
 	if err := b.result.Validate(); err != nil {
 		b.err = err

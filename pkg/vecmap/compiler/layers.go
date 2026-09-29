@@ -26,6 +26,10 @@ type LayerOptions struct {
 	Zoom          float64
 	Indexed       bool
 	TriangleLimit int
+	// ExtrudeLines makes CompileTile emit undashed, unoffset lines and fill
+	// outlines as width-independent extruded primitives, and marks the remaining
+	// zoom-baked line geometry Dynamic. False preserves the existing output.
+	ExtrudeLines bool
 }
 
 func (o LayerOptions) validated() (float64, int, error) {
@@ -43,13 +47,26 @@ func (o LayerOptions) validated() (float64, int, error) {
 // SolidSink consumes an owned mesh and its evaluated color synchronously.
 type SolidSink func(geometry.Mesh, style.Color) error
 
+// ExtrudedSink consumes an owned width-independent line mesh, its evaluated color
+// and its half width in logical pixels.
+type ExtrudedSink func(geometry.ExtrudedMesh, style.Color, float64) error
+
+// lineSinks routes tessellated lines. A nil extruded sink keeps every line baked.
+type lineSinks struct {
+	baked    SolidSink
+	extruded ExtrudedSink
+}
+
 // PatternSink consumes an owned mesh, logical sprite name, tile-unit scale and
 // raw evaluated opacity. Sprite lookup and opacity filtering belong to the caller.
 type PatternSink func(geometry.Mesh, string, float64, float64) error
 
 type linePaint struct {
-	color    style.Color
-	width    float64
+	color style.Color
+	width float64
+	// pixels is the evaluated width before tile-unit scaling. It follows width,
+	// which is part of the batch key, so it never splits or merges batches.
+	pixels   float64
 	offset   float64
 	dashKey  string
 	dashes   []float64
@@ -68,8 +85,12 @@ type lineBatch struct {
 // Earlier sink calls remain accepted on a later error. Inputs are not mutated or
 // retained; emitted meshes own their buffers, while names can borrow style data.
 func CompileFill(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, solid SolidSink, pattern PatternSink) error {
+	return compileFill(features, layer, options, solid, pattern, lineSinks{baked: solid})
+}
+
+func compileFill(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, solid SolidSink, pattern PatternSink, outlines lineSinks) error {
 	geometryScale, limit, err := options.validated()
-	if err != nil || solid == nil || pattern == nil {
+	if err != nil || solid == nil || pattern == nil || outlines.baked == nil {
 		return ErrOptions
 	}
 	type fillBatch struct {
@@ -142,7 +163,7 @@ func CompileFill(features []mvt.Feature, layer style.CompiledLayer, options Laye
 			continue
 		}
 		outline = style.ColorWithOpacity(outline, layer.NumberValue("fill-opacity", evaluation, 1))
-		paint := linePaint{color: outline, width: 1 / geometryScale, lineCap: "butt", lineJoin: "round"}
+		paint := linePaint{color: outline, width: 1 / geometryScale, pixels: 1, lineCap: "butt", lineJoin: "round"}
 		paintKey := linePaintKey(paint)
 		outlineIndex, exists := outlineIndexes[paintKey]
 		if !exists {
@@ -162,7 +183,7 @@ func CompileFill(features []mvt.Feature, layer style.CompiledLayer, options Laye
 			return err
 		}
 	}
-	return emitLines(outlineBatches, options.Indexed, limit, solid)
+	return emitLines(outlineBatches, options.Indexed, limit, outlines)
 }
 
 // CompileLine evaluates and batches line/polygon features in first-seen paint
@@ -170,8 +191,12 @@ func CompileFill(features []mvt.Feature, layer style.CompiledLayer, options Laye
 // negative-offset side before the positive side. Caller visibility/publication
 // and streaming ownership/error rules match CompileFill.
 func CompileLine(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, solid SolidSink) error {
+	return compileLine(features, layer, options, lineSinks{baked: solid})
+}
+
+func compileLine(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, sinks lineSinks) error {
 	geometryScale, limit, err := options.validated()
-	if err != nil || solid == nil {
+	if err != nil || sinks.baked == nil {
 		return ErrOptions
 	}
 	batches := make([]lineBatch, 0, 4)
@@ -186,14 +211,15 @@ func CompileLine(features []mvt.Feature, layer style.CompiledLayer, options Laye
 			continue
 		}
 		color = style.ColorWithOpacity(color, layer.NumberValue("line-opacity", evaluation, 1))
-		width := layer.NumberValue("line-width", evaluation, 1) / geometryScale
+		pixels := layer.NumberValue("line-width", evaluation, 1)
+		width := pixels / geometryScale
 		gap := layer.NumberValue("line-gap-width", evaluation, 0) / geometryScale
 		if width <= 0 || color.Alpha == 0 {
 			continue
 		}
 		dashes := evaluatedNumbers(layer, "line-dasharray", evaluation)
 		basePaint := linePaint{
-			color: color, width: width,
+			color: color, width: width, pixels: pixels,
 			offset:  layer.NumberValue("line-offset", evaluation, 0) / geometryScale,
 			dashKey: numberListKey(dashes), dashes: dashes,
 			lineCap:  layer.StringValue("line-cap", evaluation, "butt"),
@@ -224,17 +250,33 @@ func CompileLine(features []mvt.Feature, layer style.CompiledLayer, options Laye
 			}
 		}
 	}
-	return emitLines(batches, options.Indexed, limit, solid)
+	return emitLines(batches, options.Indexed, limit, sinks)
 }
 
-func emitLines(batches []lineBatch, indexed bool, limit int, solid SolidSink) error {
+func emitLines(batches []lineBatch, indexed bool, limit int, sinks lineSinks) error {
 	for _, batch := range batches {
 		paint := batch.paint
+		// Dash lengths and path offsets depend on the evaluated width or offset,
+		// so only plain lines have a width-independent form. The width guard
+		// matches the baked tessellator, which emits nothing at or below Epsilon.
+		if sinks.extruded != nil && len(paint.dashes) == 0 && paint.offset == 0 {
+			if paint.width <= geometry.Epsilon {
+				continue
+			}
+			mesh, err := geometry.TessellateExtrudedLines(batch.paths, geometry.ExtrudedLineStyle{Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
+			if err != nil {
+				return resourceError(err)
+			}
+			if err := sinks.extruded(mesh, paint.color, paint.pixels/2); err != nil {
+				return err
+			}
+			continue
+		}
 		mesh, err := geometry.TessellateLines(batch.paths, geometry.LineStyle{Width: paint.width, Offset: paint.offset, Dashes: paint.dashes, Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
 		if err != nil {
 			return resourceError(err)
 		}
-		if err := solid(mesh, paint.color); err != nil {
+		if err := sinks.baked(mesh, paint.color); err != nil {
 			return err
 		}
 	}

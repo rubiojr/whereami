@@ -44,6 +44,20 @@ borrows the input for zero offset and returns an owned copy otherwise. Vecmap's
 paint adapter uses its existing `roadPoint` alias, so no point-slice conversion
 is needed. The line engine and its regression tests are tracked by kata **1fy1**.
 
+### Width-independent extrusion
+
+`TessellateExtrudedLines` emits the triangles of `TessellateLines`, in the same
+order, for lines without dashes or offsets, but leaves extrusion to the consumer.
+Each `ExtrudedVertex` has a centerline `Anchor` and a `Direction`; the rendered
+position is `Anchor + halfWidth*Direction`. Directions are unit normals on segment
+edges and cap/join rings, zero at disk centers and rejected miters, a normal plus
+or minus the tangent on square caps, and miter vectors of at most four half
+widths. Every one is independent of the width, including the miter limit, so one
+mesh serves every evaluated line width. Tests prove equality with the baked
+geometry within `1e-9` relative tolerance for every cap and join, four widths from
+1/32 to 40, expanded and indexed output, and 200 random path sets. The existing
+arithmetic is untouched for the legacy renderer and pinned fixtures.
+
 ## Fixture integration
 
 `TriangulatePolygonExpanded` serves existing triangle-list consumers. It expands

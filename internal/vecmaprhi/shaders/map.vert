@@ -12,7 +12,7 @@ layout(std140,binding=0) uniform State {
     vec4 clipRect;
     vec4 parameters; // kind, font scale, halo width, halo blur
     vec4 pattern; // width, height, phase x, phase y
-    vec4 view; // DPR, inherited opacity, reserved, reserved
+    vec4 view; // DPR, inherited opacity, pixel offset scale (zero means one), reserved
 } state;
 void main() {
     localPosition = position;
@@ -24,5 +24,8 @@ void main() {
         float scale = max(length(vec2(state.transformX.x,state.transformY.x)),0.0001);
         offset = vec2(dot(state.transformX.xy,pixelOffset),dot(state.transformY.xy,pixelOffset)) / scale;
     }
+    // Extruded lines store unit directions and supply their half width here, so
+    // one resident mesh serves every evaluated line width.
+    if (state.view.z > 0.0) offset *= state.view.z;
     gl_Position = state.matrix * vec4(screen + offset,0.0,1.0);
 }
