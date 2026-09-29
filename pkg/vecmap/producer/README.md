@@ -121,6 +121,11 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   writer overflow and decode/build failures are not retried in that workload.
   A changed cover/style/assets request resets failure state;
   camera-only updates within the same cover do not.
+- `Retry` asks again for desired tiles whose loads failed for good, for example
+  after the network returns or a server pause ends. It spends no epoch or
+  revision and keeps installed fragments. Responses that were too large or failed
+  to decode are not fetched again; capacity failures still wait for room.
+  `RetriedLoads` counts the tiles it cleared.
 - Missing is not blank: `ErrMissing` retains fallback/continuity; a successfully
   decoded valid empty tile is ready coverage. That includes a zero-byte response,
   which OpenFreeMap sends for some empty tiles; `HTTPLoader` reads a 204 response

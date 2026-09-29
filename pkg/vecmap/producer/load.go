@@ -19,6 +19,7 @@ type result struct {
 	data     []byte
 	err      error
 	retry    bool
+	oversize bool // the response exceeded a limit; asking again gets the same bytes
 	duration time.Duration
 }
 
@@ -58,7 +59,7 @@ func (p *Producer) load(wg *sync.WaitGroup) {
 			if err == nil {
 				err = j.ctx.Err()
 			}
-			r := result{job: j, data: w.data, retry: retryable(err), duration: time.Since(started)}
+			r := result{job: j, data: w.data, retry: retryable(err), oversize: errors.Is(err, ErrLimit), duration: time.Since(started)}
 			if err != nil {
 				r.err = errors.New(errorMessage(err))
 			}

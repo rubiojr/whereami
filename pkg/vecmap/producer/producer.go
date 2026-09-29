@@ -115,6 +115,7 @@ func DefaultLimits() Limits {
 // queued results until the owner consumes them. Peak fields are lifetime peaks.
 type Status struct {
 	CapacityRetries                             uint64
+	RetriedLoads                                uint64 // terminal load failures cleared by Retry
 	UncachedPreparations                        uint64
 	PreparationEvictions, PreparationBytesFreed uint64
 	ContinuityEvictions, ContinuityBytesFreed   uint64 // non-desired cached tiles dropped so desired work could be admitted
@@ -176,6 +177,7 @@ type Producer struct {
 	latest   *Request
 	revision uint64
 	closed   bool
+	retry    bool
 	output   *Lease
 	leases   map[*Lease]struct{}
 	current  current
@@ -232,6 +234,22 @@ func (p *Producer) Submit(r Request) (uint64, error) {
 	p.latest = &r
 	p.signal()
 	return p.revision, nil
+}
+
+// Retry asks again for the desired tiles whose loads failed for good: after three
+// transient errors, or once with ErrMissing or ErrPermanent. It keeps the request,
+// epochs and installed fragments. A response that was too large or failed to
+// decode is not fetched again, and tiles refused for cache capacity keep waiting
+// for room.
+func (p *Producer) Retry() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return ErrClosed
+	}
+	p.retry = true
+	p.signal()
+	return nil
 }
 
 func (p *Producer) validate(r Request) error {

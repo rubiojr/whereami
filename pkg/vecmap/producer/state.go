@@ -26,6 +26,7 @@ type entry struct {
 type failure struct {
 	attempts              int
 	retryAt               time.Time
+	askAgain              bool // a failed load that Retry may request again
 	capacity              bool
 	fixedAt, maximumFixed uint64
 }
@@ -148,6 +149,8 @@ func (s *state) inputs() {
 	if r != nil {
 		p.latest = nil
 	}
+	retry := p.retry
+	p.retry = false
 	ack := p.current
 	pinned := make(map[view.TileID]bool)
 	for l := range p.leases {
@@ -196,6 +199,20 @@ func (s *state) inputs() {
 		s.dirty = true
 	}
 	s.adopt()
+	if retry {
+		s.retryLoads()
+	}
+}
+
+// retryLoads forgets the terminal load failures of desired tiles, so nextJob
+// requests them again.
+func (s *state) retryLoads() {
+	for tile, f := range s.failures {
+		if f.askAgain && f.attempts >= 3 && s.desired[tile] {
+			delete(s.failures, tile)
+			s.stats.RetriedLoads++
+		}
+	}
 }
 
 func (s *state) advanceGeneration() bool {
@@ -407,6 +424,7 @@ func (s *state) loaded(r result) {
 	if r.err != nil {
 		s.errorAt("load", r.err)
 		f := s.failures[tile]
+		f.askAgain = !r.oversize
 		if r.retry && f.attempts < 3 {
 			f.retryAt = time.Now().Add(s.p.limits.RetryDelay)
 		} else {

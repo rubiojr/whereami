@@ -269,6 +269,47 @@ func TestRetriesMissingMalformedAndOversized(t *testing.T) {
 	}
 }
 
+func TestRetryAsksAgainOnlyForFailedLoads(t *testing.T) {
+	limits := DefaultLimits()
+	limits.Workers = 1
+	limits.RawBytes = 128
+	p, c := newControlled(t, limits)
+	parent := view.TileID{}
+	good, missing := view.TileID{Z: 1}, view.TileID{Z: 1, X: 1}
+	malformed, oversized := view.TileID{Z: 1, Y: 1}, view.TileID{Z: 1, X: 1, Y: 1}
+	answers := map[view.TileID]answer{
+		parent: {data: tilePBF()}, good: {data: tilePBF()}, missing: {err: ErrMissing},
+		malformed: {data: []byte{255}}, oversized: {data: make([]byte, 129)},
+	}
+	_, err := p.Submit(testRequest(t, good, missing, malformed, oversized))
+	require.NoError(t, err)
+	for range answers {
+		load := nextCall(t, c)
+		load.reply <- answers[load.key.Tile]
+	}
+	failed := waitStatus(t, p, func(s Status) bool { return s.Failed == 3 && s.Jobs == 0 })
+
+	require.NoError(t, p.Retry())
+	load := nextCall(t, c)
+	assert.Equal(t, missing, load.key.Tile, "only the tile the loader could not find is asked for again")
+	assert.Equal(t, failed.Generation, load.key.Generation)
+	load.reply <- answer{data: tilePBF()}
+	status := waitStatus(t, p, func(s Status) bool { return s.Failed == 2 && s.Jobs == 0 && s.Builds == failed.Builds+1 })
+	assert.Equal(t, uint64(1), status.RetriedLoads)
+	assert.Equal(t, failed.Prepares+1, status.Prepares, "installed and undecodable tiles are not prepared again")
+	assert.Equal(t, failed.Revision, status.Revision)
+	assert.Zero(t, status.StyleAdoptions)
+	assert.Zero(t, status.StyleReuses)
+	select {
+	case extra := <-c.calls:
+		t.Fatalf("unexpected load of %v", extra.key.Tile)
+	default:
+	}
+
+	p.Close()
+	assert.ErrorIs(t, p.Retry(), ErrClosed)
+}
+
 func TestAssetsRebuildStyleReprepareAndCameraReuse(t *testing.T) {
 	limits := DefaultLimits()
 	limits.Workers = 1
