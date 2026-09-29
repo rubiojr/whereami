@@ -240,7 +240,7 @@ func (p *Producer) Submit(r Request) (uint64, error) {
 // transient errors, or once with ErrMissing or ErrPermanent. It keeps the request,
 // epochs and installed fragments. A response that was too large or failed to
 // decode is not fetched again, and tiles refused for cache capacity keep waiting
-// for room.
+// for room. Status counts the request as Pending until the owner has taken it.
 func (p *Producer) Retry() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -338,7 +338,7 @@ func (p *Producer) Status() Status {
 	for lease := range p.leases {
 		status.LeaseBytes += lease.bytes
 	}
-	if !p.closed && (p.latest != nil || p.output != nil || p.current.generation != status.CurrentGeneration || p.current.sequence != status.CurrentSequence) {
+	if !p.closed && (p.latest != nil || p.retry || p.output != nil || p.current.generation != status.CurrentGeneration || p.current.sequence != status.CurrentSequence) {
 		status.Pending++
 	}
 	return status

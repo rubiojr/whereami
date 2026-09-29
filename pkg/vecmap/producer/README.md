@@ -125,7 +125,8 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   after the network returns or a server pause ends. It spends no epoch or
   revision and keeps installed fragments. Responses that were too large or failed
   to decode are not fetched again; capacity failures still wait for room.
-  `RetriedLoads` counts the tiles it cleared.
+  Like a request, it counts as Pending until the owner takes it. `RetriedLoads`
+  counts the tiles it cleared.
 - Missing is not blank: `ErrMissing` retains fallback/continuity; a successfully
   decoded valid empty tile is ready coverage. That includes a zero-byte response,
   which OpenFreeMap sends for some empty tiles; `HTTPLoader` reads a 204 response

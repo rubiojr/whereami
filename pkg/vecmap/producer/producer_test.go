@@ -310,6 +310,14 @@ func TestRetryAsksAgainOnlyForFailedLoads(t *testing.T) {
 	assert.ErrorIs(t, p.Retry(), ErrClosed)
 }
 
+func TestRetryIsPendingUntilTheOwnerTakesIt(t *testing.T) {
+	// No owner runs, so the request stays in the mailbox.
+	p := &Producer{leases: make(map[*Lease]struct{}), wake: make(chan struct{}, 1)}
+	require.Zero(t, p.Status().Pending)
+	require.NoError(t, p.Retry())
+	assert.Equal(t, 1, p.Status().Pending, "a consumer polling for settlement must not stop before the retry starts")
+}
+
 func TestAssetsRebuildStyleReprepareAndCameraReuse(t *testing.T) {
 	limits := DefaultLimits()
 	limits.Workers = 1
