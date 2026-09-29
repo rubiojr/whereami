@@ -3225,15 +3225,40 @@ rasterizer, where every frame is expensive.
 #### Replay observations
 
 Same corpus, arguments and host as **twd2**; the `-release-resources` value is the
-only added argument. The desktop session was locked during this series, so
-on-screen Vulkan runs could not present (nineteen frames in fifteen seconds for
-every binary, including the baseline) and are not reported; Vulkan rows remain to be
-recaptured on an unlocked desktop. The Xvfb llvmpipe rows below are comparable with
-the twd2 table. Host load stayed between 1.0 and 4.2. Baseline is the committed
-`22fe450` tree; the *old order* rows come from an ablation build that keeps the old
-release-first order with the new release budget. All rows end at 20 tiles / 598
-draws / 94 labels (static 42 / 978 / 130) with zero pending, failed and batch
-failures unless marked.
+only added argument. Baseline is the committed `22fe450` tree; the *ablation* rows
+come from a build that keeps the old release-first order with the new release
+budget. All rows end at 20 tiles / 598 draws / 94 labels (static 42 / 978 / 130)
+with zero pending, failed and batch failures unless marked. The llvmpipe series ran
+under Xvfb at host load 1.0–4.2. The desktop session was locked during that series:
+on-screen Vulkan runs then presented nineteen frames in fifteen seconds for every
+binary, including the baseline, and Vulkan does not start under Xvfb. Those runs are
+discarded; the Vulkan series below was captured afterwards on the unlocked desktop
+at host load 0.5–2.0. A locked session is another instance of the **vx93** pacing
+sensitivity: check `loginctl show-session <id> -p LockedHint` before on-screen runs.
+
+| Vulkan replay | Order | Releases | Elapsed s | Current changes | Longest hold s | Mean age s | Upload / release batches | Frames |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| moving, baseline 1 | old | 2 | 8.63 | 5 | 3.82 | 1.31 | 146 / 91 | 500 |
+| moving, baseline 2 | old | 2 | 8.69 | 6 | 3.79 | 1.19 | 148 / 91 | 505 |
+| moving, baseline 3 | old | 2 | 8.41 | 6 | 3.75 | 1.09 | 144 / 89 | 494 |
+| static, baseline | old | 2 | 5.12 | 4 | 2.95 | 1.00 | 112 / 26 | 299 |
+| moving, ablation 1 | old | 2 | 9.42 | 6 | 2.98 | 1.18 | 160 / 105 | 554 |
+| moving, ablation 2 | old | 2 | 7.61 | 6 | 3.37 | 0.83 | 134 / 78 | 450 |
+| moving, ablation 3 | old | 2 | 8.38 | 6 | 2.63 | 0.85 | 144 / 88 | 495 |
+| static, ablation | old | 2 | 5.89 | 4 | 2.95 | 1.29 | 125 / 39 | 345 |
+| moving, new 1 | new | 2 | 9.95 | 7 | 3.52 | 0.79 | 169 / 113 | 585 |
+| moving, new 2 | new | 2 | 10.44 | 6 | 3.82 | 1.02 | 176 / 120 | 616 |
+| moving, new 3 | new | 2 | 9.13 | 7 | 3.19 | 0.62 | 157 / 101 | 539 |
+| static, new | new | 2 | 5.88 | 4 | 2.93 | 1.29 | 125 / 39 | 345 |
+| moving, ablation 1 | old | 8 | 6.35 | 6 | 2.39 | 0.72 | 148 / 25 | 372 |
+| moving, ablation 2 | old | 8 | 7.28 | 7 | 1.83 | 0.91 | 173 / 31 | 430 |
+| moving, ablation 3 | old | 8 | 7.38 | 7 | 1.77 | 0.91 | 173 / 33 | 433 |
+| static, ablation | old | 8 | 5.16 | 4 | 2.94 | 1.27 | 125 / 10 | 301 |
+| moving, new 1 | new | 8 | 6.80 | 7 | 1.65 | 0.66 | 161 / 27 | 400 |
+| moving, new 2 | new | 8 | 7.56 | 6 | 1.78 | 1.07 | 180 / 32 | 445 |
+| moving, new 3 | new | 8 | 7.46 | 6 | 1.85 | 1.00 | 177 / 31 | 438 |
+| static, new | new | 8 | 5.13 | 4 | 2.95 | 1.26 | 123 / 10 | 299 |
+
 
 | llvmpipe replay | Order | Releases | Elapsed s | Current changes | Longest hold s | Mean age s | Upload / release batches | Frames |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -3273,8 +3298,19 @@ mean Current age (1.5–2.0 s against 1.9–2.6 s) because a new cover's uploads
 queue behind the previous cover's retirement. Combined, the six moving runs hold
 Current for at most 4.2–5.4 s with a mean age of 1.3–2.2 s. Run-to-run variance on
 the shared host remains large (about ±1.5 s), so these are ranges, not point
-estimates; Vulkan, where frames are cheap and ordering matters most, is unmeasured
-here. No presentation pacing or MapLibre claim follows.
+estimates.
+
+Vulkan shows the same attribution. With eight releases per batch the committed
+configuration settles in 6.8–7.6 s against 8.4–8.7 s for the baseline, which is also
+at or below the 7.0–7.3 s that **2e1d4fa** needed before Current advanced during
+motion at all, and the longest hold falls from 3.8 s to 1.7–1.9 s with six to seven
+drawable Current changes. Ordering alone again does not shorten settlement: at two
+releases it completes more intermediate covers (157–176 upload batches against
+134–160) and settles in 9.1–10.4 s, with a lower mean age (0.6–1.0 s against
+0.8–1.3 s). At eight releases the two orders are within run-to-run variance on
+every metric. The ordering change is kept because it makes the residency bound
+hold per batch and removes the wait behind retirement; the settlement gain belongs
+to the release budget. No presentation pacing or MapLibre claim follows.
 
 #### Verification
 
