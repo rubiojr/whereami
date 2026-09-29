@@ -1,6 +1,7 @@
 // Package producer loads and compiles bounded live tile covers without Qt or cgo.
-// One owner performs preparation, composition and cache mutation; fixed workers
-// perform only transport. Native residency and completion remain adapter-owned.
+// One owner performs admission, composition and cache mutation; fixed compilers
+// prepare and build tiles and fixed workers perform only transport. Native
+// residency and completion remain adapter-owned.
 package producer
 
 import (
@@ -10,6 +11,7 @@ import (
 	"math"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/mvt"
@@ -98,9 +100,9 @@ type Request struct {
 // texture pixels. SnapshotBytes covers each lease and one internal selection slot.
 // RawBytes*Workers reserves running and pending-result buffers. ProfileBytes
 // reserves each style+asset pair; three pairs can coexist during request handoff.
-// Compiler scratch is separately bounded by MVT/PrepareOptions and one compiler.
+// Compiler scratch is separately bounded by MVT/PrepareOptions for each compiler.
 // One additional <=RawBytes scratch copy compacts a completed response for caching.
-// Sprite copying is bounded by CacheBytes for the one in-progress BuildOwned job.
+// Each running BuildOwned copies at most CacheBytes/Compilers of sprite pixels.
 type Limits struct {
 	Workers, Tiles, Leases, RawBytes        int
 	CacheBytes, SnapshotBytes, ProfileBytes uint64
@@ -126,17 +128,25 @@ type Limits struct {
 	// stand-in drawn until the targets arrive. Without it only the targets
 	// load, which costs fewer downloads; acknowledged Current still stands in.
 	Parents bool
+	// Compilers prepare and build tiles, one tile each, off the owner
+	// goroutine, which keeps admission, installation and publication. More
+	// than one uses more cores for a view and holds that many preparations at
+	// once; each build produces at most CacheBytes/Compilers of textures, so
+	// together they stay within one cache budget. At most 8. With more than
+	// one, Assets callbacks must be safe for concurrent use.
+	Compilers int
 }
 
 func DefaultLimits() Limits {
 	return Limits{Workers: 4, Tiles: 128, Leases: 4, RawBytes: mvt.MaxTileBytes,
 		CacheBytes: 256 << 20, SnapshotBytes: 128 << 20, ProfileBytes: 64 << 20,
-		RetryDelay: 250 * time.Millisecond, PrefetchRing: view.PrefetchRing, Parents: true}
+		RetryDelay: 250 * time.Millisecond, PrefetchRing: view.PrefetchRing, Parents: true, Compilers: 1}
 }
 
 // Status is a bounded observation, not an event log. Revision is the latest
-// request consumed by the owner. ReservedRawBytes includes canceled jobs and
-// queued results until the owner consumes them. Peak fields are lifetime peaks.
+// request consumed by the owner. Jobs are running loads and Compiling running
+// preparations and builds. ReservedRawBytes includes canceled jobs and queued
+// results until the owner consumes them. Peak fields are lifetime peaks.
 type Status struct {
 	CapacityRetries                             uint64
 	RetriedLoads                                uint64 // terminal load failures cleared by Retry
@@ -146,6 +156,7 @@ type Status struct {
 	CurrentGeneration, CurrentSequence          uint64 // native Current mailbox consumed by the owner
 	Revision, Generation                        uint64
 	Jobs, Cached, Leases                        int
+	Compiling, PeakCompiling                    int
 	Pending                                     int // desired unfinished tiles, plus unpublished/request-mailbox work
 	Failed                                      int // terminal failures still relevant to desired coverage
 	CacheBytes, LeaseBytes, ReservedRawBytes    uint64
@@ -216,6 +227,11 @@ type Producer struct {
 	results  chan result
 	limits   Limits
 	loader   Loader
+	// compileJobs holds at most Compilers jobs: the owner counts a job until
+	// it has consumed its result from compiled.
+	compileJobs chan compileJob
+	compiled    chan compileResult
+	buildAssets atomic.Pointer[buildAssets]
 }
 
 func New(loader Loader, limits Limits) (*Producer, error) {
@@ -223,7 +239,8 @@ func New(loader Loader, limits Limits) (*Producer, error) {
 		limits.Leases < 1 || limits.Leases > 8 || limits.RawBytes < 1 || limits.RawBytes > mvt.MaxTileBytes ||
 		limits.CacheBytes == 0 || limits.CacheBytes > 1<<30 || limits.SnapshotBytes == 0 || limits.SnapshotBytes > 1<<30 ||
 		limits.ProfileBytes == 0 || limits.ProfileBytes > 1<<30 || limits.RetryDelay <= 0 ||
-		!(limits.DrawMargin >= 0) || limits.DrawMargin > 1<<20 || limits.PrefetchRing < 0 || limits.PrefetchRing > view.MaxPrefetchRing {
+		!(limits.DrawMargin >= 0) || limits.DrawMargin > 1<<20 || limits.PrefetchRing < 0 || limits.PrefetchRing > view.MaxPrefetchRing ||
+		limits.Compilers < 1 || limits.Compilers > 8 {
 		return nil, ErrInput
 	}
 	set, err := tiles.New(limits.Store)
@@ -233,6 +250,7 @@ func New(loader Loader, limits Limits) (*Producer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &Producer{ctx: ctx, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1), changed: make(chan struct{}, 1),
 		jobs: make(chan job), results: make(chan result, limits.Workers), limits: limits, loader: loader,
+		compileJobs: make(chan compileJob, limits.Compilers), compiled: make(chan compileResult, limits.Compilers),
 		leases: make(map[*Lease]struct{})}
 	go p.run(set)
 	return p, nil

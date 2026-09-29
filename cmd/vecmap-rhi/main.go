@@ -49,6 +49,7 @@ func main() {
 	flag.BoolVar(&live.keepPreparation, "keep-preparation", false, "keep prepared primitives after a tile is built, for asset changes")
 	flag.Float64Var(&live.drawMargin, "draw-margin", 256, "draw live tiles within this many logical pixels of the viewport; tiles beyond stay compiled for a pan; zero draws every loaded tile")
 	flag.IntVar(&live.workers, "tile-workers", 4, "live transport workers (1-4); use 1 for ordered cache replay")
+	flag.IntVar(&live.compilers, "tile-compilers", 1, "live goroutines that prepare and build tiles (1-8); more finish a view sooner on more cores")
 	flag.BoolVar(&live.cacheOnly, "cache-only", false, "live replay from verified cached tiles only; never fetch missing entries")
 	flag.BoolVar(&live.residentGeometry, "resident-geometry", true, "keep fills and shader-extruded lines resident across style-zoom changes")
 	flag.BoolVar(&live.residentSymbols, "resident-symbols", true, "keep icon and text quads resident across style-zoom changes that preserve symbol layout")
@@ -197,7 +198,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers)
 	if options.diagnostics {
 		pacing.report()
 	}

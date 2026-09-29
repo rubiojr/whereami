@@ -2619,6 +2619,8 @@ bytes/capacity, latest CPU selection and last failure stage. Parallel loading su
 are not CPU time or elapsed runtime. Counters are sampled before shutdown and are
 not a complete history of every failure. `-tile-workers 1` supports ordered replay;
 `-cache-only` refuses missing/corrupt inputs instead of fetching replacements.
+`-tile-compilers` (default 1) prepares and builds that many tiles at once; with
+more than one, Prepare/Build wall-time sums overlap and exceed elapsed time.
 
 #### Ordered static replay
 

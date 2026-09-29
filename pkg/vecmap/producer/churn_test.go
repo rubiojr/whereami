@@ -22,18 +22,41 @@ func churnState(t *testing.T, r Request) *state {
 	p := &Producer{ctx: ctx, cancel: cancel, limits: DefaultLimits(), wake: make(chan struct{}, 1), leases: make(map[*Lease]struct{})}
 	set, err := tiles.New(p.limits.Store)
 	require.NoError(t, err)
-	s := &state{p: p, set: set, entries: make(map[view.TileID]*entry), running: make(map[view.TileID]job), failures: make(map[view.TileID]failure)}
+	s := &state{p: p, set: set, entries: make(map[view.TileID]*entry), running: make(map[view.TileID]job),
+		compiling: make(map[view.TileID]compileJob), failures: make(map[view.TileID]failure)}
 	_, err = p.Submit(r)
 	require.NoError(t, err)
 	s.inputs()
 	return s
 }
 
+// build prepares and builds one tile synchronously, as a compiler would, and
+// takes demand queued meanwhile between the two phases, as the owner does
+// while a compiler prepares.
+func (s *state) build(tile view.TileID, e *entry) {
+	j := s.startCompile(tile, e)
+	r := prepareTile(j)
+	s.inputs()
+	if r.err == nil && j.ctx.Err() == nil {
+		r = s.p.buildTile(r)
+	}
+	s.compiled(r)
+}
+
+// compileNext builds the tile compile would start next, synchronously.
+func (s *state) compileNext() bool {
+	tile, e, ok := s.nextCompile(s.selectedCover())
+	if ok {
+		s.build(tile, e)
+	}
+	return ok
+}
+
 func TestCurrentSequenceDoesNotRepublishUnchangedCoverage(t *testing.T) {
 	r := testRequest(t, view.TileID{})
 	s := churnState(t, r)
 	s.entries[view.TileID{}] = &entry{raw: tilePBF(), source: r.Style.Source}
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	s.publish()
 	l, ok := s.p.Next()
 	require.True(t, ok)
@@ -233,7 +256,7 @@ func TestRefreshPrioritizesSelectableCoverBeforeRefinement(t *testing.T) {
 	s.evict()
 	require.NotNil(t, s.entries[parentB], "a hidden pinned parent is retained, not rebuilt")
 	builds := s.stats.Builds
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	assert.Equal(t, s.style, s.entries[b].style)
 	assert.Nil(t, s.entries[missing].fragment, "refresh selected b before nearer unfinished sibling")
 	assert.Equal(t, builds+1, s.stats.Builds)
@@ -241,12 +264,12 @@ func TestRefreshPrioritizesSelectableCoverBeforeRefinement(t *testing.T) {
 	require.NotNil(t, s.p.output)
 	assert.Equal(t, []view.TileID{parentA, b}, s.p.output.Snapshot.Cover)
 	s.p.output.Release()
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	s.publish()
 	require.NotNil(t, s.p.output)
 	assert.Equal(t, []view.TileID{a, missing, b}, s.p.output.Snapshot.Cover)
 	s.p.output.Release()
-	assert.False(t, s.compile(), "no obsolete fallback compilation after refinement")
+	assert.False(t, s.compileNext(), "no obsolete fallback compilation after refinement")
 }
 
 func TestReturningStyleReusesUnmodifiedTileAndResourceIdentities(t *testing.T) {
@@ -254,7 +277,7 @@ func TestReturningStyleReusesUnmodifiedTileAndResourceIdentities(t *testing.T) {
 	originalStyle := r.Style
 	s := churnState(t, r)
 	s.entries[view.TileID{}] = &entry{raw: tilePBF(), source: r.Style.Source}
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	s.publish()
 	first, ok := s.p.Next()
 	require.True(t, ok)
@@ -274,7 +297,7 @@ func TestReturningStyleReusesUnmodifiedTileAndResourceIdentities(t *testing.T) {
 		s.inputs()
 	}
 	assert.Equal(t, uint64(1), s.stats.StyleReuses)
-	assert.False(t, s.compile())
+	assert.False(t, s.compileNext())
 	assert.Same(t, prepared, entry.prepared)
 	assert.Same(t, originalStyle, entry.styleSnapshot, "original borrowed profile remains charged")
 	assert.Equal(t, s.style, entry.style)
@@ -291,7 +314,7 @@ func TestReturningStyleReusesUnmodifiedTileAndResourceIdentities(t *testing.T) {
 	_, err := s.p.Submit(r)
 	require.NoError(t, err)
 	s.inputs()
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	assert.Equal(t, uint64(1), s.stats.Prepares)
 	assert.Equal(t, uint64(2), s.stats.Builds)
 	assert.Equal(t, []byte{255, 0, 0, 255}, byteColor(first))
@@ -353,7 +376,7 @@ func TestHeldEpochPublishesCoherentIntermediateCovers(t *testing.T) {
 	s.inputs()
 	assert.Equal(t, uint64(2), s.style, "a published epoch adopts newer paint at once")
 	assert.Equal(t, uint64(1), s.stats.StyleAdoptions)
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	assert.Equal(t, s.style, s.entries[left].style)
 	assert.NotEqual(t, s.style, s.entries[right].style)
 	styleZoom(t, s, &r, 4)
@@ -371,7 +394,7 @@ func TestHeldEpochPublishesCoherentIntermediateCovers(t *testing.T) {
 	s.inputs()
 	assert.Equal(t, uint64(2), s.style)
 	assert.Equal(t, uint64(2), s.stats.HeldStyles, "each deferred pair counts once")
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	s.publish()
 	second, ok := s.p.Next()
 	require.True(t, ok)
@@ -407,7 +430,7 @@ func TestHeldEpochReleasesOnExhaustionAndPreparationBound(t *testing.T) {
 	styleZoom(t, s, &r, 3)
 	s.inputs()
 	require.Equal(t, uint64(2), s.style)
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	s.failures[right] = failure{attempts: 3}
 	styleZoom(t, s, &r, 4)
 	s.inputs()
@@ -421,7 +444,7 @@ func TestHeldEpochReleasesOnExhaustionAndPreparationBound(t *testing.T) {
 	s.inputs()
 	assert.Equal(t, uint64(3), s.style, "an exhausted epoch releases newer paint")
 	assert.Empty(t, s.failures)
-	require.True(t, s.compile())
+	require.True(t, s.compileNext())
 	styleZoom(t, s, &r, 5)
 	s.inputs()
 	assert.Equal(t, uint64(3), s.style)

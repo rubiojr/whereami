@@ -42,6 +42,7 @@ type state struct {
 	desired, pinned                     map[view.TileID]bool
 	entries                             map[view.TileID]*entry
 	running                             map[view.TileID]job
+	compiling                           map[view.TileID]compileJob // unfinished until compiled consumes the result
 	failures                            map[view.TileID]failure
 	stats                               Status
 	dirty                               bool
@@ -60,6 +61,10 @@ func (p *Producer) run(set *tiles.Set) {
 		wg.Add(1)
 		go p.load(&wg)
 	}
+	for range p.limits.Compilers {
+		wg.Add(1)
+		go p.compiler(&wg)
+	}
 	defer func() {
 		p.cancel()
 		wg.Wait()
@@ -67,6 +72,12 @@ func (p *Producer) run(set *tiles.Set) {
 		// Results can retain raw buffers after canceled workers have exited.
 		for len(p.results) > 0 {
 			<-p.results
+		}
+		for len(p.compileJobs) > 0 {
+			(<-p.compileJobs).cancel()
+		}
+		for len(p.compiled) > 0 {
+			(<-p.compiled).job.cancel()
 		}
 		p.mu.Lock()
 		if p.output != nil {
@@ -88,7 +99,8 @@ func (p *Producer) run(set *tiles.Set) {
 	}()
 	timer := time.NewTicker(p.limits.RetryDelay)
 	defer timer.Stop()
-	s := state{p: p, set: set, entries: make(map[view.TileID]*entry), running: make(map[view.TileID]job), failures: make(map[view.TileID]failure)}
+	s := state{p: p, set: set, entries: make(map[view.TileID]*entry), running: make(map[view.TileID]job),
+		compiling: make(map[view.TileID]compileJob), failures: make(map[view.TileID]failure)}
 	for {
 		if p.ctx.Err() != nil {
 			return
@@ -99,17 +111,18 @@ func (p *Producer) run(set *tiles.Set) {
 		s.retryCapacity()
 		s.publish()
 		s.report()
-		// Drain completed loads before compiling another tile. No worker can be
-		// replaced while its result remains queued.
+		// Drain completed loads and builds before compiling another tile. No
+		// worker can be replaced while its result remains queued.
 		select {
 		case r := <-p.results:
 			s.loaded(r)
 			continue
+		case r := <-p.compiled:
+			s.compiled(r)
+			continue
 		default:
 		}
-		if s.compile() {
-			continue
-		}
+		s.compile()
 		next, available := s.nextJob(time.Now())
 		var jobs chan job
 		if available {
@@ -134,6 +147,11 @@ func (p *Producer) run(set *tiles.Set) {
 				next.cancel()
 			}
 			s.loaded(r)
+		case r := <-p.compiled:
+			if available {
+				next.cancel()
+			}
+			s.compiled(r)
 		case jobs <- next:
 			s.running[next.key.Tile] = next
 			f := s.failures[next.key.Tile]
@@ -204,6 +222,11 @@ func (s *state) inputs() {
 				j.cancel()
 			}
 		}
+		for tile, j := range s.compiling {
+			if !s.desired[tile] {
+				j.cancel()
+			}
+		}
 		s.dirty = true
 	}
 	s.adopt()
@@ -261,9 +284,13 @@ func (s *state) adopt() {
 	if styleChanged {
 		s.style++
 		s.reuseStyle(r.Style)
+		for _, j := range s.compiling {
+			j.cancel() // prepared for the old style
+		}
 	}
 	if assetsChanged {
 		s.assets++
+		s.p.buildAssets.Store(&buildAssets{value: r.Assets.Value, epoch: s.assets})
 	}
 	clear(s.failures)
 	if s.working != nil {
@@ -367,6 +394,9 @@ func (s *state) refine() {
 		if ready {
 			delete(s.desired, group.Parent)
 			if j, ok := s.running[group.Parent]; ok {
+				j.cancel()
+			}
+			if j, ok := s.compiling[group.Parent]; ok {
 				j.cancel()
 			}
 		}
@@ -543,103 +573,6 @@ func (s *state) snapshotCharge(snapshot *tiles.Snapshot) uint64 {
 	return snapshot.RetainedBytes()
 }
 
-func (s *state) compile() bool {
-	if s.request == nil {
-		return false
-	}
-	// Refresh the currently selectable cover before preparing refinements that
-	// cannot yet be published. Keep LoadOrder within each class. This does not
-	// turn a CPU target into continuity; coverage still uses acknowledged Current.
-	cover := s.selectedCover()
-	for _, selected := range []bool{true, false} {
-		for _, tile := range s.order {
-			if !s.desired[tile] || slices.Contains(cover, tile) != selected {
-				continue
-			}
-			e := s.entries[tile]
-			if e == nil || e.source != s.working.Style.Source || (e.style == s.style && e.assets == s.assets) || s.failures[tile].attempts >= 3 {
-				continue
-			}
-			s.build(tile, e)
-			return true
-		}
-	}
-	return false
-}
-
-func (s *state) build(tile view.TileID, old *entry) {
-	styleEpoch := s.style
-	next := *old
-	var err error
-	stage := "prepare"
-	if next.prepared == nil || next.style != s.style {
-		options := s.working.Style.Options
-		options.Tile = tile
-		started := time.Now()
-		next.prepared, err = tiles.Prepare(next.raw, s.working.Style.Layers, options)
-		s.stats.Preparing.observe(time.Since(started))
-		s.stats.Prepares++
-		s.workingPrepares++
-	}
-	// Preparation and packing are separately bounded expensive phases. Observe
-	// newer demand between them, before allocating pixels for an obsolete style.
-	// Compatible asset refresh can use this preparation with the newest assets.
-	s.inputs()
-	if s.p.ctx.Err() != nil || s.style != styleEpoch || !s.desired[tile] {
-		s.stats.Rejected++
-		s.stats.SkippedBuilds++
-		return
-	}
-	assetEpoch := s.assets
-	if err == nil {
-		stage = "build"
-		var built *tiles.BuildResult
-		started := time.Now()
-		built, err = next.prepared.BuildOwned(s.working.Assets.Value, s.p.limits.CacheBytes)
-		s.stats.Building.observe(time.Since(started))
-		s.stats.Builds++
-		if err == nil {
-			next.fragment = built.Fragment
-		}
-	}
-	// Adopt camera/cover updates without starving useful compilation. Source/style
-	// or asset changes and obsolete tiles discard the finished bounded operation.
-	s.inputs()
-	if s.p.ctx.Err() != nil || s.style != styleEpoch || s.assets != assetEpoch || !s.desired[tile] {
-		s.stats.Rejected++
-		return
-	}
-	if err == nil {
-		stage = "cache/compiled"
-		if s.p.limits.DiscardPreparation {
-			next.prepared = nil
-		}
-		next.preparedUse = s.stats.Builds
-		next.usage = entryUsage(tile, &next)
-		next.styleSnapshot = s.working.Style
-		if !s.admitPrepared(tile, &next) {
-			err = ErrLimit
-		}
-	}
-	if err == nil {
-		stage = "store"
-		err = s.set.Apply([]tiles.Change{{Tile: tile, Fragment: next.fragment}})
-	}
-	if err != nil {
-		s.errorAt(stage, err)
-		if stage == "cache/compiled" {
-			s.failCapacity(tile, &next)
-		} else {
-			s.failures[tile] = failure{attempts: 3}
-		}
-		return
-	}
-	next.style, next.assets = s.style, s.assets
-	s.entries[tile] = &next
-	s.recordCache(tile, &next)
-	s.dirty = true
-}
-
 func (s *state) error(err error) {
 	s.errorAt("owner", err)
 }
@@ -796,6 +729,7 @@ func (s *state) report() {
 	}
 	s.stats.ReusedVersions = s.set.ReusedVersions()
 	s.stats.Jobs, s.stats.Cached, s.stats.Leases = len(s.running), len(s.entries), len(p.leases)
+	s.stats.Compiling = len(s.compiling)
 	s.stats.ReservedRawBytes = uint64(len(s.running)) * uint64(p.limits.RawBytes)
 	s.stats.LeaseBytes = 0
 	for l := range p.leases {

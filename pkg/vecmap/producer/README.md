@@ -1,8 +1,9 @@
 # producer
 
 Headless live tile production over `tiles.Prepare`, `Prepared.Build` and `Set`.
-One owner goroutine handles preparation, cache admission, coverage and placement.
-Between one and four fixed workers perform transport only. The package builds
+One owner goroutine handles cache admission, coverage and placement. Between one
+and eight compilers prepare and build tiles, and between one and four fixed
+workers perform transport only. The package builds
 without Qt, cgo, or the Qt-bound parent `pkg/vecmap`.
 
 The package supplies injected loaders, an HTTP/cache adapter and already-loaded
@@ -74,12 +75,17 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
 - Canceled jobs retain their worker/raw reservation until their results return.
   Even a loader ignoring cancellation cannot cause replacement goroutines to be
   spawned. Late canceled results are discarded before decoding.
-- Preparation concurrency is **one**. Observe newer requests between synchronous
-  Prepare and Build, then again before installation. Obsolete preparation skips
-  packing; a compatible asset refresh uses that preparation with the newest assets.
-  Compatible camera updates don't discard useful compilation. Changes during Build
-  still reject obsolete source/style/assets or tiles before installation. No decoding,
-  tessellation, shaping or composition runs in Submit, Next or native callbacks.
+- `Limits.Compilers` (one by default) prepare and build tiles, one tile each, in
+  the owner's compile order; the owner keeps taking requests, results and loads
+  meanwhile and installs each result itself. A style or source change, or a tile
+  leaving the cover, cancels its job: Build is skipped if not yet started, and a
+  result that can no longer be installed is discarded. A compatible asset refresh
+  builds a finished preparation with the newest assets. Compatible camera updates
+  don't discard useful compilation. No decoding, tessellation, shaping or
+  composition runs in Submit, Next or native callbacks. With more than one
+  compiler, Assets callbacks run concurrently; Liberty's sprite cache is safe for
+  that. On the captured Madrid corpus (58 tiles, 16 cores) a static view settled
+  in 600-820 ms with one compiler, 280-340 ms with four and 240-280 ms with eight.
 - `Limits.DrawMargin` composes only the targets within that many logical pixels
   of the viewport. The rest of the cover stays loaded and compiled for a pan.
   Zero composes every target.
@@ -184,6 +190,7 @@ Limits are explicit positive values; use DefaultLimits as a starting policy:
 | Budget | Default | Maximum |
 | --- | ---: | ---: |
 | Transport workers / pending raw result slots | 4 | 4 |
+| Compilers | 1 | 8 |
 | Raw response capacity per slot | 2 MiB | 2 MiB |
 | Cached tile entries | 128 | 128 |
 | Cache charge | 256 MiB | 1 GiB |
@@ -213,10 +220,11 @@ The ledger covers separate lifetimes:
    cache. `SelectBounded` rejects oversized logical snapshots before caching them.
 4. **Request handoff:** reserve three ProfileBytes allowances for owner, latest and
    one in-transfer profile pair. Jobs retain a copied source name, not old profiles.
-5. **Temporary work:** reserve one compiler/compositor working set and one
-   compaction buffer of at most RawBytes in addition to
-   these retained budgets. Owned sprite copies have an aggregate CacheBytes ceiling
-   for the one in-progress Build; source assets stay charged to input profiles.
+5. **Temporary work:** reserve one compiler working set per compiler, one
+   compositor working set and one compaction buffer of at most RawBytes in
+   addition to these retained budgets. Each running Build copies at most
+   CacheBytes/Compilers of owned textures, so together they stay within one
+   CacheBytes ceiling; source assets stay charged to input profiles.
    MVT decode, triangulation, candidates, glyph layout/atlas,
    packing, projection and collision retain their existing byte/count/work ceilings.
    Lower PrepareOptions and Store limits for the application's scratch policy.

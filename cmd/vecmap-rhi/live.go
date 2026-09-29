@@ -25,7 +25,7 @@ type liveOptions struct {
 	latitude, longitude, zoom float64
 	drawMargin                float64
 	cacheBytes, sceneBytes    uint64
-	workers                   int
+	workers, compilers        int
 	cacheOnly                 bool
 	residentGeometry          bool
 	residentSymbols           bool
@@ -90,6 +90,9 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 	limits.DrawMargin = options.drawMargin
 	if options.workers != 0 {
 		limits.Workers = options.workers
+	}
+	if options.compilers != 0 {
+		limits.Compilers = options.compilers
 	}
 	p, err := producer.New(load, limits)
 	if err != nil {
