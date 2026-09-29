@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -514,4 +515,152 @@ func TestDiscardPreparationPreparesAgainForNewAssets(t *testing.T) {
 			assert.Zero(t, status.Failed)
 		})
 	}
+}
+
+// marginProducer answers every load and counts them by tile.
+func marginProducer(t *testing.T, margin float64) (*Producer, func(view.TileID) int) {
+	t.Helper()
+	var mu sync.Mutex
+	loads := make(map[view.TileID]int)
+	limits := DefaultLimits()
+	limits.DrawMargin = margin
+	p, err := New(func(_ context.Context, key Key, dst io.Writer) error {
+		mu.Lock()
+		loads[key.Tile]++
+		mu.Unlock()
+		_, err := dst.Write(tilePBF())
+		return err
+	}, limits)
+	require.NoError(t, err)
+	t.Cleanup(func() { p.Close(); waitDone(t, p.Done()) })
+	return p, func(tile view.TileID) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return loads[tile]
+	}
+}
+
+func marginRequest(t *testing.T, camera view.Camera) Request {
+	t.Helper()
+	r := testRequest(t)
+	r.Camera = camera
+	r.Style.Options.Zoom = view.StyleZoom(camera.Zoom)
+	return r
+}
+
+// settled waits until every target of the request is compiled. Parents are
+// cached for a while too, so the count of cached tiles alone proves nothing.
+func settled(t *testing.T, p *Producer, revision uint64, targets []view.TileID, loads func(view.TileID) int) Status {
+	t.Helper()
+	return waitStatus(t, p, func(s Status) bool {
+		for _, tile := range targets {
+			if loads(tile) == 0 {
+				return false
+			}
+		}
+		// An unconsumed publication is the one pending item left.
+		return s.Revision == revision && s.Jobs == 0 && s.Requested == len(targets) && s.Pending <= 1 && s.Failed == 0
+	})
+}
+
+func TestDrawMarginComposesOnlyNearbyTargets(t *testing.T) {
+	madrid := view.Coordinate{Latitude: 40.4168, Longitude: -3.7038}
+	camera := view.NewCamera(madrid, 16, 0, 800, 600)
+	cover := view.VisibleTileCover(camera)
+	near := view.TilesNear(camera, cover, view.TileSize)
+	require.Less(t, len(near), len(cover))
+
+	p, loads := marginProducer(t, view.TileSize)
+	revision, err := p.Submit(marginRequest(t, camera))
+	require.NoError(t, err)
+	settled(t, p, revision, cover, loads)
+	l := nextLease(t, p, func(l *Lease) bool { return l.Revision == revision && len(l.Snapshot.Cover) == len(near) })
+	assert.ElementsMatch(t, near, l.Snapshot.Cover)
+	for _, tile := range cover {
+		assert.Equal(t, 1, loads(tile), "targets beyond the margin are loaded too: %+v", tile)
+	}
+	l.Release()
+
+	// A pan brings a loaded target within the margin: it is composed, not loaded.
+	var moved view.Camera
+	var movedCover, movedNear []view.TileID
+	entered := 0
+	for distance := 50.0; distance <= 2000 && entered == 0; distance += 50 {
+		moved = camera.Panned(0, distance)
+		movedCover = view.VisibleTileCover(moved)
+		movedNear = view.TilesNear(moved, movedCover, view.TileSize)
+		for _, tile := range movedNear {
+			if slices.Contains(cover, tile) && !slices.Contains(near, tile) {
+				entered++
+			}
+		}
+	}
+	require.NotZero(t, entered, "no pan brings a loaded target within the margin")
+	revision, err = p.Submit(marginRequest(t, moved))
+	require.NoError(t, err)
+	settled(t, p, revision, movedCover, loads)
+	l = nextLease(t, p, func(l *Lease) bool { return l.Revision == revision && len(l.Snapshot.Cover) == len(movedNear) })
+	assert.ElementsMatch(t, movedNear, l.Snapshot.Cover)
+	for _, tile := range movedNear {
+		assert.Equal(t, 1, loads(tile))
+	}
+}
+
+func TestDrawMarginKeepsCurrentTargetsUntilTwiceAsFar(t *testing.T) {
+	madrid := view.Coordinate{Latitude: 40.4168, Longitude: -3.7038}
+	camera := view.NewCamera(madrid, 16, 0, 800, 600)
+	cover := view.VisibleTileCover(camera)
+	near := view.TilesNear(camera, cover, view.TileSize)
+
+	// Find a pan that leaves a drawn target between one and two margins away.
+	var moved view.Camera
+	var want, movedNear []view.TileID
+	for distance := 50.0; distance <= 2000 && len(want) == len(movedNear); distance += 50 {
+		moved = camera.Panned(0, distance)
+		movedCover := view.VisibleTileCover(moved)
+		movedNear = view.TilesNear(moved, movedCover, view.TileSize)
+		want = want[:0]
+		for _, tile := range view.TilesNear(moved, movedCover, 2*view.TileSize) {
+			if slices.Contains(movedNear, tile) || slices.Contains(near, tile) {
+				want = append(want, tile)
+			}
+		}
+	}
+	require.Greater(t, len(want), len(movedNear), "no pan leaves a drawn target between the margins")
+
+	for _, test := range []struct {
+		name         string
+		acknowledged bool
+		want         []view.TileID
+	}{
+		{"a target of Current stays", true, want},
+		{"without Current only the margin counts", false, movedNear},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			p, loads := marginProducer(t, view.TileSize)
+			revision, err := p.Submit(marginRequest(t, camera))
+			require.NoError(t, err)
+			settled(t, p, revision, cover, loads)
+			l := nextLease(t, p, func(l *Lease) bool { return l.Revision == revision && len(l.Snapshot.Cover) == len(near) })
+			if test.acknowledged {
+				require.True(t, p.Current(1, 1, l))
+			}
+			revision, err = p.Submit(marginRequest(t, moved))
+			require.NoError(t, err)
+			settled(t, p, revision, view.VisibleTileCover(moved), loads)
+			next := nextLease(t, p, func(l *Lease) bool { return l.Revision == revision && len(l.Snapshot.Cover) == len(test.want) })
+			assert.ElementsMatch(t, test.want, next.Snapshot.Cover)
+		})
+	}
+}
+
+func TestDrawMarginZeroComposesEveryTarget(t *testing.T) {
+	camera := view.NewCamera(view.Coordinate{Latitude: 40.4168, Longitude: -3.7038}, 16, 0, 800, 600)
+	cover := view.VisibleTileCover(camera)
+	p, loads := marginProducer(t, 0)
+	revision, err := p.Submit(marginRequest(t, camera))
+	require.NoError(t, err)
+	settled(t, p, revision, cover, loads)
+	l := nextLease(t, p, func(l *Lease) bool { return l.Revision == revision && len(l.Snapshot.Cover) == len(cover) })
+	assert.ElementsMatch(t, cover, l.Snapshot.Cover)
 }

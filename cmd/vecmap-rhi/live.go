@@ -23,6 +23,7 @@ type liveOptions struct {
 	enabled                   bool
 	template, cache, glyphs   string
 	latitude, longitude, zoom float64
+	drawMargin                float64
 	cacheBytes, sceneBytes    uint64
 	workers                   int
 	cacheOnly                 bool
@@ -85,6 +86,7 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 	}
 	// The viewer's assets never change, so preparation has no later use.
 	limits.DiscardPreparation = !options.keepPreparation
+	limits.DrawMargin = options.drawMargin
 	if options.workers != 0 {
 		limits.Workers = options.workers
 	}

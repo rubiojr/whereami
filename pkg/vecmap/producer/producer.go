@@ -95,6 +95,13 @@ type Limits struct {
 	// its raw response. False keeps them until the cache budget needs the room.
 	// Set it when assets do not change after the first request.
 	DiscardPreparation bool
+	// DrawMargin bounds the composed scene to the targets within that many
+	// logical pixels of the viewport. Targets beyond it are still loaded and
+	// compiled, so a pan that brings them closer only composes and uploads
+	// them. A target of the acknowledged Current stays until it is twice as
+	// far, so a view resting at the margin does not upload and retire one tile
+	// repeatedly. Zero composes every target.
+	DrawMargin float64
 }
 
 func DefaultLimits() Limits {
@@ -187,7 +194,8 @@ func New(loader Loader, limits Limits) (*Producer, error) {
 	if loader == nil || limits.Workers < 1 || limits.Workers > 4 || limits.Tiles < 1 || limits.Tiles > tiles.MaxTiles ||
 		limits.Leases < 1 || limits.Leases > 8 || limits.RawBytes < 1 || limits.RawBytes > mvt.MaxTileBytes ||
 		limits.CacheBytes == 0 || limits.CacheBytes > 1<<30 || limits.SnapshotBytes == 0 || limits.SnapshotBytes > 1<<30 ||
-		limits.ProfileBytes == 0 || limits.ProfileBytes > 1<<30 || limits.RetryDelay <= 0 {
+		limits.ProfileBytes == 0 || limits.ProfileBytes > 1<<30 || limits.RetryDelay <= 0 ||
+		!(limits.DrawMargin >= 0) || limits.DrawMargin > 1<<20 {
 		return nil, ErrInput
 	}
 	set, err := tiles.New(limits.Store)

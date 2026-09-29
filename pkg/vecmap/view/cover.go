@@ -170,3 +170,42 @@ func maxInt64(left, right int64) int64 {
 	}
 	return right
 }
+
+// TilesNear returns the tiles, in their order, that lie within margin logical
+// pixels of the camera's viewport in any world copy the camera shows. A tile
+// counts by the bounds of its rotated square, so a rotated camera can keep a tile
+// whose corner only comes close. A negative or non-finite margin is zero.
+func TilesNear(camera Camera, tiles []TileID, margin float64) []TileID {
+	camera = camera.normalized()
+	if camera.Width <= 0 || camera.Height <= 0 {
+		return nil
+	}
+	if !(margin > 0) || math.IsInf(margin, 0) {
+		margin = 0
+	}
+	wraps := WorldWraps(camera)
+	near := make([]TileID, 0, len(tiles))
+	for _, tile := range tiles {
+		if tile.Valid() && tileNear(camera, tile, wraps, margin) {
+			near = append(near, tile)
+		}
+	}
+	return near
+}
+
+func tileNear(camera Camera, tile TileID, wraps []int, margin float64) bool {
+	for _, wrap := range wraps {
+		transform := TileTransform(camera, tile, wrap)
+		minX, minY := math.Inf(1), math.Inf(1)
+		maxX, maxY := math.Inf(-1), math.Inf(-1)
+		for _, corner := range [...]ScreenPoint{{}, {X: TileSize}, {X: TileSize, Y: TileSize}, {Y: TileSize}} {
+			point := transform.MapPoint(corner)
+			minX, maxX = math.Min(minX, point.X), math.Max(maxX, point.X)
+			minY, maxY = math.Min(minY, point.Y), math.Max(maxY, point.Y)
+		}
+		if maxX >= -margin && minX <= camera.Width+margin && maxY >= -margin && minY <= camera.Height+margin {
+			return true
+		}
+	}
+	return false
+}

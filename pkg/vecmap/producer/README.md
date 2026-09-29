@@ -77,6 +77,9 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   Compatible camera updates don't discard useful compilation. Changes during Build
   still reject obsolete source/style/assets or tiles before installation. No decoding,
   tessellation, shaping or composition runs in Submit, Next or native callbacks.
+- `Limits.DrawMargin` composes only the targets within that many logical pixels
+  of the viewport. The rest of the cover stays loaded and compiled for a pan.
+  Zero composes every target.
 - `Limits.DiscardPreparation` drops Prepared data as soon as a tile is built, for
   applications whose assets do not change after the first request. It roughly
   halves the live heap of a dense view. An asset change then prepares the tile

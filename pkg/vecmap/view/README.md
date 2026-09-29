@@ -29,6 +29,10 @@ lies `coarser` levels below the camera zoom. Above camera zoom 14 plus `coarser`
 the tiles are the same as without the option and only the style zoom differs.
 Below camera zoom `coarser` the style zoom stays at zero.
 
+`TilesNear(camera, tiles, margin)` keeps the tiles within `margin` logical pixels
+of the viewport, in their order. The producer uses it to compose less than it
+loads.
+
 `LoadOrder` shares immediate-parent-first, deduplicated loading priority between
 the production scheduler and the headless producer. It preserves target order;
 transport completion order, cancellation and readiness remain caller-owned.

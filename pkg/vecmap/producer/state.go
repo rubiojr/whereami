@@ -643,7 +643,7 @@ func (s *state) publish() {
 	}
 	s.published = true
 	started := time.Now()
-	snapshot, err := s.set.SelectBounded(s.targets, s.current.cover, s.request.Camera, 0, p.limits.SnapshotBytes)
+	snapshot, err := s.set.SelectBounded(s.drawn(), s.current.cover, s.request.Camera, 0, p.limits.SnapshotBytes)
 	s.stats.Selecting.observe(time.Since(started))
 	stage := "select"
 	var charge uint64
@@ -692,8 +692,29 @@ func (s *state) coherentCover() bool {
 	return true
 }
 
+// drawn lists, in target order, the targets a scene is composed from: all of
+// them, or with Limits.DrawMargin those near the viewport.
+func (s *state) drawn() []view.TileID {
+	margin := s.p.limits.DrawMargin
+	if margin == 0 || s.request == nil {
+		return s.targets
+	}
+	near := view.TilesNear(s.request.Camera, s.targets, margin)
+	if len(near) == len(s.targets) {
+		return s.targets
+	}
+	kept := view.TilesNear(s.request.Camera, s.targets, 2*margin)
+	drawn := make([]view.TileID, 0, len(kept))
+	for _, tile := range kept {
+		if slices.Contains(near, tile) || slices.Contains(s.current.cover, tile) {
+			drawn = append(drawn, tile)
+		}
+	}
+	return drawn
+}
+
 func (s *state) selectedCover() []view.TileID {
-	cover, _ := view.SelectCover(s.targets, s.current.cover, func(tile view.TileID) bool {
+	cover, _ := view.SelectCover(s.drawn(), s.current.cover, func(tile view.TileID) bool {
 		e := s.entries[tile]
 		return e != nil && e.fragment != nil
 	})

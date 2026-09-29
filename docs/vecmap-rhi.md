@@ -4054,13 +4054,9 @@ documented worst case of cache plus four leases rises from 768 MiB to 1,408 MiB.
 
 #### Not done
 
-- The prefetch ring is composed and uploaded with the view: 30 tiles at zoom 14
-  where 12 are visible, and 12 at zoom 16 where two are.
 - The vertex format. Dropping unused fields would save about 28% of vertex
   bytes; a quantized 12-byte vertex would save half. Both change the scene
   format, the shaders and the adapter.
-- Collector headroom. With `GOGC=50` the probe peaks at 280–295 MiB against
-  360–367 MiB at zoom 14, with no slower build on this host.
 
 #### Verification
 
@@ -4079,6 +4075,110 @@ documented worst case of cache plus four leases rises from 768 MiB to 1,408 MiB.
 - Race, vet and staticcheck pass on geometry, compiler, tiles and producer; the
   full pkg/vecmap suite, the tagged viewer and adapter suites on OpenGL and
   tagged staticcheck pass. The tagged suites were not rerun on Vulkan.
+
+### Draw margin and collector target
+
+This continues **g1av** with two of its open items.
+
+The prefetch ring was composed and uploaded with the view: 30 tiles at camera
+zoom 14 where 12 are visible, and 12 at zoom 16 where two are. The ring is one
+tile wide, so its width on screen grows from 256 pixels at a whole zoom to 512
+just below the next one, and further when tiles are overzoomed.
+`producer.Limits.DrawMargin` composes only the targets within that many logical
+pixels of the viewport (`view.TilesNear`). The others are still loaded and
+compiled, so a pan that brings one closer composes and uploads it without
+loading or compiling. A target of the acknowledged Current stays until it is twice
+as far, so a view resting at the margin does not upload and retire one tile
+repeatedly. Zero, the library default, composes every target. The viewer uses 256
+pixels (`-draw-margin`): the pan headroom the ring gives at a whole zoom, which
+was the least it ever gave.
+
+Tiles composed with a margin of 256 pixels, as a share of the cover, over camera
+zoom 9 to 18 in quarter steps at Madrid: 0.76 at 800x600, 0.79 at 1280x800 and
+0.72 at 372x695. Nothing changes at whole zooms up to 14. At 800x600 zoom 14.5
+composes 20 of 25 tiles, zoom 15 nine of 20 and zoom 16 six of 12.
+
+The viewer also sets the collector target to 50% (`-gc-percent`, zero keeps the
+runtime's setting). The Go heap may then grow to one and a half times the live
+heap between collections instead of twice.
+
+#### Static views
+
+Same eight views as above, viewer on llvmpipe, new default budgets, one run
+each, without and with both changes:
+
+| Camera zoom | Tiles composed | Uploaded MB | Peak RSS MiB |
+| ---: | ---: | ---: | ---: |
+| 9 | 36 → 36 | 191 → 191 | 826 → 735 |
+| 11 | 30 → 30 | 120 → 120 | 566 → 539 |
+| 12 | 30 → 30 | 126 → 126 | 606 → 558 |
+| 13 | 36 → 36 | 313 → 308 | 1,098 → 1,002 |
+| 14 | 30 → 30 | 194 → 194 | 808 → 720 |
+| 14.5 | 25 → 20 | 180 → 139 | 792 → 658 |
+| 15 | 20 → 9 | 183 → 98 | 793 → 615 |
+| 16 | 12 → 6 | 164 → 98 | 792 → 610 |
+
+Zoom 16 settles in 4.2 s against 7.8 s. Screenshots at zoom 12, 14, 14.5, 15 and
+16 are identical in all 480,000 pixels. Zoom 13 takes 10–14 s to settle on
+llvmpipe in either mode, close to the 15-second limit, and one run with the
+margin missed it; the margin does not change that view.
+
+#### Replay observations
+
+Same corpus, host and arguments as **xcmf**, with the new default budgets. Four
+modes from one binary, in two passes of three moving runs and one static run per
+backend, the second pass in reverse order, on an unlocked desktop. Every series
+started at a one-minute host load of 0.95–1.48. All 64 runs exit 0 with zero
+pending, failed and batch failures. The trace stays within camera zoom 9.8–10.2,
+where the margin composes 16 of 20 tiles at its end and changes nothing in the
+static view.
+
+| Replay | Mode | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Uploaded MB | Peak RSS MiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | neither | 6.48–6.70 | 9–11 | 1.13–1.42 | 0.32–0.39 | 121–124 | 299–306 | 845–998 |
+| Vulkan moving | margin | 5.82–6.14 | 14–18 | 0.93–1.27 | 0.19–0.27 | 97–106 | 250–267 | 857–952 |
+| Vulkan moving | collector | 6.28–6.70 | 9–11 | 1.10–1.42 | 0.32–0.40 | 114–128 | 290–308 | 690–799 |
+| Vulkan moving | both | 5.77–6.10 | 13–17 | 0.82–1.10 | 0.19–0.27 | 99–105 | 252–268 | 673–743 |
+| Vulkan static | neither | 5.11–5.14 | 4 | 2.27–2.31 | 0.66 | 73 | 172 | 506–510 |
+| Vulkan static | both | 5.11–5.12 | 4–5 | 1.99–2.24 | 0.57–0.67 | 74–78 | 176–186 | 424–427 |
+| llvmpipe moving | neither | 9.16–10.35 | 6–8 | 2.90–3.97 | 0.73–1.06 | 69–78 | 206–240 | 1,236–1,308 |
+| llvmpipe moving | margin | 7.33–11.08 | 5–7 | 2.72–3.54 | 0.61–1.23 | 54–78 | 152–212 | 1,053–1,168 |
+| llvmpipe moving | collector | 8.67–9.90 | 5–7 | 2.35–4.58 | 0.86–1.12 | 66–75 | 190–232 | 950–1,087 |
+| llvmpipe moving | both | 7.85–11.35 | 7–8 | 2.08–3.33 | 0.55–1.30 | 62–80 | 193–221 | 900–973 |
+| llvmpipe static | neither | 7.11–7.40 | 4 | 4.89–5.12 | 1.49–1.57 | 70 | 165 | 765–773 |
+| llvmpipe static | both | 8.84–8.86 | 5 | 5.43–5.51 | 1.45–1.64 | 78 | 186 | 708–710 |
+
+On Vulkan under motion the margin settles 0.3–0.9 s sooner, completes 13–18
+covers against 9–11 and brings the mean Current age from 0.32–0.39 s to
+0.19–0.27 s. The collector target lowers peak memory by about a fifth and changes
+no time. Together: the margin's times and 673–743 MiB against 845–998 MiB.
+
+On llvmpipe under motion peak memory falls by about a quarter. Times overlap and
+spread more widely with the margin (7.3–11.4 s against 9.2–10.4 s).
+
+The static llvmpipe rows differ by which intermediate covers a run uploads
+(104 or 116 meshes), not by mode: five further static runs per collector target
+with the margin settle in 8.8–10.3 s at 100% and 8.8–12.4 s at 50%, with equal
+Prepare and Build time and a peak of 757–786 MiB against 693–722 MiB. That series
+ran at a host load of 4.
+
+The pan headroom is not measured. The replay pans 20 pixels, and the viewer takes
+no input. With the margin a pan finds at least 256 pixels of composed map in
+every direction, as it did at a whole zoom before, where it used to find up to
+512 at other zooms.
+
+#### Verification
+
+- View: `TilesNear` keeps input order, follows a rotated camera by the bounds of
+  the turned tile and both sides of the antimeridian, treats a negative or
+  non-finite margin as zero and rejects invalid tiles.
+- Producer: with a margin the scene is composed from the near targets while all
+  targets are loaded once; a pan composes a loaded target without loading it
+  again; a target of the acknowledged Current stays between one and two margins
+  and leaves without it; a margin of zero composes every target; margins that are
+  negative, not finite or above 2^20 are rejected. The tests ran 200 times.
+- Race, vet and staticcheck pass on view and producer; the full pkg/vecmap suite
+  and the tagged viewer suite on OpenGL pass.
 
 ## Flatpak integration
 

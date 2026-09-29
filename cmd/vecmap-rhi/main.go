@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -46,13 +47,18 @@ func main() {
 	flag.Uint64Var(&live.cacheBytes, "cpu-cache-bytes", 384<<20, "live raw/prepared/fragment/profile cache budget")
 	flag.Uint64Var(&live.sceneBytes, "cpu-scene-bytes", 256<<20, "live budget of one composed scene; a view that exceeds it shows coarser stand-in tiles")
 	flag.BoolVar(&live.keepPreparation, "keep-preparation", false, "keep prepared primitives after a tile is built, for asset changes")
+	flag.Float64Var(&live.drawMargin, "draw-margin", 256, "draw live tiles within this many logical pixels of the viewport; tiles beyond stay compiled for a pan; zero draws every loaded tile")
 	flag.IntVar(&live.workers, "tile-workers", 4, "live transport workers (1-4); use 1 for ordered cache replay")
 	flag.BoolVar(&live.cacheOnly, "cache-only", false, "live replay from verified cached tiles only; never fetch missing entries")
 	flag.BoolVar(&live.residentGeometry, "resident-geometry", true, "keep fills and shader-extruded lines resident across style-zoom changes")
 	flag.BoolVar(&live.residentSymbols, "resident-symbols", true, "keep icon and text quads resident across style-zoom changes that preserve symbol layout")
 	flag.BoolVar(&live.residentDashes, "resident-dashes", true, "keep butt-capped dashed lines resident and dash them in the fragment shader")
 	flag.IntVar(&live.coarser, "coarser-tiles", 0, "draw live tiles from this many zoom levels below the camera zoom (0-2); 1 draws a tile 512 units wide as MapLibre does")
+	gcPercent := flag.Int("gc-percent", 50, "garbage collector target percentage; lower keeps less garbage between collections; zero keeps the runtime's setting")
 	flag.Parse()
+	if *gcPercent > 0 {
+		debug.SetGCPercent(*gcPercent)
+	}
 	if err := run(*path, benchmarkOptions{liveOptions: live, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -190,7 +196,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin)
 	if options.diagnostics {
 		pacing.report()
 	}

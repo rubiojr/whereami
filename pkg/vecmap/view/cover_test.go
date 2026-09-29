@@ -1,6 +1,7 @@
 package view
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -143,4 +144,60 @@ func TestVisibleTileCoverAtBoundsZoomAndCoarser(t *testing.T) {
 		})
 	}
 	assert.Empty(t, VisibleTileCoverAt(NewCamera(Coordinate{}, 9, 0, 0, 100), 1))
+}
+
+func TestTilesNearKeepsTheViewportAndItsMargin(t *testing.T) {
+	madrid := Coordinate{Latitude: 40.4168, Longitude: -3.7038}
+	for _, test := range []struct {
+		name   string
+		zoom   float64
+		margin float64
+		want   int
+	}{
+		{"visible tiles only", 14, 0, 12},
+		{"a margin of one tile is the ring at a whole zoom", 14, TileSize, 30},
+		{"the same margin is fewer tiles when tiles are drawn larger", 14.9, TileSize, 9},
+		{"overzoomed tiles", 16, TileSize, 6},
+		{"negative is zero", 14, -1, 12},
+		{"not a number is zero", 14, math.NaN(), 12},
+		{"infinite is zero", 14, math.Inf(1), 12},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			camera := NewCamera(madrid, test.zoom, 0, 800, 600)
+			cover := VisibleTileCover(camera)
+			near := TilesNear(camera, cover, test.margin)
+			assert.Len(t, near, test.want)
+			// Order and identity are those of the input.
+			index := 0
+			for _, tile := range near {
+				for index < len(cover) && cover[index] != tile {
+					index++
+				}
+				require.Less(t, index, len(cover))
+			}
+			assert.Equal(t, cover[0], near[0], "the tile under the centre is always near")
+		})
+	}
+	camera := NewCamera(madrid, 14, 0, 800, 600)
+	assert.Equal(t, VisibleTileCover(camera), TilesNear(camera, VisibleTileCover(camera), 1e6))
+	assert.Empty(t, TilesNear(camera, nil, 10))
+	assert.Empty(t, TilesNear(NewCamera(madrid, 14, 0, 0, 600), VisibleTileCover(camera), 10))
+	assert.Empty(t, TilesNear(camera, []TileID{{X: 9, Y: 9, Z: 2}}, 10), "invalid tiles are never near")
+	far := TileID{X: 0, Y: 0, Z: 14}
+	assert.Empty(t, TilesNear(camera, []TileID{far}, TileSize))
+}
+
+func TestTilesNearFollowsRotationAndWorldCopies(t *testing.T) {
+	madrid := Coordinate{Latitude: 40.4168, Longitude: -3.7038}
+	straight := NewCamera(madrid, 14, 0, 800, 600)
+	turned := NewCamera(madrid, 14, 45, 800, 600)
+	cover := VisibleTileCover(turned)
+	near := TilesNear(turned, cover, 0)
+	assert.Greater(t, len(near), len(TilesNear(straight, VisibleTileCover(straight), 0)), "a turned tile is bounded by a larger box")
+	assert.LessOrEqual(t, len(near), len(cover))
+
+	// Both sides of the antimeridian are one step apart on screen.
+	edge := NewCamera(Coordinate{Longitude: 179.99}, 3, 0, 512, 256)
+	both := TilesNear(edge, []TileID{{X: 7, Y: 4, Z: 3}, {X: 0, Y: 4, Z: 3}, {X: 4, Y: 4, Z: 3}}, 0)
+	assert.Equal(t, []TileID{{X: 7, Y: 4, Z: 3}, {X: 0, Y: 4, Z: 3}}, both)
 }

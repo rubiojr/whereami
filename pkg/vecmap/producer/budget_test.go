@@ -90,6 +90,8 @@ func TestInvalidInputsAndOverflow(t *testing.T) {
 		func(l *Limits) { l.RawBytes = 0 }, func(l *Limits) { l.CacheBytes = 1<<30 + 1 },
 		func(l *Limits) { l.SnapshotBytes = 0 }, func(l *Limits) { l.ProfileBytes = 0 },
 		func(l *Limits) { l.RetryDelay = 0 },
+		func(l *Limits) { l.DrawMargin = -1 }, func(l *Limits) { l.DrawMargin = math.NaN() },
+		func(l *Limits) { l.DrawMargin = math.Inf(1) }, func(l *Limits) { l.DrawMargin = 1<<20 + 1 },
 	} {
 		limits := DefaultLimits()
 		change(&limits)
