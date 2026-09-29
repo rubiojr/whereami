@@ -151,3 +151,75 @@ func FuzzPrepareLayouts(f *testing.F) {
 		require.Equal(t, want, layout.LayoutMesh)
 	})
 }
+
+func TestUnitLayoutMeshIsIndependentOfScale(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		layout, atlas := preparedFixture(t)
+		unit := layout.TextLayout
+		unit.Scale = 1
+		want, err := BuildLayoutMesh(&unit, atlas, indexed)
+		require.NoError(t, err)
+		want.Unit = true
+		for _, scale := range []float64{0.5, 1, 1.0625, 40} {
+			layout.Scale = scale
+			mesh, err := BuildUnitLayoutMesh(&layout.TextLayout, atlas, indexed)
+			require.NoError(t, err)
+			assert.Equal(t, want, mesh, "scale %v", scale)
+			assert.Equal(t, scale, layout.Scale, "the layout is not modified")
+		}
+		// Scales float32 cannot carry as a positive factor keep the baked form.
+		for _, scale := range []float64{0, 1e-50} {
+			layout.Scale = scale
+			baked, err := BuildLayoutMesh(&layout.TextLayout, atlas, indexed)
+			require.NoError(t, err)
+			mesh, err := BuildUnitLayoutMesh(&layout.TextLayout, atlas, indexed)
+			require.NoError(t, err)
+			assert.False(t, mesh.Unit)
+			assert.Equal(t, baked, mesh)
+		}
+		for _, scale := range []float64{-1, math.MaxFloat64, math.NaN(), math.Inf(1)} {
+			layout.Scale = scale
+			mesh, err := BuildUnitLayoutMesh(&layout.TextLayout, atlas, indexed)
+			assert.ErrorIs(t, err, ErrLayoutGeometry, "scale %v", scale)
+			assert.Equal(t, LayoutMesh{}, mesh)
+		}
+		layout.Scale = 2
+		layout.Glyphs[0].X = math.MaxFloat64
+		mesh, err := BuildUnitLayoutMesh(&layout.TextLayout, atlas, indexed)
+		assert.ErrorIs(t, err, ErrLayoutGeometry)
+		assert.Equal(t, LayoutMesh{}, mesh)
+		mesh, err = BuildUnitLayoutMesh(nil, atlas, indexed)
+		require.NoError(t, err)
+		assert.Equal(t, LayoutMesh{}, mesh)
+		mesh, err = BuildUnitLayoutMesh(&layout.TextLayout, nil, indexed)
+		require.NoError(t, err)
+		assert.Equal(t, LayoutMesh{}, mesh)
+	}
+}
+
+func TestPrepareUnitLayouts(t *testing.T) {
+	layout, atlas := preparedFixture(t)
+	metrics := layout.TextLayout
+	result, err := PrepareUnitLayouts(map[int]*PreparedLayout{7: layout}, atlas, true)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Same(t, layout, result[7])
+	assert.Equal(t, metrics, layout.TextLayout, "bounds and scale stay those of the evaluated size")
+	assert.True(t, layout.Unit)
+	want, err := BuildUnitLayoutMesh(&metrics, atlas, true)
+	require.NoError(t, err)
+	assert.Equal(t, want, layout.LayoutMesh)
+	baked, err := BuildLayoutMesh(&metrics, atlas, true)
+	require.NoError(t, err)
+	for i, vertex := range layout.Vertices {
+		assert.InDelta(t, baked.Vertices[i].X, float64(vertex.X)*metrics.Scale, 1e-6)
+		assert.InDelta(t, baked.Vertices[i].Y, float64(vertex.Y)*metrics.Scale, 1e-6)
+		assert.Equal(t, baked.Vertices[i].U, vertex.U)
+		assert.Equal(t, baked.Vertices[i].V, vertex.V)
+	}
+	// Preparing in the baked form again replaces the whole mesh.
+	_, err = PrepareLayouts(map[int]*PreparedLayout{7: layout}, atlas, true)
+	require.NoError(t, err)
+	assert.False(t, layout.Unit)
+	assert.Equal(t, baked, layout.LayoutMesh)
+}

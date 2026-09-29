@@ -194,6 +194,14 @@ Nonfinite float32 quad output is rejected (`ErrLayoutGeometry`). Rectangle/scale
 validation is independent of atlas pixel buffers, which this code does not read.
 An empty layout needs no usable atlas metadata.
 
+`BuildUnitLayoutMesh` builds the same quads at scale one, **24 logical pixels per
+em**, and marks the mesh `Unit`. Positions then depend on the text, its em-relative
+layout options and the atlas, never on the evaluated text size; the consumer
+multiplies them by `TextLayout.Scale`, normally per draw. The layout's own scale is
+still validated and its bounds are untouched, so collision input does not change.
+A scale that float32 cannot carry as a positive finite factor keeps the baked mesh
+and the rules above. `PrepareUnitLayouts` is `PrepareLayouts` with these meshes.
+
 ## Prepared layout maps
 
 `PreparedLayout` embeds `TextLayout` and `LayoutMesh` without allocating another

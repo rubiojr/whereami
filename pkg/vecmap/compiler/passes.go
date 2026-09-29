@@ -43,13 +43,15 @@ func (b *SceneBuilder) primitive(tile view.TileID, wrap int, primitive Primitive
 			Color: [4]float32{1, 1, 1, float32(primitive.Opacity)}, PatternSize: [2]float32{float32(width), float32(height)}, PatternPhase: [2]float32{float32(x), float32(y)}}
 	}
 	clip := [4]float32{0, 0, view.TileSize, view.TileSize}
-	b.volatile = primitive.Dynamic
+	if primitive.Dynamic {
+		b.class = dynamicClass
+	}
 	if primitive.Directions != nil {
 		b.Extruded(primitive.Mesh, primitive.Directions, primitive.HalfWidth, material, clip)
 	} else {
 		b.Geometry(primitive.Mesh, material, clip)
 	}
-	b.volatile = false
+	b.class = stableClass
 	return period
 }
 
@@ -102,9 +104,8 @@ func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, e
 }
 
 func (b *SceneBuilder) symbolPass(kind scene.Kind, item RenderSymbol, atlas uint64, lookup SpriteLookup) bool {
-	// Label offsets follow the evaluated text and icon sizes.
-	b.volatile = true
-	defer func() { b.volatile = false }()
+	b.class = symbolClass
+	defer func() { b.class = stableClass }()
 	if kind == scene.Image {
 		if item.Accepted.Icon && item.Symbol.IconName != "" {
 			b.icon(item.Symbol, lookup)
@@ -135,13 +136,23 @@ func (b *SceneBuilder) icon(candidate placement.Symbol, lookup SpriteLookup) {
 	if !ok {
 		return
 	}
-	width, height := float64(image.Width)/image.PixelRatio*candidate.IconSize, float64(image.Height)/image.PixelRatio*candidate.IconSize
+	// Size, anchor origin and offset are all proportional to the icon size, so a
+	// resident quad is packed at size one and scaled per draw.
+	size := candidate.IconSize
+	scale, resident := offsetScale(size)
+	if resident = resident && b.resident; resident {
+		size = 1
+	}
+	width, height := float64(image.Width)/image.PixelRatio*size, float64(image.Height)/image.PixelRatio*size
 	x, y := placement.AnchoredOrigin(candidate.IconAnchor, width, height)
 	quad := geometry.TextQuad(x, y, x+width, y+height, 0, 0, 1, 1)
 	key := fmt.Sprintf("icon/%s/%v/%g", candidate.IconName, candidate.IconColor, candidate.IconOpacity)
 	material := scene.Material{Kind: scene.Image, Texture: b.Texture(key, image.Width, image.Height, image.Pixels), Color: [4]float32{1, 1, 1, 1}, MapAligned: !candidate.IconViewportAligned}
+	if resident {
+		material.OffsetScale = scale
+	}
 	b.IndexedText(candidate.Anchor, quad[:], []uint32{0, 1, 2, 0, 2, 3},
-		geometry.Point{X: candidate.IconOffset.X * candidate.IconSize, Y: candidate.IconOffset.Y * candidate.IconSize},
+		geometry.Point{X: candidate.IconOffset.X * size, Y: candidate.IconOffset.Y * size},
 		placement.RenderedSymbolAngle(candidate.IconLineAngle, candidate.IconRotate, candidate.IconViewportAligned), material)
 }
 
@@ -156,6 +167,16 @@ func (b *SceneBuilder) text(candidate placement.Symbol, layout *glyph.PreparedLa
 	offset := geometry.Point{X: candidate.TextOffset.X * candidate.TextSize, Y: candidate.TextOffset.Y * candidate.TextSize}
 	angle := placement.RenderedSymbolAngle(candidate.LineAngle, candidate.TextRotate, candidate.ViewportAligned)
 	material := scene.Material{Kind: kind, Texture: atlas, Color: PackedColor(color), FontScale: float32(layout.Scale), HaloWidth: float32(candidate.HaloWidth), HaloBlur: float32(candidate.HaloBlur), MapAligned: !candidate.ViewportAligned}
+	if layout.Unit {
+		scale, ok := offsetScale(layout.Scale)
+		if !ok {
+			b.err = ErrPackingInput
+			return false
+		}
+		// Text offsets are in ems, so they scale with the glyph quads.
+		offset = geometry.Point{X: candidate.TextOffset.X * glyph.EmSize, Y: candidate.TextOffset.Y * glyph.EmSize}
+		material.OffsetScale = scale
+	}
 	if b.indexed {
 		b.IndexedText(candidate.Anchor, layout.Vertices, layout.Indices, offset, angle, material)
 	} else {

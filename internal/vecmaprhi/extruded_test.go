@@ -49,50 +49,8 @@ func testExtrudedLines(t *testing.T, indexed bool) {
 	}
 	sin, cos := math.Sincos(12 * math.Pi / 180)
 	transform := scene.Affine{M11: float32(scale * cos), M12: float32(-scale * sin), DX: 20, M21: float32(scale * sin), M22: float32(scale * cos), DY: 4}
-	frame := scene.Frame{Scene: bakedScene, Transforms: []scene.Affine{transform}, DevicePixelRatio: 1}
-
-	item := rhi.NewQQuickItem()
-	defer item.Delete()
-	item.SetFlag(rhi.QQuickItem__ItemHasContents)
-	var renderer *Renderer
-	var stats Stats
-	item.OnUpdatePaintNode(func(_ func(*rhi.QSGNode, *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode, old *rhi.QSGNode, _ *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode {
-		if old == nil {
-			renderer = New(item, func(s Stats) { stats = s })
-		}
-		renderer.Sync(frame)
-		return renderer.Node.QSGNode
-	})
-	engine := qml.NewQQmlApplicationEngine()
-	defer engine.Delete()
-	engine.RootContext().SetContextProperty("testItem", item.QObject)
-	engine.LoadData([]byte(`import QtQuick
-import QtQuick.Window
-Window { visible:true; width:160; height:120; color:"black"
- Item { id:host; width:160; height:120
-  Binding {target:testItem;property:"parent";value:host}
-  Binding {target:testItem;property:"width";value:160}
-  Binding {target:testItem;property:"height";value:120}
- }
-}`))
-	require.Len(t, engine.RootObjects(), 1)
-	deadline := time.Now().Add(5 * time.Second)
-	for stats.Frames == 0 && time.Now().Before(deadline) {
-		qt.QCoreApplication_ProcessEvents()
-		time.Sleep(time.Millisecond)
-	}
-	require.Empty(t, stats.Error)
-	require.Positive(t, stats.Frames)
-	window := rhi.UnsafeNewQQuickItem(item.UnsafePointer()).Window()
-	grab := func(s *scene.Scene) *qt.QImage {
-		frame.Scene = s
-		item.Update()
-		qt.QCoreApplication_ProcessEvents()
-		image := window.GrabWindow()
-		require.False(t, image.IsNull())
-		require.Empty(t, stats.Error)
-		return image
-	}
+	grab, stats, done := sceneGrabber(t, bakedScene, transform)
+	defer done()
 	// covered counts red pixels and those differing from other by more than
 	// rounding. Edges may differ where float32 shader extrusion and float64 CPU
 	// extrusion round a vertex across a sample point.
@@ -138,4 +96,53 @@ Window { visible:true; width:160; height:120; color:"black"
 	checkPixel(t, widened, x+int(normalX), y+int(normalY), 255, 0, 0)
 	coveredWide, _ := compare(widened, shader)
 	assert.Greater(t, coveredWide, covered*3/2)
+}
+
+// sceneGrabber shows a 160x120 item rendering first under transform. It returns
+// a function that swaps the scene and grabs the window, the live statistics and
+// the teardown, which must run before the application is deleted.
+func sceneGrabber(t *testing.T, first *scene.Scene, transform scene.Affine) (func(*scene.Scene) *qt.QImage, *Stats, func()) {
+	t.Helper()
+	frame := scene.Frame{Scene: first, Transforms: []scene.Affine{transform}, DevicePixelRatio: 1}
+	item := rhi.NewQQuickItem()
+	item.SetFlag(rhi.QQuickItem__ItemHasContents)
+	var renderer *Renderer
+	stats := new(Stats)
+	item.OnUpdatePaintNode(func(_ func(*rhi.QSGNode, *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode, old *rhi.QSGNode, _ *rhi.QQuickItem__UpdatePaintNodeData) *rhi.QSGNode {
+		if old == nil {
+			renderer = New(item, func(s Stats) { *stats = s })
+		}
+		renderer.Sync(frame)
+		return renderer.Node.QSGNode
+	})
+	engine := qml.NewQQmlApplicationEngine()
+	done := func() { engine.Delete(); item.Delete() }
+	engine.RootContext().SetContextProperty("testItem", item.QObject)
+	engine.LoadData([]byte(`import QtQuick
+import QtQuick.Window
+Window { visible:true; width:160; height:120; color:"black"
+ Item { id:host; width:160; height:120
+  Binding {target:testItem;property:"parent";value:host}
+  Binding {target:testItem;property:"width";value:160}
+  Binding {target:testItem;property:"height";value:120}
+ }
+}`))
+	require.Len(t, engine.RootObjects(), 1)
+	deadline := time.Now().Add(5 * time.Second)
+	for stats.Frames == 0 && time.Now().Before(deadline) {
+		qt.QCoreApplication_ProcessEvents()
+		time.Sleep(time.Millisecond)
+	}
+	require.Empty(t, stats.Error)
+	require.Positive(t, stats.Frames)
+	window := rhi.UnsafeNewQQuickItem(item.UnsafePointer()).Window()
+	return func(s *scene.Scene) *qt.QImage {
+		frame.Scene = s
+		item.Update()
+		qt.QCoreApplication_ProcessEvents()
+		image := window.GrabWindow()
+		require.False(t, image.IsNull())
+		require.Empty(t, stats.Error)
+		return image
+	}, stats, done
 }

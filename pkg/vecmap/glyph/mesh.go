@@ -15,6 +15,10 @@ type LayoutMesh struct {
 	Expanded []float32
 	Vertices []geometry.TextVertex
 	Indices  []uint32
+	// Unit marks positions built at scale one (EmSize logical pixels per em)
+	// instead of the layout's Scale. The consumer multiplies them by Scale,
+	// normally per draw, so one mesh serves every evaluated text size.
+	Unit bool
 }
 
 // FitsAtlas checks complete drawable-glyph coverage, not rectangle/mesh validity.
@@ -81,6 +85,26 @@ func EmitLayoutQuads(layout *TextLayout, atlas *Atlas, emit func([4]geometry.Tex
 		return err
 	}
 	return emitLayoutQuads(layout, atlas, emit)
+}
+
+// BuildUnitLayoutMesh is BuildLayoutMesh at scale one, marked Unit: the mesh does
+// not depend on the evaluated text size. The layout's own Scale is still
+// validated. A Scale that float32 cannot carry as a positive finite factor has no
+// unit form, so that layout keeps its baked mesh and the existing failure rules.
+func BuildUnitLayoutMesh(layout *TextLayout, atlas *Atlas, indexed bool) (LayoutMesh, error) {
+	if layout == nil || atlas == nil {
+		return LayoutMesh{}, nil
+	}
+	if scale := float32(layout.Scale); !(scale > 0) || !finite(float64(scale)) {
+		return BuildLayoutMesh(layout, atlas, indexed)
+	}
+	unit := TextLayout{Glyphs: layout.Glyphs, Scale: 1}
+	mesh, err := BuildLayoutMesh(&unit, atlas, indexed)
+	if err != nil {
+		return LayoutMesh{}, err
+	}
+	mesh.Unit = true
+	return mesh, nil
 }
 
 func validateMeshInput(layout *TextLayout, atlas *Atlas) error {

@@ -312,6 +312,27 @@ Tile clipping evaluates the anchor: a line is cut perpendicular to its direction
 where its centerline crosses the clip rectangle, and neighbouring tiles complement
 each other without overlap.
 
+### Resident symbols across style zooms
+
+Icon and glyph quads are proportional to the evaluated icon or text size: the
+sprite size, the anchored origin, glyph positions and `icon-offset`/`text-offset`
+(icon-size multiples and ems) all scale with it. `SceneBuilder.ResidentSymbols`
+(also on `FragmentBuilder`) therefore packs icons at size one with `icon-size` in
+`Material.OffsetScale`, and packs text whose `glyph.LayoutMesh` is `Unit` at 24
+pixels per em with the layout's scale in `OffsetScale`. Every symbol pass goes to
+`SymbolMesh` (scene-local ID 3). Anchors, rotation, atlas coordinates, draw order,
+provenance, `FontScale` and halo paint equal the baked output, and scaled offsets
+equal baked offsets within float32 rounding.
+
+Symbols get their own mesh because their layout does change: texts, anchors along
+lines, em-relative spacing and the glyph atlas follow the style zoom at some steps,
+and that must not replace the much larger stable mesh. The option is independent of
+`Split`; without it symbols stay in `DynamicMesh` or mesh one. An icon size that
+float32 cannot carry as a positive finite factor (zero, negative, underflow) keeps
+its baked quad with a zero scale. A `Unit` layout with such a scale is
+`ErrPackingInput`; `glyph.PrepareUnitLayouts` never produces one. The element limit
+bounds the three meshes together.
+
 Checkpoint **re90** keeps compiler coverage at **100%**, including provenance,
 pass order, boundary-preserving coalescing, precise periods, empty output, draw and
 element limits, failure atomicity and sealed publication.

@@ -213,3 +213,196 @@ func FuzzResidentTile(f *testing.F) {
 		assert.LessOrEqual(t, len(selected.Scene.Draws), len(split.Draws))
 	})
 }
+
+func residentSymbolFragment(t *testing.T, layers []style.CompiledLayer, zoom float64, resident bool) *Fragment {
+	t.Helper()
+	p, err := Prepare(residentPBF(), layers, PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: true, ResidentGeometry: resident, ResidentSymbols: resident})
+	require.NoError(t, err)
+	result, err := p.BuildOwned(prepareAssets(), 1<<20)
+	require.NoError(t, err)
+	require.Empty(t, result.MissingFonts)
+	require.NoError(t, result.Fragment.Scene.Validate())
+	return result.Fragment
+}
+
+func TestResidentSymbolsAcrossStyleZooms(t *testing.T) {
+	layers := residentStyle(t)
+	plain := append(append([]style.CompiledLayer{}, layers[:3]...), layers[4]) // no dashed line
+	for _, test := range []struct {
+		name    string
+		layers  []style.CompiledLayer
+		meshes  []uint64
+		uploads []uint64
+	}{
+		{"plain lines", plain, []uint64{compiler.StableMesh, compiler.SymbolMesh}, nil},
+		{"dashed lines", layers, []uint64{compiler.StableMesh, compiler.DynamicMesh, compiler.SymbolMesh}, []uint64{compiler.DynamicMesh}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			legacy, legacyNext := residentSymbolFragment(t, test.layers, 3, false), residentSymbolFragment(t, test.layers, 3.0625, false)
+			first, next := residentSymbolFragment(t, test.layers, 3, true), residentSymbolFragment(t, test.layers, 3.0625, true)
+			sizes := []float32{12.0 / 24, 12.125 / 24}
+			for n, pair := range [][2]*Fragment{{legacy, first}, {legacyNext, next}} {
+				single, split := pair[0], pair[1]
+				assert.Equal(t, single.Draws, split.Draws, "provenance and order are unchanged")
+				assert.Equal(t, single.Symbols, split.Symbols, "collision input is unchanged")
+				require.Len(t, split.Scene.Draws, len(single.Scene.Draws))
+				var ids []uint64
+				var bytes uint64
+				for _, mesh := range split.Scene.Meshes {
+					ids = append(ids, mesh.ID)
+					bytes += mesh.BufferBytes()
+				}
+				assert.Equal(t, test.meshes, ids)
+				assert.Equal(t, single.Scene.Meshes[0].BufferBytes(), bytes)
+				baked := single.Scene.Meshes[0]
+				symbols := fragmentMesh(split, compiler.SymbolMesh)
+				labels := 0
+				for i, draw := range split.Scene.Draws {
+					if split.Draws[i].Part == compiler.BaseDraw {
+						continue
+					}
+					labels++
+					assert.Equal(t, uint64(compiler.SymbolMesh), draw.Mesh)
+					assert.Equal(t, sizes[n], draw.Material.OffsetScale)
+					assert.Equal(t, sizes[n], draw.Material.FontScale)
+					for k := range draw.Count {
+						want := baked.Vertices[baked.Indices[single.Scene.Draws[i].First+k]]
+						got := symbols.Vertices[symbols.Indices[draw.First+k]]
+						assert.Equal(t, want.X, got.X)
+						assert.Equal(t, want.Y, got.Y)
+						assert.Equal(t, want.U, got.U)
+						assert.Equal(t, want.V, got.V)
+						assert.InDelta(t, want.OffsetX, got.OffsetX*sizes[n], 1e-5)
+						assert.InDelta(t, want.OffsetY, got.OffsetY*sizes[n], 1e-5)
+					}
+				}
+				assert.Positive(t, labels)
+			}
+			for _, id := range []uint64{compiler.StableMesh, compiler.SymbolMesh} {
+				require.NotNil(t, fragmentMesh(first, id))
+				assert.Equal(t, fragmentMesh(first, id), fragmentMesh(next, id), "mesh %d stays byte-identical", id)
+			}
+			assert.Equal(t, first.Scene.Textures, next.Scene.Textures)
+
+			set := newSet(t, retained.Limits{})
+			camera := testCamera(testTile)
+			require.NoError(t, set.Apply([]Change{{testTile, first}}))
+			before := selectTiles(t, set, []view.TileID{testTile}, nil, camera)
+			planner, err := retained.NewPlanner(retained.ResidencyLimits{})
+			require.NoError(t, err)
+			settle := func() (uploads []uint64) {
+				for {
+					batch, err := planner.Next(retained.Budget{Bytes: 1 << 20, Resources: 8})
+					require.NoError(t, err)
+					if batch == nil {
+						return uploads
+					}
+					for _, resource := range batch.Uploads {
+						require.Equal(t, retained.MeshResource, resource.Version.Kind)
+						uploads = append(uploads, resource.Version.ID)
+					}
+					require.NoError(t, planner.Acknowledge(batch.Ticket, true))
+				}
+			}
+			require.NoError(t, planner.SetTarget(before.Scene))
+			for {
+				batch, err := planner.Next(retained.Budget{Bytes: 1 << 20, Resources: 8})
+				require.NoError(t, err)
+				if batch == nil {
+					break
+				}
+				require.NoError(t, planner.Acknowledge(batch.Ticket, true))
+			}
+			require.Same(t, before.Scene, planner.Current())
+			reused := set.ReusedVersions()
+			require.NoError(t, set.Apply([]Change{{testTile, next}}))
+			after := selectTiles(t, set, []view.TileID{testTile}, before.Cover, camera)
+			require.NotSame(t, before, after)
+			assert.Equal(t, uint64(len(test.meshes)-len(test.uploads)+len(next.Scene.Textures)), set.ReusedVersions()-reused)
+			require.NoError(t, planner.SetTarget(after.Scene))
+			var want []uint64
+			for i, mesh := range after.Scene.Meshes {
+				if before.Scene.Meshes[i].Revision != mesh.Revision {
+					want = append(want, mesh.ID)
+				}
+			}
+			assert.Len(t, want, len(test.uploads))
+			assert.Equal(t, want, settle(), "only zoom-baked line geometry is uploaded")
+			assert.Same(t, after.Scene, planner.Current())
+			assert.NotEqual(t, before.Scene.Draws, after.Scene.Draws, "sizes and widths arrive as draws")
+		})
+	}
+}
+
+func TestResidentSymbolsFollowLayoutChanges(t *testing.T) {
+	layers, err := style.Parse([]byte(`{"version":8,"layers":[
+		{"id":"labels","type":"symbol","source-layer":"labels",
+		 "layout":{"text-field":"AA","text-font":["Test"],"text-size":["interpolate",["linear"],["zoom"],2,10,6,18],
+		  "text-letter-spacing":["interpolate",["linear"],["zoom"],4,0,6,1]},
+		 "paint":{"text-color":"black"}}
+	]}`))
+	require.NoError(t, err)
+	build := func(zoom float64) *Fragment { return residentSymbolFragment(t, layers, zoom, true) }
+	a, b, c := build(3.875), build(3.9375), build(4.0625)
+	require.Len(t, a.Scene.Meshes, 1)
+	assert.Equal(t, uint64(compiler.SymbolMesh), a.Scene.Meshes[0].ID)
+	assert.Equal(t, a.Scene.Meshes, b.Scene.Meshes)
+	assert.NotEqual(t, a.Scene.Draws, b.Scene.Draws)
+	assert.NotEqual(t, b.Scene.Meshes[0].Vertices, c.Scene.Meshes[0].Vertices, "letter spacing in ems is a layout change")
+	// Symbols alone are resident without split base geometry.
+	p, err := Prepare(residentPBF(), residentStyle(t), PrepareOptions{Tile: testTile, Zoom: 3, Indexed: false, ResidentSymbols: true})
+	require.NoError(t, err)
+	result, err := p.Build(prepareAssets())
+	require.NoError(t, err)
+	require.Len(t, result.Fragment.Scene.Meshes, 2)
+	assert.Equal(t, uint64(compiler.StableMesh), result.Fragment.Scene.Meshes[0].ID)
+	assert.Equal(t, uint64(compiler.SymbolMesh), result.Fragment.Scene.Meshes[1].ID)
+}
+
+func FuzzResidentSymbolTile(f *testing.F) {
+	f.Add(residentPBF(), true, uint8(1))
+	f.Add(preparePBF(), false, uint8(16))
+	f.Add([]byte{0}, false, uint8(0))
+	f.Fuzz(func(t *testing.T, data []byte, indexed bool, step uint8) {
+		if len(data) > 32<<10 {
+			return
+		}
+		layers := residentStyle(t)
+		build := func(zoom float64, resident bool) *Fragment {
+			p, err := Prepare(data, layers, PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: indexed, ResidentGeometry: resident, ResidentSymbols: resident,
+				TriangleLimit: 1024, CandidateLimit: 16, ElementLimit: 32768, DrawLimit: 256})
+			if err != nil {
+				require.Nil(t, p)
+				return nil
+			}
+			built, err := p.Build(prepareAssets())
+			if err != nil {
+				require.Nil(t, built)
+				return nil
+			}
+			require.NoError(t, built.Fragment.Scene.Validate())
+			return built.Fragment
+		}
+		zoom := 3 + float64(step%64)/16
+		legacy, resident, next := build(zoom, false), build(zoom, true), build(zoom+1.0/16, true)
+		if legacy == nil || resident == nil {
+			require.Nil(t, legacy)
+			require.Nil(t, resident)
+			return
+		}
+		require.Equal(t, legacy.Draws, resident.Draws)
+		require.Equal(t, legacy.Symbols, resident.Symbols)
+		require.Len(t, resident.Scene.Draws, len(legacy.Scene.Draws))
+		for i, draw := range resident.Scene.Draws {
+			require.Equal(t, legacy.Scene.Draws[i].Count, draw.Count)
+			if resident.Draws[i].Part != compiler.BaseDraw {
+				require.Equal(t, uint64(compiler.SymbolMesh), draw.Mesh)
+				require.Positive(t, draw.Material.OffsetScale)
+			}
+		}
+		// The test style changes sizes only, so symbols outlive the zoom step.
+		if next != nil && len(next.Symbols) == len(resident.Symbols) {
+			require.Equal(t, fragmentMesh(resident, compiler.SymbolMesh), fragmentMesh(next, compiler.SymbolMesh))
+		}
+	})
+}

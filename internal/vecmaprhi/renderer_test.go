@@ -31,6 +31,7 @@ func TestRenderer(t *testing.T) {
 	testBatchExecution(t, true)
 	testExtrudedLines(t, false)
 	testExtrudedLines(t, true)
+	testResidentSymbols(t)
 }
 
 func testRendererLifetime(t *testing.T, indexed bool) {

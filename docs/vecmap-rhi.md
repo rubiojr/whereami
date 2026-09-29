@@ -3514,6 +3514,138 @@ tagged adapter and viewer suites pass on Vulkan and OpenGL, and staticcheck pass
 Only a flag default changed, so headless packages are unaffected. No presentation
 pacing or MapLibre claim follows.
 
+### Resident symbol geometry across style zooms
+
+Checkpoint **s834** stops re-uploading icon and glyph quads when a style-zoom
+change alters only their size. It is opt-in (`tiles.PrepareOptions.ResidentSymbols`,
+viewer `-resident-symbols`, default off) and independent of `-resident-geometry`;
+with the option off every package produces its previous output byte for byte.
+
+1. **Size-independent quads.** A glyph quad is its em-unit position times
+   `text-size / 24`, and `text-offset` is in ems. An icon quad, its anchored origin
+   and `icon-offset` are multiples of `icon-size`. `glyph.BuildUnitLayoutMesh`
+   builds text at 24 pixels per em and the compiler packs icons at size one; the
+   evaluated size travels as `Material.OffsetScale`. Anchors, rotation, atlas
+   coordinates, `FontScale` and halo paint are unchanged.
+2. **A third mesh.** Symbols go to `compiler.SymbolMesh` (local ID 3), apart from
+   the stable mesh and from dashed or offset lines. Draw order, provenance,
+   materials other than the scale, and counts equal the single-mesh output.
+3. **Collision.** Candidates, text bounds and sprite metrics are those of the
+   default output. Placement is unchanged and stays on the CPU.
+4. **Rendering.** The vertex shader already multiplies offsets by `OffsetScale`
+   after map alignment, for both alignments. No shader or binding changed.
+
+Measured on the final moving Madrid cover (20 tiles, 85.1 MiB of packed mesh):
+stable 66.1 MiB, symbols 15.8 MiB (18.6%), dashed and offset lines 3.2 MiB (3.8%).
+Per sixteenth step between style zooms 9.75 and 10.25, with resident geometry on
+in both columns:
+
+| Step | Meshes uploaded, symbols baked | MiB | Meshes uploaded, symbols resident | MiB | Symbol meshes identical | Textures identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 9.7500 to 9.8125 | 20 | 19.0 | 20 | 3.2 | 20 of 20 | 91 of 91 |
+| 9.8125 to 9.8750 | 20 | 19.1 | 20 | 3.3 | 20 of 20 | 91 of 91 |
+| 9.8750 to 9.9375 | 20 | 19.2 | 20 | 3.3 | 20 of 20 | 91 of 91 |
+| 9.9375 to 10.0000 | 20 | 19.7 | 40 | 19.7 | 0 of 20 | 51 of 75 |
+| 10.0000 to 10.0625 | 20 | 19.8 | 23 | 6.1 | 17 of 20 | 75 of 75 |
+| 10.0625 to 10.1250 | 20 | 19.9 | 23 | 6.3 | 17 of 20 | 75 of 75 |
+| 10.1250 to 10.1875 | 20 | 20.0 | 21 | 4.6 | 19 of 20 | 75 of 75 |
+| 10.1875 to 10.2500 | 20 | 20.1 | 21 | 4.7 | 19 of 20 | 75 of 75 |
+
+Symbol layout, compared candidate by candidate, differs only in `TextSize` in 17
+to 20 tiles per step. The others gain or lose a repeated line-label anchor, because
+symbol spacing in tile units follows the style zoom. At zoom 10 layers appear and
+every tile changes. Bytes to upload for a step fall from 19 to 20 MiB to 3.2 to
+6.3 MiB, except across zoom 10. Prepare plus Build wall time is unchanged
+(5.6 s against 6.1 s for 320 builds).
+
+**The upload count does not fall.** Every one of the 20 tiles has dashed or offset
+lines, so every step still uploads one dynamic mesh per tile, now about 160 KiB
+each. The issue's goal, a style-zoom change published as draws only, is reached
+for tiles without such lines (proven headlessly below) and for no tile of this
+corpus. Dashed lines are the remaining blocker (**yj2k**): the dynamic mesh of
+this cover is `park_outline` (64.8% of its elements) and `boundary_3` (34.5%),
+both in every tile, plus tunnel casings and disputed boundaries. It has no offset
+lines.
+
+Merging symbols into the stable mesh, the plan recorded under **yfq2**, was
+rejected on this evidence: a layout change would re-upload the whole stable mesh,
+6.6 to 15.1 MiB per step instead of 4.6 to 6.3 MiB, and 85.8 MiB across zoom 10.
+
+#### Replay observations
+
+Same corpus, host and arguments as **c6jy** (four-resource upload batches,
+eight-resource release batches, 32 MiB per batch). All rows come from one binary;
+the flags `-resident-geometry` and `-resident-symbols` are the only difference.
+Each mode ran two passes of three moving runs and one static run per backend, the
+second pass in reverse mode order, on an unlocked desktop at host load 0.8–3.2.
+All 48 runs exit 0 with zero pending, failed and batch failures and end at 20
+tiles / 94 labels (static 42 / 130). Ranges cover the six moving or two static
+runs of a mode.
+
+| Replay | Mode | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Mesh uploads | Uploaded MB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | single mesh | 6.45–6.99 | 10–13 | 1.00–1.27 | 0.37–0.48 | 123–130 | 164–194 | 622–673 |
+| Vulkan moving | resident geometry | 6.80–7.18 | 9–10 | 1.41–1.45 | 0.46–0.54 | 133–139 | 224–233 | 344–352 |
+| Vulkan moving | geometry and symbols | 6.90–7.48 | 9–10 | 1.53–1.62 | 0.49–0.63 | 137–149 | 266–300 | 278–302 |
+| Vulkan static | single mesh | 5.14–5.17 | 5 | 2.46–2.51 | 0.46 | 63 | 58 | 187 |
+| Vulkan static | resident geometry | 5.14–5.15 | 5 | 1.89–2.02 | 0.58 | 78–79 | 116 | 187 |
+| Vulkan static | geometry and symbols | 5.15–5.19 | 5 | 1.73–2.17 | 0.66–0.67 | 91 | 168 | 187 |
+| llvmpipe moving | single mesh | 9.37–10.01 | 6–7 | 2.55–3.78 | 0.95–1.03 | 69–71 | 89–106 | 391–443 |
+| llvmpipe moving | resident geometry | 8.56–10.34 | 5–7 | 2.39–3.98 | 0.83–1.31 | 66–75 | 107–145 | 201–246 |
+| llvmpipe moving | geometry and symbols | 9.19–9.82 | 5 | 2.87–4.49 | 1.03–1.33 | 74–78 | 180–198 | 187–196 |
+| llvmpipe static | single mesh | 7.27–7.32 | 5 | 4.31–4.36 | 1.32 | 63 | 58 | 187 |
+| llvmpipe static | resident geometry | 8.93 | 5 | 5.38–5.43 | 1.47 | 78–79 | 116 | 187 |
+| llvmpipe static | geometry and symbols | 10.17–10.70 | 5 | 6.28–6.40 | 1.90–2.00 | 91–92 | 168 | 187 |
+
+Resident symbols remove a further 15% or so of uploaded bytes under motion on
+Vulkan and about 10% on llvmpipe. They do not make anything sooner. Each tile is
+now three mesh resources, the trace crosses zoom 10 where every symbol mesh
+changes, and every style epoch still uploads the dashed lines of every tile, so
+mesh uploads rise by a fifth to a quarter on Vulkan and by a third to two thirds
+on llvmpipe. Vulkan moving settles up to 0.3 s after resident geometry with a
+longest hold 0.1–0.2 s worse; llvmpipe moving completes five covers where the
+other modes complete five to seven; llvmpipe static settles 1.2–1.8 s after
+resident geometry and about 3 s after the single mesh. Previous-frame GPU p95 is
+unchanged (Vulkan 4.6–5.0 ms, llvmpipe 56–63 ms).
+
+The option therefore stays off, and `-resident-geometry` with it. It is a
+prerequisite, not a win: with dashes moved to the shader (**yj2k**) a tile is two
+mesh resources again and a step with unchanged layout uploads nothing.
+These are matched input replays, not matched frame work; no presentation pacing or
+MapLibre claim follows.
+
+#### Verification
+
+- Glyph: a unit mesh equals the baked mesh of scale one, is identical for scales
+  from 0.5 to 40, leaves metrics and bounds alone, and falls back to the baked
+  form or its errors for scales float32 cannot carry. Coverage stays at **99.8%**.
+- Compiler: for three size pairs, expanded and indexed, resident output keeps
+  provenance, order, indices, textures, anchors and atlas coordinates; materials
+  differ only in the scale; scaled offsets equal baked offsets within `1e-4`
+  pixels; one mesh is byte-identical for every size. Routing is proven for the
+  four combinations with `Split`, as are fixed IDs with empty meshes, baked
+  fallback for icon sizes of zero, below zero and `1e-50`, rejection of late calls
+  and unusable unit scales, and one element limit over three meshes. Coverage
+  stays at **100%**.
+- Tiles and residency: a tile without dashed lines prepared at two style zooms
+  keeps both meshes and its textures byte-identical, the Store reuses every
+  version, and the Planner publishes the new draws with **no upload**. With a
+  dashed line it uploads exactly the dynamic mesh. Draws, placement metrics and
+  bytes equal the default output, and an em-relative layout change replaces the
+  symbol mesh. A 20-second fuzz run over arbitrary MVT input made **693,009
+  executions**. Coverage is **98.8%**.
+- Native: the adapter test renders a viewport-aligned and a map-aligned quad baked
+  and scaled under a rotated, scaled transform, requires agreement within edge
+  rounding, and requires a doubled size to reuse the resident mesh; it passes on
+  Vulkan and OpenGL. Static screenshots of the Madrid cover (42 tiles, 130 labels)
+  with baked and resident symbols are identical on Vulkan and differ by at most
+  one level per channel on OpenGL. The viewer's live command runs with both
+  options on basic and threaded loops.
+- Race, GOARCH=386, vet and staticcheck pass on glyph, compiler, tiles, retained
+  and producer; the full pinned pkg/vecmap suite, the tagged Vulkan and OpenGL
+  adapter and viewer suites, the OpenGL suites under the race detector and tagged
+  staticcheck pass.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and
@@ -3536,8 +3668,8 @@ are open. This prototype adds explicit opt-in build/test targets.
 - Continue moving the CPU engine out of its Qt-bound package; camera, projection,
   tile coverage and transforms have been extracted into `pkg/vecmap/view`.
 - Reuse geometry across live style-zoom changes. Fills and shader-extruded lines
-  now stay resident behind an opt-in (**yfq2**); symbols, dashes and CPU-side reuse
-  of tessellation remain.
+  (**yfq2**) and symbols (**s834**) now stay resident behind opt-ins; dashes
+  (**yj2k**) and CPU-side reuse of tessellation remain.
 - Replace the fixture with incremental live tile/placement updates and bounded
   upload scheduling. Validate fallback clipping and world wraps under motion.
 - Validate multiple simultaneous maps and GPU resource sharing where safe.

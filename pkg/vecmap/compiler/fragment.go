@@ -54,6 +54,9 @@ func (b *FragmentBuilder) GlyphAtlas(atlas *glyph.Atlas) uint64 { return b.packi
 // Split separates zoom-stable from zoom-dependent geometry as SceneBuilder.Split.
 func (b *FragmentBuilder) Split() { b.packing.Split() }
 
+// ResidentSymbols packs size-independent symbols as SceneBuilder.ResidentSymbols.
+func (b *FragmentBuilder) ResidentSymbols() { b.packing.ResidentSymbols() }
+
 // Primitive packs base geometry at wrap zero and preserves its exact period for
 // later world instancing. Tile and layer identity must be valid. Missing sprites
 // and empty geometry produce no draw-source entries.

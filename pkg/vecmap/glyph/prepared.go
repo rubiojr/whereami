@@ -25,6 +25,17 @@ type PreparedLayout struct {
 // An errored layout retains its prior mesh. This matches the original scene
 // preparation's mutation policy, not an atomic transaction on input values.
 func PrepareLayouts[K comparable](layouts map[K]*PreparedLayout, atlas *Atlas, indexed bool) (map[K]*PreparedLayout, error) {
+	return prepareLayouts(layouts, atlas, indexed, BuildLayoutMesh)
+}
+
+// PrepareUnitLayouts is PrepareLayouts with BuildUnitLayoutMesh: meshes are
+// independent of the evaluated text size and marked Unit. Metric layout, bounds
+// and Scale are untouched, so collision input is the same as with PrepareLayouts.
+func PrepareUnitLayouts[K comparable](layouts map[K]*PreparedLayout, atlas *Atlas, indexed bool) (map[K]*PreparedLayout, error) {
+	return prepareLayouts(layouts, atlas, indexed, BuildUnitLayoutMesh)
+}
+
+func prepareLayouts[K comparable](layouts map[K]*PreparedLayout, atlas *Atlas, indexed bool, build func(*TextLayout, *Atlas, bool) (LayoutMesh, error)) (map[K]*PreparedLayout, error) {
 	if len(layouts) == 0 || atlas == nil {
 		return nil, nil
 	}
@@ -36,7 +47,7 @@ func PrepareLayouts[K comparable](layouts map[K]*PreparedLayout, atlas *Atlas, i
 		if layout == nil || !FitsAtlas(&layout.TextLayout, atlas) {
 			continue
 		}
-		mesh, err := BuildLayoutMesh(&layout.TextLayout, atlas, indexed)
+		mesh, err := build(&layout.TextLayout, atlas, indexed)
 		if err != nil {
 			return nil, err
 		}

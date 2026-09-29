@@ -29,9 +29,13 @@ var (
 type SceneBuilder struct {
 	mesh geometry.Builder[scene.Vertex]
 	// dynamic receives zoom-dependent geometry when split; see Split.
-	dynamic   geometry.Builder[scene.Vertex]
+	dynamic geometry.Builder[scene.Vertex]
+	// symbols receives icon and text quads with resident symbols; see
+	// ResidentSymbols.
+	symbols   geometry.Builder[scene.Vertex]
 	split     bool
-	volatile  bool
+	resident  bool
+	class     meshClass
 	result    scene.Scene
 	textures  map[string]uint64
 	indexed   bool
@@ -54,39 +58,85 @@ func NewSceneBuilder(indexed bool, maximumElements int) *SceneBuilder {
 	}
 	b.mesh = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
 	b.dynamic = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
+	b.symbols = geometry.NewBuilder[scene.Vertex](indexed, maximumElements)
 	return b
 }
 
-// StableMesh and DynamicMesh are the fixed scene-local mesh IDs of a split
-// builder. They never change meaning between builds of one fragment, so a
-// retained store can compare each mesh with its predecessor.
+// StableMesh, DynamicMesh and SymbolMesh are the fixed scene-local mesh IDs of a
+// builder using Split or ResidentSymbols. They never change meaning between
+// builds of one fragment, so a retained store can compare each mesh with its
+// predecessor.
 const (
 	StableMesh  = 1
 	DynamicMesh = 2
+	SymbolMesh  = 3
+)
+
+// meshClass is the kind of geometry being packed, which selects its mesh.
+type meshClass uint8
+
+const (
+	stableClass meshClass = iota
+	dynamicClass
+	symbolClass
 )
 
 // Split routes geometry whose vertices depend on the evaluated style zoom
-// (Dynamic primitives and all symbol passes) to DynamicMesh, keeping fills,
-// patterns and extruded lines in StableMesh. Draw order is unchanged: draws name
-// their mesh. The element limit still bounds both meshes together. Call before
-// packing; an unsplit builder packs everything into mesh one as before.
+// (Dynamic primitives and, without ResidentSymbols, all symbol passes) to
+// DynamicMesh, keeping fills, patterns and extruded lines in StableMesh. Draw
+// order is unchanged: draws name their mesh. The element limit still bounds all
+// meshes together. Call before packing; an unsplit builder packs everything into
+// mesh one as before.
 func (b *SceneBuilder) Split() {
+	if b.unused() {
+		b.split = true
+	}
+}
+
+// ResidentSymbols routes every symbol pass to SymbolMesh and packs icon quads at
+// icon size one, with the evaluated size in Material.OffsetScale. Text follows
+// its layout: a glyph.LayoutMesh marked Unit is packed at EmSize pixels per em
+// with the layout's Scale in OffsetScale. Anchors, rotation, atlas coordinates,
+// draw order and provenance are unchanged, so a style-zoom change that leaves
+// symbol layout alone changes draws only. A size that float32 cannot carry as a
+// positive finite factor keeps its baked quad. Call before packing.
+func (b *SceneBuilder) ResidentSymbols() {
+	if b.unused() {
+		b.resident = true
+	}
+}
+
+func (b *SceneBuilder) unused() bool {
 	if !b.ready() {
-		return
+		return false
 	}
-	if b.mesh.Count() != 0 || b.dynamic.Count() != 0 {
+	if b.elements() != 0 {
 		b.err = ErrPackingInput
-		return
+		return false
 	}
-	b.split = true
+	return true
+}
+
+func (b *SceneBuilder) elements() int {
+	return b.mesh.Count() + b.dynamic.Count() + b.symbols.Count()
 }
 
 // target selects the mesh receiving the next geometry and its scene-local ID.
 func (b *SceneBuilder) target() (*geometry.Builder[scene.Vertex], uint64) {
-	if b.split && b.volatile {
+	switch {
+	case b.resident && b.class == symbolClass:
+		return &b.symbols, SymbolMesh
+	case b.split && b.class != stableClass:
 		return &b.dynamic, DynamicMesh
 	}
 	return &b.mesh, StableMesh
+}
+
+// offsetScale reports whether size can travel as Material.OffsetScale, where
+// zero means one.
+func offsetScale(size float64) (float32, bool) {
+	scale := float32(size)
+	return scale, scale > 0 && !math.IsInf(float64(scale), 0)
 }
 
 func (b *SceneBuilder) ready() bool {
@@ -161,7 +211,7 @@ func (b *SceneBuilder) check(vertices int, indices []uint32) bool {
 	if indices != nil {
 		count = len(indices)
 	}
-	used, usedVertices := b.mesh.Count()+b.dynamic.Count(), len(b.mesh.Vertices)+len(b.dynamic.Vertices)
+	used, usedVertices := b.elements(), len(b.mesh.Vertices)+len(b.dynamic.Vertices)+len(b.symbols.Vertices)
 	if vertices > b.limit || count > b.limit-used || (b.indexed && vertices > b.limit-usedVertices) {
 		b.err = geometry.ErrGeometryLimit
 		return false
@@ -314,9 +364,9 @@ func (b *SceneBuilder) finish(allowEmpty bool) (*scene.Scene, error) {
 		return nil, b.err
 	}
 	b.closed = true
-	if allowEmpty && b.mesh.Count() == 0 && b.dynamic.Count() == 0 {
+	if allowEmpty && b.elements() == 0 {
 		b.result = scene.Scene{} // no empty mesh or unused atlas allocation
-	} else if !b.split {
+	} else if !b.split && !b.resident {
 		b.result.Meshes = []scene.Mesh{{ID: StableMesh, Revision: 1, Vertices: b.mesh.Vertices, Indices: b.mesh.Indices}}
 	} else {
 		// A mesh without geometry is omitted; its ID keeps its meaning.
@@ -325,6 +375,9 @@ func (b *SceneBuilder) finish(allowEmpty bool) (*scene.Scene, error) {
 		}
 		if b.dynamic.Count() > 0 {
 			b.result.Meshes = append(b.result.Meshes, scene.Mesh{ID: DynamicMesh, Revision: 1, Vertices: b.dynamic.Vertices, Indices: b.dynamic.Indices})
+		}
+		if b.symbols.Count() > 0 {
+			b.result.Meshes = append(b.result.Meshes, scene.Mesh{ID: SymbolMesh, Revision: 1, Vertices: b.symbols.Vertices, Indices: b.symbols.Indices})
 		}
 	}
 	if err := b.result.Validate(); err != nil {

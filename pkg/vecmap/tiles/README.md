@@ -106,6 +106,19 @@ initial coverage needs more upload operations. Backends must scale map-aligned
 vertex offsets by `OffsetScale`; the QRhi adapter does. The default is off and
 preserves the single-mesh output exactly.
 
+`PrepareOptions.ResidentSymbols` does the same for icons and text. Quads are packed
+at a base size in `compiler.SymbolMesh` (local ID 3) and the evaluated icon or text
+size travels as `Material.OffsetScale`. Candidates, text bounds and placement
+metrics are those of the default output, so collision is unchanged. The symbol
+mesh stays byte-identical while symbol layout does: a changed text, anchor, atlas
+or em-relative option replaces it, and only it. On the captured Madrid cover it is
+identical in 17 to 20 of 20 tiles per sixteenth step and in none across zoom 10,
+where layers appear. A tile without dashed or offset lines then publishes a
+style-zoom change as new draws with no upload at all. Every Madrid tile has such
+lines, so there the change still uploads one small dynamic mesh per tile. The
+option is independent of `ResidentGeometry`, off by default, and adds a third mesh
+resource to tiles that have all three kinds of geometry.
+
 ### Preparation bounds
 
 - MVT bytes retain the decoder's **2 MiB** limit and feature/geometry/work limits.

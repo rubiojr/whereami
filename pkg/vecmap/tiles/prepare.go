@@ -38,6 +38,14 @@ type PrepareOptions struct {
 	// draws and the dynamic mesh change. The backend must scale map-aligned
 	// offsets by Material.OffsetScale. False preserves the single-mesh output.
 	ResidentGeometry bool
+	// ResidentSymbols keeps icon and text quads byte-identical across style-zoom
+	// changes that leave symbol layout alone. Quads are packed at a base size in
+	// compiler.SymbolMesh and the evaluated icon or text size is a per-draw
+	// Material.OffsetScale. Candidates, text bounds and collision input are
+	// unchanged. Anchors, texts, rotation and em-relative layout still follow the
+	// style zoom, so a layout change replaces the symbol mesh. The backend must
+	// scale vertex offsets by OffsetScale. False preserves the existing output.
+	ResidentSymbols bool
 }
 
 // Prepared owns reusable primitives and evaluated candidates, not source features
@@ -176,13 +184,20 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	if err != nil {
 		return nil, err
 	}
-	renderable, err := glyph.PrepareLayouts(layouts, atlas, p.options.Indexed)
+	prepare := glyph.PrepareLayouts[int]
+	if p.options.ResidentSymbols {
+		prepare = glyph.PrepareUnitLayouts[int]
+	}
+	renderable, err := prepare(layouts, atlas, p.options.Indexed)
 	if err != nil {
 		return nil, err
 	}
 	packing := compiler.NewFragmentBuilder(p.options.Indexed, p.options.ElementLimit, p.options.DrawLimit)
 	if p.options.ResidentGeometry {
 		packing.Split()
+	}
+	if p.options.ResidentSymbols {
+		packing.ResidentSymbols()
 	}
 	var atlasID uint64
 	if len(renderable) > 0 {

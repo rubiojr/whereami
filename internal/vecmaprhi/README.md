@@ -17,6 +17,12 @@ transform on Vulkan and OpenGL, requires the pictures to agree within edge
 rounding, and requires a doubled width to reuse the mesh. Shader packages are
 regenerated with `make rhi-shaders`; there is no handwritten C++.
 
+Resident symbols use the same value for viewport-aligned and map-aligned quads:
+icons are packed at size one and text at 24 pixels per em, and the scale is the
+evaluated icon size or text size over 24. The shader needed no change. A second
+integration test renders both alignments baked and scaled, requires agreement
+within edge rounding, and requires a doubled size to reuse the mesh.
+
 ## Revision-aware resource staging
 
 Mesh and texture caches use exact **ID/revision pairs**, in separate namespaces.

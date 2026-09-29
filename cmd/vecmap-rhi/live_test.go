@@ -289,7 +289,7 @@ func testLiveProducer(t *testing.T) {
 	assert.LessOrEqual(t, p.Status().PeakJobs, 2)
 }
 
-func testViewerLiveCommand(t *testing.T, residentGeometry bool) {
+func testViewerLiveCommand(t *testing.T, residentGeometry, residentSymbols bool) {
 	t.Helper()
 	fonts := os.Getenv("WHEREAMI_VECTOR_GLYPH_FIXTURE_DIR")
 	if fonts == "" {
@@ -299,7 +299,7 @@ func testViewerLiveCommand(t *testing.T, residentGeometry bool) {
 	defer server.Close()
 	output := filepath.Join(t.TempDir(), "live.png")
 	err := run("", benchmarkOptions{duration: time.Second, foreground: true, screenshot: output, budget: retained.Budget{Bytes: 32 << 20, Resources: 32},
-		liveOptions: liveOptions{enabled: true, template: server.URL + "/{z}/{x}/{y}.pbf", cache: t.TempDir(), glyphs: fonts, latitude: 0, longitude: 0, zoom: 2, cacheBytes: 256 << 20, residentGeometry: residentGeometry}})
+		liveOptions: liveOptions{enabled: true, template: server.URL + "/{z}/{x}/{y}.pbf", cache: t.TempDir(), glyphs: fonts, latitude: 0, longitude: 0, zoom: 2, cacheBytes: 256 << 20, residentGeometry: residentGeometry, residentSymbols: residentSymbols}})
 	require.NoError(t, err)
 	image := qt.NewQImage8(output)
 	defer image.Delete()

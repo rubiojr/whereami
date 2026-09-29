@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -23,7 +24,7 @@ import (
 )
 
 func TestViewerStream(t *testing.T) {
-	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}, {"basic", "tiles"}, {"threaded", "tiles"}, {"basic", "live"}, {"threaded", "live"}, {"basic", "live-command"}, {"threaded", "live-command"}, {"basic", "live-command-resident"}, {"threaded", "live-command-resident"}} {
+	for _, scenario := range []struct{ loop, name string }{{"basic", "lifecycle"}, {"threaded", "lifecycle"}, {"threaded", "budget"}, {"basic", "reload"}, {"threaded", "reload"}, {"basic", "tiles"}, {"threaded", "tiles"}, {"basic", "live"}, {"threaded", "live"}, {"basic", "live-command"}, {"threaded", "live-command"}, {"basic", "live-command-resident"}, {"threaded", "live-command-resident"}, {"basic", "live-command-symbols"}, {"threaded", "live-command-symbols"}} {
 		t.Run("test"+scenario.loop+"-"+scenario.name, func(t *testing.T) {
 			binary, err := os.Executable()
 			require.NoError(t, err)
@@ -48,8 +49,8 @@ func TestViewerStreamProcess(t *testing.T) {
 		testViewerReload(t)
 		return
 	}
-	if scenario := os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO"); scenario == "live-command" || scenario == "live-command-resident" {
-		testViewerLiveCommand(t, scenario == "live-command-resident")
+	if scenario := os.Getenv("WHEREAMI_VIEWER_TEST_SCENARIO"); strings.HasPrefix(scenario, "live-command") {
+		testViewerLiveCommand(t, scenario != "live-command", scenario == "live-command-symbols")
 		return
 	}
 	app := qt.NewQApplication([]string{"vecmap-stream-test"})
