@@ -3409,7 +3409,8 @@ symbols still change at every step.
 A supplementary series raised the upload count to four resources per batch under
 the same 32 MiB bound, which admits the bytes that two single-mesh tiles needed
 before. The desktop was locked during three of the four Vulkan control runs, which
-are discarded, so Vulkan control has one valid moving run.
+are discarded, so Vulkan control has one valid moving run here. Checkpoint **c6jy**
+below repeats the series completely.
 
 | Replay, four resources | Mode | Elapsed s | Current changes | Longest hold s | Mean age s | Uploaded MB |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -3422,8 +3423,8 @@ are discarded, so Vulkan control has one valid moving run.
 | llvmpipe static | resident | 8.76 | 5 | 5.46 | 1.45 | 187 |
 
 At four resources both modes progress alike and resident uploads half the bytes.
-The batch count is a separate policy decision: the viewer defaults stay at two
-upload resources, and no time claim for this checkpoint depends on changing them.
+The batch count is a separate policy decision, taken in **c6jy**; no time claim for
+this checkpoint depends on it.
 These are matched input replays, not matched frame work; no presentation pacing or
 MapLibre claim follows.
 
@@ -3458,6 +3459,60 @@ and symbols join the stable mesh; move dashes into the fragment shader; reuse
 decoded and tessellated primitives across style zooms so a sixteenth change costs
 paint evaluation only. With symbols stable, most style-zoom changes would publish
 as draw-only updates without any upload.
+
+### Four resources per upload batch
+
+Checkpoint **c6jy** raises the viewer's `-upload-resources` default from 2 to **4**,
+an owner decision recorded on 2026-09-29. The 32 MiB byte bound per batch, the
+eight-resource release batch, residency limits, library defaults and the
+`-resident-geometry` default (off) are unchanged. The count was the binding limit:
+a Madrid tile mesh is about 4.5 MB, so two resources admitted roughly a quarter of
+the byte budget.
+
+Same corpus, host and arguments as **yfq2**, all rows from one binary on an unlocked
+desktop at host load 0.7–2.2; the two-resource rows are the yfq2 control series.
+Every row exits 0 with zero pending, failed and batch failures. Four-resource
+moving ranges cover three runs, plus the earlier yfq2 runs where they were valid
+(six llvmpipe control, six resident on each backend, four Vulkan control).
+
+| Replay | Mode | Resources | Elapsed s | Current changes | Longest hold s | Mean age s | Upload batches | Uploaded MB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan moving | single mesh | 2 | 6.47–7.45 | 6–8 | 1.28–1.97 | 0.60–1.05 | 150–177 | 356–515 |
+| Vulkan moving | single mesh | 4 | 6.56–7.36 | 11–12 | 1.14–1.46 | 0.41–0.52 | 125–130 | 663–671 |
+| Vulkan moving | resident | 4 | 7.06–7.26 | 9–10 | 1.43–1.47 | 0.47–0.55 | 137–142 | 351–370 |
+| Vulkan static | single mesh | 2 | 5.14–5.16 | 4 | 2.30–2.92 | 1.05–1.09 | 112–126 | 166–187 |
+| Vulkan static | single mesh | 4 | 5.15 | 6 | 2.44 | 0.41 | 64 | 187 |
+| Vulkan static | resident | 4 | 5.14 | 4–5 | 2.01–2.29 | 0.57–0.67 | 72–79 | 170–187 |
+| llvmpipe moving | single mesh | 2 | 11.19–14.10 | 5–6 | 3.91–5.87 | 1.38–2.48 | 105–121 | 230–364 |
+| llvmpipe moving | single mesh | 4 | 9.39–10.32 | 7 | 2.64–3.39 | 0.92–1.16 | 67–75 | 386–444 |
+| llvmpipe moving | resident | 4 | 8.93–10.03 | 5–6 | 2.46–4.02 | 1.06–1.25 | 67–76 | 211–230 |
+| llvmpipe static | single mesh | 2 | 12.50–12.97 | 5 | 5.42–5.62 | 2.22–2.31 | 122 | 179–180 |
+| llvmpipe static | single mesh | 4 | 6.12–7.19 | 5 | 3.69–4.32 | 1.00–1.32 | 58–63 | 168–187 |
+| llvmpipe static | resident | 4 | 8.76–8.95 | 5 | 5.46–5.54 | 1.45–1.48 | 78 | 187 |
+
+In the default single-mesh mode, four resources nearly double the drawable Current
+changes on Vulkan under motion and halve the mean Current age, while settlement
+stays within the two-resource range. On llvmpipe, moving settles about 2.5 s sooner
+and static in half the time, which restores the margin against the fifteen-second
+deadline that **twd2** had narrowed. More covers complete under motion, so uploaded
+bytes rise by about half in that mode.
+
+The cost is per-frame work. With four resources the previous-frame GPU p95 is
+3.9–4.7 ms against 3.6 ms on Vulkan, and 60–74 ms against 53 ms on llvmpipe, where
+one run reached a 122 ms p99. Render-callback interval p95 is 20.4–22.2 ms against
+19.4 ms on Vulkan. Callback intervals are not presentation timestamps (**vx93**).
+
+Resident geometry remains opt-in. At four resources it uploads about half the bytes
+of the single-mesh mode, but it completes fewer covers on Vulkan (9–10 against
+11–12 Current changes) and llvmpipe static settles later (8.8–9.0 s against
+6.1–7.2 s), because each tile is still two mesh resources and symbols still change
+at every step. Making symbols resident (**s834**) is what would turn the byte saving
+into time.
+
+Verification: the viewer reports `upload_budget_resources=4` without the flag; the
+tagged adapter and viewer suites pass on Vulkan and OpenGL, and staticcheck passes.
+Only a flag default changed, so headless packages are unaffected. No presentation
+pacing or MapLibre claim follows.
 
 ## Flatpak integration
 

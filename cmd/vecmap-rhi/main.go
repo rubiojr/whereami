@@ -32,7 +32,7 @@ func main() {
 	foreground := flag.Bool("foreground", false, "keep the benchmark window on top and request activation")
 	diagnostics := flag.Bool("diagnostics", false, "report timer delivery and window state around pacing gaps")
 	uploadBytes := flag.Uint64("upload-bytes", 32<<20, "maximum geometry/index/RGBA bytes per upload batch (resources are indivisible)")
-	uploadResources := flag.Int("upload-resources", 2, "maximum resources per upload batch")
+	uploadResources := flag.Int("upload-resources", 4, "maximum resources per upload batch")
 	releaseResources := flag.Int("release-resources", 8, "maximum resources per retirement batch; zero uses -upload-resources")
 	reload := flag.Duration("reload", 0, "poll the scene file for live replacements (for example 1s); zero disables")
 	live := liveOptions{}
