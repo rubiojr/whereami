@@ -90,6 +90,11 @@ type Limits struct {
 	CacheBytes, SnapshotBytes, ProfileBytes uint64
 	Store                                   retained.Limits
 	RetryDelay                              time.Duration
+	// DiscardPreparation drops a tile's prepared primitives as soon as its
+	// fragment is built. A later asset change then prepares that tile again from
+	// its raw response. False keeps them until the cache budget needs the room.
+	// Set it when assets do not change after the first request.
+	DiscardPreparation bool
 }
 
 func DefaultLimits() Limits {

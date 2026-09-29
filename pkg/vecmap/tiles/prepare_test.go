@@ -346,3 +346,35 @@ func TestPrepareCoarserConvertsPixelsAtTheDrawnZoom(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, built.Fragment.Scene.Validate())
 }
+
+func TestBuiltFragmentsHoldNoUnusedCapacity(t *testing.T) {
+	data := append(preparePBF(), layerPBF("roads", featurePBF(2, []uint32{9, 0, 256, 10, 400, 0}), featurePBF(2, []uint32{9, 0, 300, 10, 400, 40}))...)
+	layers, err := style.Parse([]byte(`{"version":8,"layers":[
+		{"id":"background","type":"background","paint":{"background-color":"white"}},
+		{"id":"land","type":"fill","source-layer":"land","paint":{"fill-color":"green"}},
+		{"id":"roads","type":"line","source-layer":"roads","paint":{"line-width":4}},
+		{"id":"dashed","type":"line","source-layer":"roads","paint":{"line-width":2,"line-dasharray":[2,1]}},
+		{"id":"labels","type":"symbol","source-layer":"labels",
+		 "layout":{"text-field":"A","text-font":["Test"],"text-size":16,"icon-image":"dot"},
+		 "paint":{"text-color":"black","text-halo-color":"white","text-halo-width":1}}
+	]}`))
+	require.NoError(t, err)
+	for _, indexed := range []bool{false, true} {
+		for _, resident := range []bool{false, true} {
+			p, err := Prepare(data, layers, PrepareOptions{Tile: testTile, Zoom: 3, Indexed: indexed,
+				ResidentGeometry: resident, ResidentSymbols: resident, ResidentDashes: resident})
+			require.NoError(t, err)
+			built, err := p.BuildOwned(prepareAssets(), 1<<20)
+			require.NoError(t, err)
+			require.NotEmpty(t, built.Fragment.Scene.Meshes)
+			var exact uint64
+			for _, mesh := range built.Fragment.Scene.Meshes {
+				assert.Equal(t, len(mesh.Vertices), cap(mesh.Vertices), "indexed=%t resident=%t mesh=%d", indexed, resident, mesh.ID)
+				assert.Equal(t, len(mesh.Indices), cap(mesh.Indices), "indexed=%t resident=%t mesh=%d", indexed, resident, mesh.ID)
+				exact += mesh.BufferBytes()
+			}
+			assert.GreaterOrEqual(t, built.Fragment.RetainedBytes(), exact)
+			require.NoError(t, built.Fragment.Scene.Validate())
+		}
+	}
+}

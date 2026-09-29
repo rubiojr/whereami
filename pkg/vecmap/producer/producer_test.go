@@ -473,3 +473,45 @@ func TestSubmitRejectsCoarserOutOfRange(t *testing.T) {
 	_, err := p.Submit(r)
 	assert.NoError(t, err)
 }
+
+func TestDiscardPreparationPreparesAgainForNewAssets(t *testing.T) {
+	layers, err := style.Parse([]byte(`{"version":8,"layers":[{"id":"labels","type":"symbol","source-layer":"labels","layout":{"text-field":"A","text-font":["Test"],"text-size":16},"paint":{"text-color":"black"}}]}`))
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name     string
+		discard  bool
+		prepares uint64
+	}{
+		{"kept preparation serves new assets", false, 1},
+		{"discarded preparation is rebuilt from the raw response", true, 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			limits := DefaultLimits()
+			limits.Workers, limits.RawBytes, limits.DiscardPreparation = 1, 1024, test.discard
+			p, c := newControlled(t, limits)
+			r := testRequest(t, view.TileID{})
+			r.Style.Layers = layers
+			_, err := p.Submit(r)
+			require.NoError(t, err)
+			nextCall(t, c).reply <- answer{data: tilePBF()}
+			nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == 1 })
+			status := waitStatus(t, p, func(s Status) bool { return s.Builds == 1 })
+			assert.Equal(t, test.discard, status.Cache.Prepared == 0)
+			assert.NotZero(t, status.Cache.Fragments)
+			assert.NotZero(t, status.Cache.Raw)
+
+			r.Assets = &Assets{Epoch: 2, Bytes: 1024, Value: tiles.Assets{Fonts: map[string]map[uint32]glyph.Glyph{
+				"Test": {'A': {ID: 'A', Width: 2, Height: 2, Advance: 4, Bitmap: bytes.Repeat([]byte{90}, 64)}},
+			}}}
+			revision, err := p.Submit(r)
+			require.NoError(t, err)
+			ready := nextLease(t, p, func(l *Lease) bool { return l.Revision == revision && len(l.Snapshot.Scene.Draws) > 0 })
+			require.NoError(t, ready.Snapshot.Scene.Validate())
+			status = waitStatus(t, p, func(s Status) bool { return s.Builds == 2 })
+			assert.Equal(t, test.prepares, status.Prepares)
+			assert.Equal(t, uint64(1), status.Loads, "new assets never load the tile again")
+			assert.Equal(t, test.discard, status.Cache.Prepared == 0)
+			assert.Zero(t, status.Failed)
+		})
+	}
+}

@@ -77,6 +77,10 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   Compatible camera updates don't discard useful compilation. Changes during Build
   still reject obsolete source/style/assets or tiles before installation. No decoding,
   tessellation, shaping or composition runs in Submit, Next or native callbacks.
+- `Limits.DiscardPreparation` drops Prepared data as soon as a tile is built, for
+  applications whose assets do not change after the first request. It roughly
+  halves the live heap of a dense view. An asset change then prepares the tile
+  again from its cached raw response.
 - Raw MVT remains cached alongside optional reusable Prepared data. A style change
   normally reparses/recompiles cached bytes; asset refresh reuses Prepared when available.
   Admission pressure evicts least-recently-built Prepared objects, or omits incoming

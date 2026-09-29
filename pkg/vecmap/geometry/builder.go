@@ -97,6 +97,36 @@ func (b *Builder[T]) appendIndexed(vertices []T, indices []uint32) {
 	}
 }
 
+// Reserve makes room for that many further vertices and indices, so appending
+// them does not reallocate. It is a hint: counts are clamped to the element
+// limit, and later appends still grow as needed. An expanded builder has no
+// index buffer; pass the expanded vertex count.
+func (b *Builder[T]) Reserve(vertices, indices int) {
+	room := max(b.limit-b.Count(), 0)
+	b.Vertices = slices.Grow(b.Vertices, max(min(vertices, room), 0))
+	if b.indexed {
+		b.Indices = slices.Grow(b.Indices, max(min(indices, room), 0))
+	}
+}
+
+// Compact replaces buffers that hold unused capacity with copies of their exact
+// length. Contents are unchanged. Call once, before publishing the slices.
+func (b *Builder[T]) Compact() {
+	b.Vertices, b.Indices = compact(b.Vertices), compact(b.Indices)
+}
+
+func compact[S ~[]E, E any](values S) S {
+	if cap(values) == len(values) {
+		return values
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	exact := make(S, len(values))
+	copy(exact, values)
+	return exact
+}
+
 func (b *Builder[T]) Triangle(first, second, third T) error {
 	return b.Append([]T{first, second, third}, nil)
 }

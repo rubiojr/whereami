@@ -23,13 +23,14 @@ type liveOptions struct {
 	enabled                   bool
 	template, cache, glyphs   string
 	latitude, longitude, zoom float64
-	cacheBytes                uint64
+	cacheBytes, sceneBytes    uint64
 	workers                   int
 	cacheOnly                 bool
 	residentGeometry          bool
 	residentSymbols           bool
 	residentDashes            bool
 	coarser                   int
+	keepPreparation           bool
 }
 
 type liveSource struct {
@@ -79,6 +80,11 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 	}
 	limits := producer.DefaultLimits()
 	limits.CacheBytes = options.cacheBytes
+	if options.sceneBytes != 0 {
+		limits.SnapshotBytes = options.sceneBytes
+	}
+	// The viewer's assets never change, so preparation has no later use.
+	limits.DiscardPreparation = !options.keepPreparation
 	if options.workers != 0 {
 		limits.Workers = options.workers
 	}

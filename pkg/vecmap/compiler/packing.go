@@ -132,6 +132,22 @@ func (b *SceneBuilder) target() (*geometry.Builder[scene.Vertex], uint64) {
 	return &b.mesh, StableMesh
 }
 
+// Reserve makes room for geometry that Geometry, Extruded or Dashed will pack,
+// so packing it does not reallocate. dynamic selects the mesh that receives
+// Dynamic geometry when split. It is a hint and never an error: a builder that
+// is not ready ignores it, and Finish publishes buffers of their exact length
+// either way. Call after Split.
+func (b *SceneBuilder) Reserve(dynamic bool, vertices, indices int) {
+	if b.err != nil || b.closed || vertices < 0 || indices < 0 {
+		return
+	}
+	target := &b.mesh
+	if dynamic && b.split {
+		target = &b.dynamic
+	}
+	target.Reserve(vertices, indices)
+}
+
 // offsetScale reports whether size can travel as Material.OffsetScale, where
 // zero means one.
 func offsetScale(size float64) (float32, bool) {
@@ -391,6 +407,11 @@ func (b *SceneBuilder) finish(allowEmpty bool) (*scene.Scene, error) {
 		return nil, b.err
 	}
 	b.closed = true
+	// Publish buffers of their exact length: growth slack would stay allocated,
+	// and charged, for as long as the scene is retained.
+	b.mesh.Compact()
+	b.dynamic.Compact()
+	b.symbols.Compact()
 	if allowEmpty && b.elements() == 0 {
 		b.result = scene.Scene{} // no empty mesh or unused atlas allocation
 	} else if !b.split && !b.resident {

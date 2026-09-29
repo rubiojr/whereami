@@ -171,3 +171,65 @@ func TestSymbolTextRequests(t *testing.T) {
 	}
 	assert.Equal(t, 1, visits)
 }
+
+func TestFragmentReserveChangesNoOutputAndLeavesNoSlack(t *testing.T) {
+	image := sprite.Image{Width: 8, Height: 6, PixelRatio: 3, Pixels: make([]byte, 8*6*4)}
+	found := func(string, style.Color, float64) (sprite.Image, bool) { return image, true }
+	missing := func(string, style.Color, float64) (sprite.Image, bool) { return sprite.Image{}, false }
+	for _, indexed := range []bool{false, true} {
+		line := geometry.Mesh{Vertices: []geometry.Point{{}, {X: 4}, {X: 4, Y: 4}, {Y: 4}}, Indices: []uint32{0, 1, 2, 0, 2, 3}}
+		if !indexed {
+			line = geometry.Mesh{Vertices: []geometry.Point{{}, {X: 4}, {X: 4, Y: 4}}}
+		}
+		primitives := []Primitive{
+			{Order: 1, Mesh: BackgroundGeometry(indexed), Color: style.Color{Alpha: 255}},
+			{Order: 2, Mesh: BackgroundGeometry(indexed), PatternName: "dots", PatternScale: 1, Opacity: 1},
+			{Order: 3, Mesh: line, Color: style.Color{Red: 255, Alpha: 255}, Dynamic: true},
+		}
+		for _, split := range []bool{false, true} {
+			for _, lookup := range []SpriteLookup{found, missing} {
+				pack := func(reserve bool) (*scene.Scene, []DrawSource) {
+					b := NewFragmentBuilder(indexed, 0, 0)
+					if split {
+						b.Split()
+					}
+					if reserve {
+						b.Reserve(primitives)
+					}
+					for _, primitive := range primitives {
+						b.Primitive(view.TileID{}, primitive, lookup)
+					}
+					result, sources, err := b.Finish()
+					require.NoError(t, err)
+					return result, sources
+				}
+				plain, plainSources := pack(false)
+				reserved, sources := pack(true)
+				assert.Equal(t, plain, reserved)
+				assert.Equal(t, plainSources, sources)
+				for _, result := range []*scene.Scene{plain, reserved} {
+					require.NotEmpty(t, result.Meshes)
+					for _, mesh := range result.Meshes {
+						assert.Equal(t, len(mesh.Vertices), cap(mesh.Vertices))
+						assert.Equal(t, len(mesh.Indices), cap(mesh.Indices))
+					}
+				}
+			}
+		}
+	}
+	// Reserving is a hint: a builder that cannot pack ignores it.
+	var zero FragmentBuilder
+	zero.Reserve([]Primitive{{Mesh: BackgroundGeometry(true)}})
+	_, _, err := zero.Finish()
+	assert.ErrorIs(t, err, ErrPackingInput)
+	closed := NewSceneBuilder(true, 0)
+	closed.Reserve(false, -1, -1)
+	closed.Geometry(BackgroundGeometry(true), scene.Material{Color: [4]float32{0, 0, 0, 1}}, [4]float32{})
+	first, err := closed.Finish()
+	require.NoError(t, err)
+	vertices := &first.Meshes[0].Vertices[0]
+	closed.Reserve(false, 300, 300)
+	again, err := closed.Finish()
+	require.NoError(t, err)
+	assert.Same(t, vertices, &again.Meshes[0].Vertices[0], "a published buffer is never replaced")
+}

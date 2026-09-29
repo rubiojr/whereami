@@ -219,6 +219,7 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	if len(renderable) > 0 {
 		atlasID = packing.GlyphAtlas(atlas)
 	}
+	packing.Reserve(p.primitives)
 	p.pack(packing, renderable, atlasID, assets.Sprite)
 	packed, sources, err := packing.Finish()
 	if err != nil {

@@ -570,6 +570,9 @@ func (s *state) build(tile view.TileID, old *entry) {
 	}
 	if err == nil {
 		stage = "cache/compiled"
+		if s.p.limits.DiscardPreparation {
+			next.prepared = nil
+		}
 		next.preparedUse = s.stats.Builds
 		next.usage = entryUsage(tile, &next)
 		next.styleSnapshot = s.working.Style

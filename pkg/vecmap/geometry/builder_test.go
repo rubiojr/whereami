@@ -2,6 +2,7 @@ package geometry
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -95,4 +96,62 @@ func TestLineSegmentTopology(t *testing.T) {
 		mesh := NewBuilder[Point](true, limit)
 		assert.ErrorIs(t, AppendLineSegment(&mesh, Point{}, Point{X: 10}, 2, "round", true), ErrGeometryLimit)
 	}
+}
+
+func TestBuilderReserveKeepsContentsAndAvoidsGrowth(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		plain, reserved := NewBuilder[int](indexed, 18), NewBuilder[int](indexed, 18)
+		reserved.Reserve(12, 12)
+		vertices, indices := cap(reserved.Vertices), cap(reserved.Indices)
+		assert.GreaterOrEqual(t, vertices, 7)
+		for _, b := range []*Builder[int]{&plain, &reserved} {
+			require.NoError(t, b.Triangle(10, 11, 12))
+			require.NoError(t, b.Quad(20, 21, 22, 23))
+			require.NoError(t, b.Append([]int{30, 31, 32, 33}, []uint32{2, 0, 1}))
+		}
+		assert.Equal(t, plain.Vertices, reserved.Vertices)
+		assert.Equal(t, plain.Indices, reserved.Indices)
+		assert.Equal(t, vertices, cap(reserved.Vertices), "reserved room is used, not replaced")
+		assert.Equal(t, indices, cap(reserved.Indices))
+		assert.Equal(t, indexed, indices > 0, "an expanded builder has no index buffer")
+	}
+}
+
+func TestBuilderReserveIsBoundedByTheLimit(t *testing.T) {
+	b := NewBuilder[int](true, 6)
+	b.Reserve(math.MaxInt, math.MaxInt)
+	assert.LessOrEqual(t, cap(b.Vertices), 8)
+	assert.LessOrEqual(t, cap(b.Indices), 8)
+	require.NoError(t, b.Triangle(1, 2, 3))
+	b.Reserve(math.MaxInt, math.MaxInt)
+	assert.LessOrEqual(t, cap(b.Indices), 8)
+	b.Reserve(-1, -1)
+	assert.Equal(t, []int{1, 2, 3}, b.Vertices)
+	assert.ErrorIs(t, b.Quad(4, 5, 6, 7), ErrGeometryLimit, "room reserved is not room allowed")
+	rejected := NewBuilder[int](true, -1)
+	rejected.Reserve(3, 3)
+	assert.Zero(t, cap(rejected.Vertices))
+}
+
+func TestBuilderCompactPublishesExactBuffers(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		b := NewBuilder[int](indexed, 1000)
+		b.Reserve(500, 500)
+		require.NoError(t, b.Triangle(10, 11, 12))
+		require.NoError(t, b.Quad(20, 21, 22, 23))
+		vertices, indices := slices.Clone(b.Vertices), slices.Clone(b.Indices)
+		b.Compact()
+		assert.Equal(t, vertices, b.Vertices)
+		assert.Equal(t, indices, b.Indices)
+		assert.Equal(t, len(b.Vertices), cap(b.Vertices))
+		assert.Equal(t, len(b.Indices), cap(b.Indices))
+		first := &b.Vertices[0]
+		b.Compact()
+		assert.Same(t, first, &b.Vertices[0], "an exact buffer is not copied again")
+	}
+	empty := NewBuilder[int](true, 1000)
+	empty.Reserve(10, 10)
+	empty.Compact()
+	assert.Nil(t, empty.Vertices)
+	assert.Nil(t, empty.Indices)
 }

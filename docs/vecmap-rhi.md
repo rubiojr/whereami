@@ -3969,6 +3969,117 @@ matched frame work; no presentation pacing or MapLibre claim follows.
   tagged viewer and adapter suites pass on OpenGL, and tagged staticcheck passes.
   The tagged suites were not rerun on Vulkan.
 
+### Compiled tile memory
+
+Checkpoint **g1av** measures where the memory of a live view goes and removes two
+costs that bought nothing. It began with the static views of **xcmf**: with the
+viewer's default budgets only two of eight Madrid views drew their complete cover.
+
+#### Where it goes
+
+A headless probe submits one 800x600 view to the producer (resident options on,
+budgets of 1 GiB, one lease held) and reads the Go heap after a collection. For
+camera zoom 14, 30 tiles, 11 MB of responses:
+
+| Live heap, 304 MB | MB | What it is |
+| --- | ---: | --- |
+| Packed vertices | 107 | `scene.Vertex`, 24 bytes each, 4.07 million in the scene |
+| Packed indices | 46 | `uint32`, 8.04 million in the scene |
+| Prepared primitives | 110 | float64 geometry kept to rebuild a tile for new assets |
+| Glyph atlases, responses, metadata | 41 | |
+
+The scene itself needs 93 MiB of vertices, 31 MiB of indices and 9 MiB of
+textures. Mesh buffers were published with the capacity their growth left behind:
+8–18 MiB unused per view, which was also charged to the cache and to every
+lease. Of the vertices, 22% carry neither offset nor texture coordinate, 40% an
+offset only, and 38% both. Building the view allocates 2.1 GiB in total.
+
+#### Changes
+
+- Mesh buffers are reserved from the prepared primitives before packing and
+  published at their exact length (`geometry.Builder.Reserve` and `Compact`,
+  `compiler.FragmentBuilder.Reserve`). Output is unchanged.
+- `producer.Limits.DiscardPreparation` drops prepared primitives once a tile is
+  built. A later asset change prepares the tile again from its raw response; a
+  style-zoom change prepared it again already. The library default keeps them.
+  The viewer discards them, because its assets never change
+  (`-keep-preparation` restores the old behaviour).
+- The viewer takes the scene budget as `-cpu-scene-bytes`. Its default is 256
+  MiB and the default of `-cpu-cache-bytes` 384 MiB, an owner decision recorded
+  on 2026-09-29 so that every view draws its complete cover. They were 128 MiB
+  and 256 MiB. `producer.DefaultLimits` is unchanged.
+
+#### Results
+
+Headless probe, before → after, MiB:
+
+| Camera zoom | Tiles | Live heap | Scene charge | Peak RSS |
+| ---: | ---: | ---: | ---: | ---: |
+| 9 | 36 | 325 → 172 | 158 → 140 | 579 → 338 |
+| 11 | 30 | 176 → 91 | 86 → 78 | 370 → 205 |
+| 12 | 30 | 161 → 79 | 78 → 70 | 407 → 212 |
+| 13 | 36 | 532 → 243 | 248 → 234 | 924 → 516 |
+| 14 | 30 | 295 → 165 | 148 → 133 | 612 → 356 |
+| 14.5 | 25 | 265 → 149 | 134 → 120 | 564 → 321 |
+| 15 | 20 | 287 → 183 | 156 → 140 | 569 → 369 |
+| 16 | 12 | 263 → 179 | 140 → 125 | 556 → 396 |
+
+Live heap falls by 32–54% and peak memory by 29–48%. Exact buffers alone account
+for 7–18 MiB of the live heap; the rest is the preparation. Allocation while
+building falls by 6–14% and build time is unchanged.
+
+Viewer on llvmpipe with the previous budgets (256 MiB cache, 128 MiB per scene),
+where the uploaded copies live in the same process:
+
+| Camera zoom | Peak RSS MiB | Complete before | Complete after | With `-cpu-scene-bytes` 256 MiB |
+| ---: | ---: | --- | --- | --- |
+| 9 | 972 → 776 | no | no | yes |
+| 11 | 773 → 576 | yes | yes | yes |
+| 12 | 770 → 601 | yes | yes | yes |
+| 13 | 945 → 857 | no | no | no |
+| 14 | 961 → 794 | no | no | yes |
+| 14.5 | 944 → 773 | no | yes | yes |
+| 15 | 890 → 740 | no | no | yes |
+| 16 | 869 → 763 | no | yes | yes |
+
+Peak memory falls by 9–25%. Complete views go from two of eight to four, and to
+seven with a scene budget of 256 MiB. Zoom 13 also needs a cache budget of 320
+MiB or more (peak 1,095 MiB). Static screenshots at zoom 11 and 12 are identical
+to the previous binary in all 480,000 pixels.
+
+With the new default budgets all eight views are complete, at a peak of
+578–819 MiB and 1,067 MiB for zoom 13. A scene shares its buffers with the cache,
+so the larger scene budget costs little while both hold the same tiles, but the
+documented worst case of cache plus four leases rises from 768 MiB to 1,408 MiB.
+
+#### Not done
+
+- The prefetch ring is composed and uploaded with the view: 30 tiles at zoom 14
+  where 12 are visible, and 12 at zoom 16 where two are.
+- The vertex format. Dropping unused fields would save about 28% of vertex
+  bytes; a quantized 12-byte vertex would save half. Both change the scene
+  format, the shaders and the adapter.
+- Collector headroom. With `GOGC=50` the probe peaks at 280–295 MiB against
+  360–367 MiB at zoom 14, with no slower build on this host.
+
+#### Verification
+
+- Geometry: reserved builders produce the same buffers without reallocating;
+  reservation is bounded by the element limit and never raises it; compacted
+  buffers keep their contents and an exact buffer is not copied again. Coverage
+  is **98.1%**.
+- Compiler: fragments packed with and without reservation are equal, split and
+  unsplit, indexed and expanded, with a present and a missing sprite, and every
+  mesh has capacity equal to length. Coverage stays at **100%**.
+- Tiles: fragments built with and without the resident options hold no unused
+  capacity. The tests fail without the change.
+- Producer: with `DiscardPreparation` the cache holds no preparation after a
+  build, and new assets prepare the tile again without loading it; without it
+  the preparation serves the new assets.
+- Race, vet and staticcheck pass on geometry, compiler, tiles and producer; the
+  full pkg/vecmap suite, the tagged viewer and adapter suites on OpenGL and
+  tagged staticcheck pass. The tagged suites were not rerun on Vulkan.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and
