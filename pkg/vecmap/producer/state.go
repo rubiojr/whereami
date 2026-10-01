@@ -16,6 +16,7 @@ type entry struct {
 	source        string
 	raw           []byte
 	prepared      *tiles.Prepared
+	decoded       *tiles.Source // Limits.ReuseDecoded; charged as Prepared
 	fragment      *tiles.Fragment
 	style, assets uint64 // owner epochs, never native generations
 	usage         CacheUsage
@@ -497,7 +498,7 @@ func (s *state) loaded(r result) {
 	if old := s.entries[tile]; old != nil {
 		next = *old
 	}
-	next.raw, next.prepared, next.style = nil, nil, 0
+	next.raw, next.prepared, next.decoded, next.style = nil, nil, nil, 0
 	next.usage = entryUsage(tile, &next)
 	next.usage.Raw = 2 * uint64(len(r.data))
 	if !s.admitPrepared(tile, &next) {
@@ -525,7 +526,7 @@ func compactResponse(data []byte) []byte {
 func entryUsage(tile view.TileID, e *entry) CacheUsage {
 	// In addition to the response, reserve its entire size for decoded string
 	// backing that an evaluated candidate can borrow through a short substring.
-	return CacheUsage{Raw: 2 * uint64(cap(e.raw)), Prepared: e.prepared.RetainedBytes(), Fragments: e.fragment.RetainedBytes() + e.fragment.SetCopyBytes(tile)}
+	return CacheUsage{Raw: 2 * uint64(cap(e.raw)), Prepared: e.prepared.RetainedBytes() + e.decoded.RetainedBytes(), Fragments: e.fragment.RetainedBytes() + e.fragment.SetCopyBytes(tile)}
 }
 
 // Charge complete immutable style profiles once per cache, including obsolete

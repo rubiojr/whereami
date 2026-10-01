@@ -102,6 +102,24 @@ type BuildResult struct {
 	Limits       []mvt.LayerLimits
 }
 
+// Source is a decoded tile: features with triangulated fills, independent of
+// style and style zoom. It is immutable, so concurrent preparations may share
+// it, and preparing it at another style zoom skips decoding and triangulation.
+type Source struct {
+	tile    *mvt.Tile
+	indexed bool
+}
+
+// Decode decodes bounded MVT input for PrepareSource. indexed must match the
+// PrepareOptions.Indexed of every preparation that uses the source.
+func Decode(data []byte, indexed bool) (*Source, error) {
+	tile, err := mvt.DecodeTile(data, indexed)
+	if err != nil {
+		return nil, err
+	}
+	return &Source{tile: tile, indexed: indexed}, nil
+}
+
 // Prepare decodes bounded MVT input and compiles caller-supplied style layers using
 // the existing geometry/candidate algorithms. Layers must have strictly increasing
 // nonnegative Order values (as produced by style.Compile). Styles are trusted,
@@ -111,25 +129,37 @@ func Prepare(data []byte, layers []style.CompiledLayer, options PrepareOptions) 
 	if err := options.validate(layers); err != nil {
 		return nil, err
 	}
-	if options.CandidateLimit == 0 {
-		options.CandidateLimit = placement.MaxSymbols
-	}
-	source, err := mvt.DecodeTile(data, options.Indexed)
+	source, err := Decode(data, options.Indexed)
 	if err != nil {
 		return nil, err
 	}
-	p := &Prepared{options: options, limits: source.Limits, orders: make([]int, len(layers))}
+	return PrepareSource(source, layers, options)
+}
+
+// PrepareSource is Prepare for an already decoded tile, with identical output.
+func PrepareSource(source *Source, layers []style.CompiledLayer, options PrepareOptions) (*Prepared, error) {
+	if err := options.validate(layers); err != nil {
+		return nil, err
+	}
+	if source == nil || source.indexed != options.Indexed {
+		return nil, ErrInput
+	}
+	if options.CandidateLimit == 0 {
+		options.CandidateLimit = placement.MaxSymbols
+	}
+	tile := source.tile
+	p := &Prepared{options: options, limits: tile.Limits, orders: make([]int, len(layers))}
 	for i, layer := range layers {
 		p.orders[i] = layer.Order
 	}
-	err = compiler.CompileTile(layers, source.Layers, compiler.LayerOptions{
+	err := compiler.CompileTile(layers, tile.Layers, compiler.LayerOptions{
 		SourceZoom: int(options.Tile.Z), Zoom: options.Zoom, Indexed: options.Indexed, TriangleLimit: options.TriangleLimit,
 		ExtrudeLines: options.ResidentGeometry, ShaderDashes: options.ResidentDashes, Coarser: options.Coarser,
 	}, func(primitive compiler.Primitive) error {
 		p.primitives = append(p.primitives, primitive)
 		return nil
 	}, func(layer style.CompiledLayer) error {
-		return placement.PrepareSymbols(source.Layers[layer.SourceLayer], layer,
+		return placement.PrepareSymbols(tile.Layers[layer.SourceLayer], layer,
 			placement.SymbolOptions{SourceZoom: options.Tile.Z, Zoom: options.Zoom, Coarser: options.Coarser, Limit: options.CandidateLimit - len(p.symbols)},
 			func(symbol placement.Symbol) error { p.symbols = append(p.symbols, symbol); return nil })
 	})

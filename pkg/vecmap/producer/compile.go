@@ -21,6 +21,7 @@ type compileJob struct {
 	source   string
 	raw      []byte          // the cached response, never modified
 	prepared *tiles.Prepared // a reusable preparation, or nil to prepare raw
+	decoded  *tiles.Source   // raw already decoded, or nil to decode it
 	layers   []style.CompiledLayer
 	options  tiles.PrepareOptions
 	style    uint64 // owner style epoch the job prepares for
@@ -104,6 +105,7 @@ func (s *state) visibleCover() []view.TileID {
 type compileResult struct {
 	job                 compileJob
 	prepared            *tiles.Prepared
+	decoded             *tiles.Source // decoded by this job
 	fragment            *tiles.Fragment
 	assets              uint64 // owner asset epoch of the build
 	ranPrepare, built   bool
@@ -140,12 +142,20 @@ func (p *Producer) compiler(wg *sync.WaitGroup) {
 	}
 }
 
-// prepareTile runs the job's preparation unless it reuses one.
+// prepareTile runs the job's preparation unless it reuses one, decoding raw
+// unless the job carries a decoded source.
 func prepareTile(j compileJob) compileResult {
 	r := compileResult{job: j, prepared: j.prepared, stage: "prepare"}
 	if r.prepared == nil {
 		started := time.Now()
-		r.prepared, r.err = tiles.Prepare(j.raw, j.layers, j.options)
+		source := j.decoded
+		if source == nil {
+			source, r.err = tiles.Decode(j.raw, j.options.Indexed)
+			r.decoded = source
+		}
+		if r.err == nil {
+			r.prepared, r.err = tiles.PrepareSource(source, j.layers, j.options)
+		}
 		r.preparing, r.ranPrepare = time.Since(started), true
 	}
 	return r
@@ -217,6 +227,7 @@ func (s *state) startCompile(tile view.TileID, e *entry, place tilePlace) compil
 	}
 	if j.prepared == nil {
 		j.cause = prepareCauseOf(e, s.working.Style)
+		j.decoded = e.decoded
 	}
 	s.compiling[tile] = j
 	s.stats.PeakCompiling = max(s.stats.PeakCompiling, len(s.compiling))
@@ -234,6 +245,9 @@ func (s *state) compiled(r compileResult) {
 		s.stats.Preparing.observe(r.preparing)
 		s.stats.Prepares++
 		s.stats.PrepareCauses.add(j.cause, j.place)
+		if j.decoded != nil {
+			s.stats.PrepareCauses.Decoded++
+		}
 		s.workingPrepares++
 	}
 	if r.built {
@@ -259,6 +273,9 @@ func (s *state) compiled(r compileResult) {
 		next.prepared, next.fragment = r.prepared, r.fragment
 		if s.p.limits.DiscardPreparation {
 			next.prepared = nil
+		}
+		if r.decoded != nil && s.p.limits.ReuseDecoded {
+			next.decoded = r.decoded
 		}
 		next.preparedUse = s.stats.Builds
 		next.usage = entryUsage(j.tile, &next)

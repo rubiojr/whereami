@@ -113,6 +113,10 @@ type Limits struct {
 	// its raw response. False keeps them until the cache budget needs the room.
 	// Set it when assets do not change after the first request.
 	DiscardPreparation bool
+	// ReuseDecoded keeps each tile's decoded source after preparing it, so a
+	// new style zoom prepares the tile without decoding and triangulating it
+	// again. Sources are charged and reclaimed with preparations.
+	ReuseDecoded bool
 	// DrawMargin bounds the composed scene to the targets within that many
 	// logical pixels of the viewport. Targets beyond it are still loaded and
 	// compiled, so a pan that brings them closer only composes and uploads
@@ -192,6 +196,7 @@ type PrepareCauses struct {
 	Ring      uint64
 	Parent    uint64
 	Wasted    uint64
+	Decoded   uint64 // reused a retained decoded source (Limits.ReuseDecoded)
 }
 
 // Lease pins an immutable snapshot until Release. Keep it alive through every

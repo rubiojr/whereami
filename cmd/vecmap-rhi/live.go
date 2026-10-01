@@ -33,6 +33,7 @@ type liveOptions struct {
 	compactVertices           bool
 	coarser                   int
 	keepPreparation           bool
+	reuseDecoded              bool
 }
 
 type liveSource struct {
@@ -87,6 +88,7 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 	}
 	// The viewer's assets never change, so preparation has no later use.
 	limits.DiscardPreparation = !options.keepPreparation
+	limits.ReuseDecoded = options.reuseDecoded
 	limits.DrawMargin = options.drawMargin
 	if options.workers != 0 {
 		limits.Workers = options.workers

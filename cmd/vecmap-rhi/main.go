@@ -47,6 +47,7 @@ func main() {
 	flag.Uint64Var(&live.cacheBytes, "cpu-cache-bytes", 384<<20, "live raw/prepared/fragment/profile cache budget")
 	flag.Uint64Var(&live.sceneBytes, "cpu-scene-bytes", 256<<20, "live budget of one composed scene; a view that exceeds it shows coarser stand-in tiles")
 	flag.BoolVar(&live.keepPreparation, "keep-preparation", false, "keep prepared primitives after a tile is built, for asset changes")
+	flag.BoolVar(&live.reuseDecoded, "reuse-decoded", false, "keep each tile's decoded source, so a new style zoom prepares it without decoding and triangulating again; costs more GC than it saves today")
 	flag.Float64Var(&live.drawMargin, "draw-margin", 256, "draw live tiles within this many logical pixels of the viewport; tiles beyond stay compiled for a pan; zero draws every loaded tile")
 	flag.IntVar(&live.workers, "tile-workers", 4, "live transport workers (1-4); use 1 for ordered cache replay")
 	flag.IntVar(&live.compilers, "tile-compilers", 1, "live goroutines that prepare and build tiles (1-8); more finish a view sooner on more cores")
@@ -217,7 +218,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d reuse_decoded=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers, options.liveOptions.reuseDecoded)
 	if options.diagnostics {
 		pacing.report()
 		waits.report()
@@ -231,7 +232,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 		fmt.Printf("producer_loads=%d prepares=%d builds=%d rejected=%d peak_jobs=%d peak_cache_bytes=%d peak_leases=%d peak_lease_bytes=%d pending=%d failed=%d last_error=%q\n", s.Loads, s.Prepares, s.Builds, s.Rejected, s.PeakJobs, s.PeakCacheBytes, s.PeakLeases, s.PeakLeaseBytes, s.Pending, s.Failed, s.LastError)
 		fmt.Printf("producer_requested=%d selected=%d fallbacks=%d error_stage=%q response_bytes=%d raw_capacity_bytes=%d\n", s.Requested, s.SelectedTiles, s.Fallbacks, s.LastErrorStage, s.ResponseBytes, s.RawCapacityBytes)
 		c := s.PrepareCauses
-		fmt.Printf("prepare_causes first=%d style_zoom=%d style=%d repeat=%d ring=%d parent=%d wasted=%d\n", c.First, c.StyleZoom, c.Style, c.Repeat, c.Ring, c.Parent, c.Wasted)
+		fmt.Printf("prepare_causes first=%d style_zoom=%d style=%d repeat=%d ring=%d parent=%d wasted=%d decoded=%d\n", c.First, c.StyleZoom, c.Style, c.Repeat, c.Ring, c.Parent, c.Wasted, c.Decoded)
 		fmt.Printf("cache_raw=%d prepared=%d fragments=%d profiles=%d peak_raw=%d peak_prepared=%d peak_fragments=%d peak_profiles=%d\n", s.Cache.Raw, s.Cache.Prepared, s.Cache.Fragments, s.Cache.Profiles, s.PeakCache.Raw, s.PeakCache.Prepared, s.PeakCache.Fragments, s.PeakCache.Profiles)
 		fmt.Printf("preparation_evictions=%d preparation_bytes_freed=%d uncached_preparations=%d capacity_retries=%d continuity_evictions=%d continuity_bytes_freed=%d\n", s.PreparationEvictions, s.PreparationBytesFreed, s.UncachedPreparations, s.CapacityRetries, s.ContinuityEvictions, s.ContinuityBytesFreed)
 		fmt.Printf("load_style_reuses=%d style_reuses=%d skipped_builds=%d deferred_selections=%d unchanged_current=%d\n", s.LoadStyleReuses, s.StyleReuses, s.SkippedBuilds, s.DeferredSelections, s.UnchangedCurrent)

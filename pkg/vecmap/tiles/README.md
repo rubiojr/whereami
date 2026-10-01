@@ -98,6 +98,13 @@ pixels remain immutable borrows. Font maps and layout scratch are not retained b
 the built fragment. Style zoom, visibility and paint are frozen at Prepare; prepare
 again when the producer's style-zoom/epoch changes.
 
+`Decode(data, indexed)` returns the decoded `Source`: features with triangulated
+fills, which depend on neither style nor style zoom. `PrepareSource` prepares it
+with the same output as `Prepare`, so preparing a tile again at a new style zoom
+skips decoding and Earcut, about 60% of a Liberty preparation. `Prepare` is
+`Decode` plus `PrepareSource`. A source is immutable and may back concurrent
+preparations; its `Indexed` must match the options'.
+
 `PrepareOptions.ResidentGeometry` keeps zoom-independent geometry byte-identical
 across those preparations. The fragment then has up to two meshes with fixed local
 IDs: `compiler.StableMesh` holds fills, patterns and width-independent extruded
@@ -286,7 +293,7 @@ byte limits retain Store/Planner's logical accounting. Bound producer jobs and o
 snapshot lifetimes separately. Neither Set nor Store may be copied or used
 concurrently; published snapshots and everything reachable from them are immutable.
 
-`Prepared`, `Fragment` and `Snapshot` expose `RetainedBytes` logical CPU charges:
+`Prepared`, `Source`, `Fragment` and `Snapshot` expose `RetainedBytes` logical CPU charges:
 backing-array capacities, value metadata and string lengths, with shared storage
 counted repeatedly. Allocator/map overhead and hidden borrowed backing are separate
 producer obligations. `SelectBounded` limits that snapshot charge before caching or

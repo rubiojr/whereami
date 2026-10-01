@@ -34,6 +34,44 @@ func (p *Prepared) RetainedBytes() uint64 {
 	return n
 }
 
+// RetainedBytes charges a decoded source like Prepared.RetainedBytes: feature
+// arrays, geometry and triangulation backing, and property keys and string
+// values. String backing borrowed from the response is charged here as well.
+func (s *Source) RetainedBytes() uint64 {
+	if s == nil {
+		return 0
+	}
+	n := uint64(unsafe.Sizeof(*s)+unsafe.Sizeof(*s.tile)) + arrayBytes(s.tile.Limits)
+	for name, features := range s.tile.Layers {
+		n += uint64(len(name)) + uint64(unsafe.Sizeof(features)) + arrayBytes(features)
+		for _, f := range features {
+			n += arrayBytes(f.Points) + arrayBytes(f.Lines) + arrayBytes(f.Polygons)
+			for _, line := range f.Lines {
+				n += arrayBytes(line)
+			}
+			for _, polygon := range f.Polygons {
+				n += arrayBytes(polygon.Exterior) + arrayBytes(polygon.Holes) + arrayBytes(polygon.Vertices) + arrayBytes(polygon.Indices)
+				for _, hole := range polygon.Holes {
+					n += arrayBytes(hole)
+				}
+			}
+			for key, value := range f.Properties {
+				n += uint64(len(key)) + uint64(unsafe.Sizeof(key)+unsafe.Sizeof(value))
+				if text, ok := value.(string); ok {
+					n += uint64(len(text))
+				}
+			}
+		}
+	}
+	for _, v := range s.tile.Limits {
+		n += uint64(len(v.Name))
+		if v.Last != nil {
+			n += uint64(len(v.Last.Error()))
+		}
+	}
+	return n
+}
+
 // RetainedBytes uses the same conservative logical charge as Prepared.RetainedBytes.
 // Borrowed sprite pixels are charged in full, independently of the asset owner.
 func (f *Fragment) RetainedBytes() uint64 {

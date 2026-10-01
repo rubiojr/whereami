@@ -522,3 +522,57 @@ func TestPrepareCausesPlaceTiles(t *testing.T) {
 	}
 	assert.Equal(t, PrepareCauses{First: 3, Ring: 1, Parent: 1}, s.stats.PrepareCauses)
 }
+
+func TestReuseDecodedAcrossStyleZooms(t *testing.T) {
+	for _, reuse := range []bool{false, true} {
+		r := testRequest(t)
+		s := churnState(t, r)
+		s.p.limits.ReuseDecoded, s.p.limits.DiscardPreparation = reuse, true
+		tile := s.visibleCover()[0]
+		s.entries[tile] = &entry{raw: tilePBF(), source: r.Style.Source}
+		compile := func() {
+			require.True(t, s.compileNext())
+			s.publish()
+			if lease, ok := s.p.Next(); ok {
+				lease.Release()
+			}
+		}
+		compile()
+		decoded := s.entries[tile].decoded
+		assert.Equal(t, reuse, decoded != nil)
+		assert.Equal(t, decoded.RetainedBytes(), s.entries[tile].usage.Prepared, "a decoded source is charged as preparation")
+		next := *r.Style
+		next.Epoch++
+		next.Options.Zoom = 2.0625
+		r.Style = &next
+		_, err := s.p.Submit(r)
+		require.NoError(t, err)
+		s.inputs()
+		compile()
+		assert.Same(t, decoded, s.entries[tile].decoded)
+		assert.Equal(t, uint64(2), s.stats.Prepares)
+		assert.Equal(t, uint64(boolInt(reuse)), s.stats.PrepareCauses.Decoded)
+	}
+}
+
+func TestDecodedSourceFollowsItsResponse(t *testing.T) {
+	r := testRequest(t)
+	s := churnState(t, r)
+	s.p.limits.ReuseDecoded = true
+	tile := s.visibleCover()[0]
+	s.entries[tile] = &entry{raw: tilePBF(), source: r.Style.Source}
+	require.True(t, s.compileNext())
+	e := s.entries[tile]
+	require.NotNil(t, e.decoded)
+	s.dropPrepared(e)
+	assert.Nil(t, e.decoded, "reclaim drops the decoded source with the preparation")
+	assert.Equal(t, uint64(1), s.stats.PreparationEvictions)
+
+	s.entries[tile].decoded, _ = tiles.Decode(tilePBF(), true)
+	ctx, cancel := context.WithCancel(context.Background())
+	j := job{key: Key{Source: r.Style.Source, Tile: tile, Generation: s.generation}, ctx: ctx, cancel: cancel}
+	s.running[tile] = j
+	s.loaded(result{job: j, data: tilePBF()})
+	require.NotNil(t, s.entries[tile].raw)
+	assert.Nil(t, s.entries[tile].decoded, "a new response invalidates the old decode")
+}

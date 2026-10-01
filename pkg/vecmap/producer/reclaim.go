@@ -101,7 +101,7 @@ func (s *state) reclaimPrepared(tile view.TileID, next *entry) bool {
 	}
 	var candidates []view.TileID
 	for key, e := range s.entries {
-		if key != tile && e.prepared != nil {
+		if key != tile && (e.prepared != nil || e.decoded != nil) {
 			candidates = append(candidates, key)
 		}
 	}
@@ -116,9 +116,9 @@ func (s *state) reclaimPrepared(tile view.TileID, next *entry) bool {
 			return true
 		}
 	}
-	if next.prepared != nil {
+	if next.prepared != nil || next.decoded != nil {
 		s.stats.UncachedPreparations++
-		next.prepared = nil
+		next.prepared, next.decoded = nil, nil
 		next.usage.Prepared = 0
 	}
 	return s.cacheCharge(tile, next) <= s.p.limits.CacheBytes
@@ -127,7 +127,7 @@ func (s *state) reclaimPrepared(tile view.TileID, next *entry) bool {
 func (s *state) dropPrepared(e *entry) {
 	s.stats.PreparationEvictions++
 	s.stats.PreparationBytesFreed += e.usage.Prepared
-	e.prepared = nil
+	e.prepared, e.decoded = nil, nil
 	e.usage.Prepared = 0
 }
 

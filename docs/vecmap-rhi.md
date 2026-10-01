@@ -527,6 +527,32 @@ Style evaluation and symbol preparation took about a tenth. Go's background GC
 added another 1.06 s on other cores. Build, repeated per epoch too, wasn't
 profiled.
 
+#### Reusing decoded tiles costs more GC than it saves
+
+`tiles.Decode`/`PrepareSource` split decoding from compilation, and
+`producer.Limits.ReuseDecoded` (viewer `-reuse-decoded`) keeps each tile's decoded
+source so a new style zoom skips decoding and Earcut. Output is unchanged: a
+shared source prepares the same `Prepared` as a fresh decode on the synthetic and
+pinned Madrid tiles at every zoom tested. Five runs per row, same corpus and trace:
+
+| Coarser 1, OpenGL | Reuse off | Reuse on |
+| --- | ---: | ---: |
+| Preparation wall | 2.25–2.44 s | 1.35–1.37 s |
+| Build wall | 1.23–1.29 s | 1.37–1.40 s |
+| Selection wall | 0.70–0.80 s | 0.83–0.89 s |
+| Process CPU | 7.19–7.57 s | 9.40–10.06 s |
+| Peak RSS | 481–510 MiB | 537–562 MiB |
+| Settle after trace | 77–90 ms | 73–85 ms |
+
+Coarser 0 and Vulkan moved the same way: CPU 8.4–8.9 s against 11.9–12.5 s, RSS
+up 75–140 MiB. A `GODEBUG=gctrace=1` run each at Coarser 1 explains it: 237 GC
+cycles with 1.31 s of GC CPU without reuse, 174 cycles with 4.15 s with it.
+Decoded features are pointer-dense (property maps, interface values, a slice per
+line and ring), so every cycle scans the retained sources; the live heap was
+mostly pointer-free vertex and index buffers before. Reuse stays off by default.
+It would pay with a pointer-free decoded representation, which the producer
+plumbing doesn't need to change for.
+
 #### Vulkan FIFO stalls in live mode on native Wayland
 
 In live mode on Vulkan under headless mutter, the default FIFO present mode (and
