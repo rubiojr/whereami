@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 	"github.com/rubiojr/whereami/pkg/vecmap/sprite"
 	"github.com/rubiojr/whereami/pkg/vecmap/style"
 	"github.com/rubiojr/whereami/pkg/vecmap/tiles"
@@ -696,4 +697,42 @@ func TestCameraSelectIntervalCoalescesCameraOnlySelections(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("no wake after the interval")
 	}
+}
+
+func TestReuseStableAcrossStyleZooms(t *testing.T) {
+	scenes := map[bool][]*scene.Scene{}
+	for _, reuse := range []bool{false, true} {
+		r := testRequest(t)
+		resident := *r.Style
+		resident.Options.ResidentGeometry = true
+		r.Style = &resident
+		s := churnState(t, r)
+		s.p.limits.ReuseDecoded, s.p.limits.ReuseStable, s.p.limits.DiscardPreparation = true, reuse, true
+		tile := s.visibleCover()[0]
+		s.entries[tile] = &entry{raw: tilePBF(), source: r.Style.Source}
+		compile := func() {
+			require.True(t, s.compileNext())
+			s.publish()
+			if lease, ok := s.p.Next(); ok {
+				lease.Release()
+			}
+			scenes[reuse] = append(scenes[reuse], s.entries[tile].fragment.Scene)
+		}
+		compile()
+		assert.Equal(t, reuse, s.entries[tile].stable.Valid())
+		for _, zoom := range []float64{2.0625, 2.125, 3} {
+			styleZoom(t, s, &r, zoom)
+			s.inputs()
+			compile()
+		}
+		assert.Equal(t, uint64(4), s.stats.Prepares)
+		assert.Equal(t, uint64(3*boolInt(reuse)), s.stats.PrepareCauses.Stable)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		j := job{key: Key{Source: r.Style.Source, Tile: tile, Generation: s.generation}, ctx: ctx, cancel: cancel}
+		s.running[tile] = j
+		s.loaded(result{job: j, data: tilePBF()})
+		assert.False(t, s.entries[tile].stable.Valid(), "a new response invalidates the borrowed mesh")
+	}
+	assert.Equal(t, scenes[false], scenes[true], "borrowing builds the same fragments")
 }

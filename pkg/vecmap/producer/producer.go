@@ -117,6 +117,15 @@ type Limits struct {
 	// new style zoom prepares the tile without decoding and triangulating it
 	// again. Sources are charged and reclaimed with preparations.
 	ReuseDecoded bool
+	// ReuseStable prepares a tile again for a new style zoom borrowing the
+	// StableMesh of its installed fragment (tiles.PrepareSourceReusing) when
+	// every stable batch (fills, patterns, extruded and shader-dashed lines)
+	// comes out the same: the style is evaluated but that geometry isn't
+	// tessellated or packed again, and the new fragment shares its buffers.
+	// Output is identical either way. It needs ResidentGeometry in the style's
+	// options and borrows only with ReuseDecoded, since a fragment names the
+	// decoded source it was prepared from.
+	ReuseStable bool
 	// DeferHiddenRefresh prepares a tile again for newer paint inputs only once
 	// it is in the selected cover: drawn, or standing in for a drawn target.
 	// Hidden desired tiles (prefetch ring beyond DrawMargin, unused parents)
@@ -213,6 +222,7 @@ type PrepareCauses struct {
 	Parent    uint64
 	Wasted    uint64
 	Decoded   uint64 // reused a retained decoded source (Limits.ReuseDecoded)
+	Stable    uint64 // built borrowing the previous fragment's StableMesh (Limits.ReuseStable)
 }
 
 // Lease pins an immutable snapshot until Release. Keep it alive through every

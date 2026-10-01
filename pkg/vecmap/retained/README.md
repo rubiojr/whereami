@@ -187,6 +187,9 @@ err = planner.Acknowledge(batch.Ticket, success)
   time it is targeted: resident and already targeted versions keep the payload
   that was checked, and a resident one is never uploaded again
   (`scene.Scene.ValidateExcept`). Sizes, IDs and draws are checked every time.
+- `Apply` likewise skips the content checks of a replacement mesh made of the very
+  buffers of the mesh it replaces (same key and local ID), as a borrowed
+  `StableMesh` is, and such a mesh keeps its revision without a byte comparison.
 - Active plus desired **unique kind/ID/revision versions** must fit the configured
   residency ceilings before the target changes. Defaults/maxima are **1 GiB of
   logical payload and 16,384 resources**, sufficient for two maximum-sized Store

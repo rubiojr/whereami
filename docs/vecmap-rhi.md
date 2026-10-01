@@ -695,6 +695,41 @@ with the changes above:
 Each doubling halves GC CPU and adds 20–35% peak RSS; no setting approaches
 MapLibre on both. Allocating less moves the whole curve, so the default stays.
 
+##### Borrowing the stable mesh across style zooms
+
+At every sixteenth step each drawn tile was still prepared and built in full,
+and the Store then found its stable mesh (fills, patterns, extruded and
+shader-dashed lines) byte-identical: on the corpus it was identical at all 300
+steps of the 20 z9 tiles and all 630 of the 42 z10 tiles, including steps across
+an integer zoom. `tiles.PrepareSourceReusing` (`producer.Limits.ReuseStable`,
+viewer `-reuse-stable`) proves that before tessellating. Preparation records a
+`compiler.StablePlan`: per stable batch, a seeded hash of its kind, layer, cap,
+join and source feature indices, its size and whether paint emitted it, and after
+a build the draw range it got. A preparation of the same decoded source at another
+style zoom evaluates the style, checks each batch against the plan, and emits
+placeholders instead of geometry; the build publishes the previous `StableMesh`
+as is and draws the placeholders from their recorded ranges with new materials.
+A different batch, a batch that paint now hides or shows, or a pattern sprite
+that appears or goes missing falls back to the full path, so output is identical
+either way. The Store recognizes the shared buffers, which keep their revision
+with neither a byte comparison nor validation. Five interleaved runs each, same
+binary:
+
+| Row | CPU off → on | Peak RSS off → on | Allocated | Prepare + build wall |
+| --- | ---: | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 4.38–4.66 → 3.84–3.96 s | 500–546 → 426–514 MiB | 6.7 → 4.4 GB | 2.05–2.18 → 1.61–1.65 s |
+| Coarser 1, Vulkan | 4.38–4.62 → 3.59–3.89 s | 463–512 → 449–474 MiB | 6.7 → 4.3 GB | 2.07–2.23 → 1.53–1.67 s |
+| Coarser 0, OpenGL | 5.88–6.48 → 5.37–5.72 s | 671–705 → 542–564 MiB | 9.3 → 6.3 GB | 2.55–2.89 → 2.05–2.24 s |
+| Coarser 0, Vulkan | 5.64–6.36 → 5.07–5.31 s | 617–658 → 497–512 MiB | 9.2 → 6.3 GB | 2.57–2.93 → 2.04–2.16 s |
+
+Every style-zoom preparation borrowed (147–148 at Coarser 1, 320–335 at Coarser
+0). Final frames are pixel-identical, every run had zero late frames, and
+settlement was 49–99 ms at Coarser 1 and 288–355 ms at Coarser 0 in both modes.
+GC CPU fell about a fifth. Peak RSS falls because less garbage is in flight, not
+because anything is retained less: a plan is about 32 bytes per stable batch.
+Producer selection took 10–20% longer in total with borrowing; it wasn't
+investigated. The viewer turns it on.
+
 #### Vulkan FIFO stalls in live mode on native Wayland
 
 In live mode on Vulkan under headless mutter, the default FIFO present mode (and

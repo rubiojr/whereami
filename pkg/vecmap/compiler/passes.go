@@ -34,6 +34,10 @@ func (b *SceneBuilder) primitive(tile view.TileID, wrap int, primitive Primitive
 	if primitive.PatternName != "" {
 		image, ok := b.sprite(lookup, primitive.PatternName, style.Color{Red: 255, Green: 255, Blue: 255, Alpha: 255}, 1)
 		if !ok {
+			if primitive.borrowed != 0 && b.err == nil && b.stablePlan != nil && primitive.StableRun > 0 &&
+				primitive.StableRun <= len(b.stablePlan.runs) && b.stablePlan.runs[primitive.StableRun-1].drawn {
+				b.err = ErrStableMismatch // the borrowed mesh holds geometry a missing sprite would leave out
+			}
 			return period
 		}
 		width, height := float64(image.Width)/image.PixelRatio*primitive.PatternScale, float64(image.Height)/image.PixelRatio*primitive.PatternScale
@@ -43,6 +47,10 @@ func (b *SceneBuilder) primitive(tile view.TileID, wrap int, primitive Primitive
 			Color: [4]float32{1, 1, 1, float32(primitive.Opacity)}, PatternSize: [2]float32{float32(width), float32(height)}, PatternPhase: [2]float32{float32(x), float32(y)}}
 	}
 	clip := [4]float32{0, 0, view.TileSize, view.TileSize}
+	if primitive.borrowed != 0 {
+		b.borrowDraw(primitive, material, clip)
+		return period
+	}
 	if primitive.Dynamic {
 		b.class = dynamicClass
 	}

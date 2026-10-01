@@ -45,6 +45,10 @@ type SceneBuilder struct {
 	closed    bool
 	breakDraw bool
 	drawLimit int
+	// borrowed is a StableMesh from an earlier build, published as is, and
+	// stablePlan the plan its draws come from; see FragmentBuilder.Borrow.
+	borrowed   *scene.Mesh
+	stablePlan *StablePlan
 }
 
 // NewSceneBuilder selects the output topology. Zero maximumElements selects the
@@ -183,7 +187,20 @@ func (b *SceneBuilder) unused() bool {
 }
 
 func (b *SceneBuilder) elements() int {
-	return b.mesh.Count() + b.dynamic.Count() + b.symbols.Count()
+	elements, _ := b.borrowedCounts()
+	return b.mesh.Count() + b.dynamic.Count() + b.symbols.Count() + elements
+}
+
+// borrowedCounts are the draw elements and vertices of a borrowed StableMesh.
+func (b *SceneBuilder) borrowedCounts() (elements, vertices int) {
+	if b.borrowed == nil {
+		return 0, 0
+	}
+	vertices = len(b.borrowed.Vertices) + len(b.borrowed.Offsets) + len(b.borrowed.Positions)
+	if b.indexed {
+		return len(b.borrowed.Indices), vertices
+	}
+	return vertices, vertices
 }
 
 // target selects the mesh receiving the next geometry and its scene-local ID.
@@ -328,7 +345,8 @@ func (b *SceneBuilder) check(vertices int, indices []uint32) bool {
 	if indices != nil {
 		count = len(indices)
 	}
-	used, usedVertices := b.elements(), b.mesh.vertices()+b.dynamic.vertices()+b.symbols.vertices()
+	_, borrowedVertices := b.borrowedCounts()
+	used, usedVertices := b.elements(), b.mesh.vertices()+b.dynamic.vertices()+b.symbols.vertices()+borrowedVertices
 	if vertices > b.limit || count > b.limit-used || (b.indexed && vertices > b.limit-usedVertices) {
 		b.err = geometry.ErrGeometryLimit
 		return false
@@ -412,6 +430,10 @@ func (b *SceneBuilder) geometry(mesh geometry.Mesh, directions []geometry.Point,
 		return packed
 	}
 	target, id := b.target()
+	if id == StableMesh && b.borrowed != nil {
+		b.err = ErrPackingInput // the borrowed StableMesh is complete
+		return
+	}
 	layout := b.Layout(directions != nil, distances != nil)
 	first := target.count(layout)
 	switch layout {
@@ -500,7 +522,10 @@ func (b *SceneBuilder) draw(target *sections, id uint64, layout scene.Layout, fi
 	if b.err != nil || count == 0 {
 		return
 	}
-	draw := scene.Draw{Mesh: id, First: uint32(first), Count: uint32(count), Material: material, Clip: clip, Layout: layout}
+	b.appendDraw(scene.Draw{Mesh: id, First: uint32(first), Count: uint32(count), Material: material, Clip: clip, Layout: layout})
+}
+
+func (b *SceneBuilder) appendDraw(draw scene.Draw) {
 	if b.breakDraw {
 		if len(b.result.Draws) >= b.drawLimit {
 			b.err = geometry.ErrGeometryLimit
@@ -542,14 +567,51 @@ func (b *SceneBuilder) finish(allowEmpty bool) (*scene.Scene, error) {
 			sections *sections
 			id       uint64
 		}{{&b.mesh, StableMesh}, {&b.dynamic, DynamicMesh}, {&b.symbols, SymbolMesh}} {
-			if mesh.sections.Count() > 0 {
+			if mesh.id == StableMesh && b.borrowed != nil {
+				b.result.Meshes = append(b.result.Meshes, *b.borrowed)
+			} else if mesh.sections.Count() > 0 {
 				b.publish(mesh.sections, mesh.id)
 			}
 		}
 	}
-	if err := b.result.Validate(); err != nil {
+	// A borrowed StableMesh passed these checks in the build it comes from.
+	if err := b.result.ValidateExcept(func(mesh *scene.Mesh) bool { return b.borrowed != nil && mesh.ID == StableMesh }); err != nil {
 		b.err = err
 		return nil, err
 	}
 	return &b.result, nil
+}
+
+// borrowDraw draws a borrowed primitive from the range its run had in the
+// build the StableMesh comes from, with the material checks of Extruded and
+// Dashed.
+func (b *SceneBuilder) borrowDraw(primitive Primitive, material scene.Material, clip [4]float32) {
+	if b.stablePlan == nil || primitive.StableRun < 1 || primitive.StableRun > len(b.stablePlan.runs) {
+		b.err = ErrPackingInput
+		return
+	}
+	run := b.stablePlan.runs[primitive.StableRun-1]
+	if !run.drawn {
+		b.err = ErrStableMismatch // a pattern sprite now packs geometry
+		return
+	}
+	switch primitive.borrowed {
+	case dashedShape:
+		if !(primitive.DashUnit > 0) || math.IsInf(primitive.DashUnit, 0) || !(primitive.Dashes[0] > 0) {
+			b.err = ErrPackingInput
+			return
+		}
+		material.Kind, material.DashUnit = scene.Dashed, float32(primitive.DashUnit)
+		for i, dash := range primitive.Dashes {
+			material.Dashes[i] = float32(dash)
+		}
+		fallthrough
+	case extrudedShape:
+		if !(primitive.HalfWidth > 0) || math.IsInf(primitive.HalfWidth, 0) {
+			b.err = ErrPackingInput
+			return
+		}
+		material.MapAligned, material.OffsetScale = true, float32(primitive.HalfWidth)
+	}
+	b.appendDraw(scene.Draw{Mesh: StableMesh, First: run.first, Count: run.count, Material: material, Clip: clip, Layout: run.layout})
 }

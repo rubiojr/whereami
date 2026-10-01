@@ -68,12 +68,44 @@ type DashedSink func(mesh geometry.DashedMesh, color style.Color, pixels, width 
 
 // lineSinks routes tessellated lines. A nil extruded or dashed sink keeps those
 // lines baked. With scratch, extruded and dashed meshes borrow its storage
-// until the sink returns, and the sinks must copy what they keep.
+// until the sink returns, and the sinks must copy what they keep. plan follows
+// the stable batches, extruded and dashed, of a planned compilation.
 type lineSinks struct {
 	baked    SolidSink
 	extruded ExtrudedSink
 	dashed   DashedSink
 	scratch  *lineScratch
+	plan     *StablePlanner
+}
+
+// lineRoute is how emitLines tessellates a batch.
+type lineRoute uint8
+
+const (
+	bakedRoute   lineRoute = iota
+	skippedRoute           // extruded, and too thin to emit anything
+	extrudedRoute
+	dashedRoute
+)
+
+// route depends only on the batch's paint, so a batch knows it when created.
+func (s lineSinks) route(paint linePaint) (lineRoute, geometry.DashPattern) {
+	// Dash lengths and path offsets depend on the evaluated width or offset,
+	// so only plain lines have a width-independent form. The width guard
+	// matches the baked tessellator, which emits nothing at or below Epsilon.
+	if s.extruded != nil && len(paint.dashes) == 0 && paint.offset == 0 {
+		if paint.width <= geometry.Epsilon {
+			return skippedRoute, geometry.DashPattern{}
+		}
+		return extrudedRoute, geometry.DashPattern{}
+	}
+	// Dash lengths are multiples of the width, so a pattern and the distance
+	// along each path replace baked dashes. Dash caps and joins, path offsets
+	// and longer patterns have no such form here.
+	if pattern, ok := geometry.NewDashPattern(paint.dashes, paint.width); ok && s.dashed != nil && paint.offset == 0 && paint.lineCap != "round" && paint.lineCap != "square" {
+		return dashedRoute, pattern
+	}
+	return bakedRoute, geometry.DashPattern{}
 }
 
 // lineScratch is tessellation storage reused by every line batch of a tile.
@@ -100,8 +132,18 @@ type linePaint struct {
 }
 
 type lineBatch struct {
-	paint linePaint
-	paths [][]geometry.Point
+	paint    linePaint
+	paths    [][]geometry.Point
+	features featureHash
+	// borrowed batches are stable and need no paths: the borrowed StableMesh
+	// holds their geometry.
+	borrowed bool
+}
+
+// newLineBatch starts a batch, which needs paths unless it is borrowed.
+func (s lineSinks) newLineBatch(paint linePaint) lineBatch {
+	route, _ := s.route(paint)
+	return lineBatch{paint: paint, borrowed: s.plan.borrowing() && (route == extrudedRoute || route == dashedRoute)}
 }
 
 // CompileFill emits solid batches, then patterns, then outlines, preserving the
@@ -119,14 +161,18 @@ func compileFill(features mvt.Features, layer style.CompiledLayer, options Layer
 		return ErrOptions
 	}
 	type fillBatch struct {
-		color style.Color
-		mesh  geometry.Builder[geometry.Point]
+		color    style.Color
+		mesh     geometry.Builder[geometry.Point]
+		features featureHash
 	}
 	type patternBatch struct {
-		name    string
-		opacity float64
-		mesh    geometry.Builder[geometry.Point]
+		name     string
+		opacity  float64
+		mesh     geometry.Builder[geometry.Point]
+		features featureHash
 	}
+	plan := outlines.plan
+	borrowing := plan.borrowing()
 	batches := make([]fillBatch, 0, 2)
 	batchIndexes := make(map[style.Color]int)
 	patternBatches := make([]patternBatch, 0, 2)
@@ -161,7 +207,11 @@ func compileFill(features mvt.Features, layer style.CompiledLayer, options Layer
 				patternIndexes[patternKey] = patternIndex
 				patternBatches = append(patternBatches, patternBatch{name: patternName, opacity: opacity, mesh: geometry.NewBuilder[geometry.Point](options.Indexed, limit*3)})
 			}
+			plan.add(&patternBatches[patternIndex].features, i)
 			for _, polygon := range feature.Polygons {
+				if borrowing {
+					break
+				}
 				if err := patternBatches[patternIndex].mesh.Append(polygon.Vertices, polygon.Indices); err != nil {
 					return resourceError(err)
 				}
@@ -178,7 +228,11 @@ func compileFill(features mvt.Features, layer style.CompiledLayer, options Layer
 				batchIndexes[color] = batchIndex
 				batches = append(batches, fillBatch{color: color, mesh: geometry.NewBuilder[geometry.Point](options.Indexed, limit*3)})
 			}
+			plan.add(&batches[batchIndex].features, i)
 			for _, polygon := range feature.Polygons {
+				if borrowing {
+					break
+				}
 				if err := batches[batchIndex].mesh.Append(polygon.Vertices, polygon.Indices); err != nil {
 					return resourceError(err)
 				}
@@ -196,21 +250,37 @@ func compileFill(features mvt.Features, layer style.CompiledLayer, options Layer
 		if !exists {
 			outlineIndex = len(outlineBatches)
 			outlineIndexes[paintKey] = outlineIndex
-			outlineBatches = append(outlineBatches, lineBatch{paint: paint})
+			outlineBatches = append(outlineBatches, outlines.newLineBatch(paint))
 		}
-		outlineBatches[outlineIndex].paths = appendPolygonPaths(outlineBatches[outlineIndex].paths, feature.Polygons)
+		batch := &outlineBatches[outlineIndex]
+		plan.add(&batch.features, i)
+		if !batch.borrowed {
+			batch.paths = appendPolygonPaths(batch.paths, feature.Polygons)
+		}
 	}
-	for _, batch := range batches {
-		if err := solid(geometry.Mesh{Vertices: batch.mesh.Vertices, Indices: batch.mesh.Indices}, batch.color); err != nil {
+	for i := range batches {
+		batch := &batches[i]
+		if err := plan.beginRun(stableFill, layer.Order, "", "", &batch.features); err != nil {
+			return err
+		}
+		err := solid(geometry.Mesh{Vertices: batch.mesh.Vertices, Indices: batch.mesh.Indices}, batch.color)
+		plan.end()
+		if err != nil {
 			return err
 		}
 	}
-	for _, batch := range patternBatches {
-		if err := pattern(geometry.Mesh{Vertices: batch.mesh.Vertices, Indices: batch.mesh.Indices}, batch.name, 1/geometryScale, batch.opacity); err != nil {
+	for i := range patternBatches {
+		batch := &patternBatches[i]
+		if err := plan.beginRun(stablePattern, layer.Order, "", "", &batch.features); err != nil {
+			return err
+		}
+		err := pattern(geometry.Mesh{Vertices: batch.mesh.Vertices, Indices: batch.mesh.Indices}, batch.name, 1/geometryScale, batch.opacity)
+		plan.end()
+		if err != nil {
 			return err
 		}
 	}
-	return emitLines(outlineBatches, options.Indexed, limit, outlines)
+	return emitLines(outlineBatches, layer.Order, options.Indexed, limit, outlines)
 }
 
 // CompileLine evaluates and batches line/polygon features in first-seen paint
@@ -269,74 +339,108 @@ func compileLine(features mvt.Features, layer style.CompiledLayer, options Layer
 			if !exists {
 				batchIndex = len(batches)
 				indexes[paintKey] = batchIndex
-				batches = append(batches, lineBatch{paint: paint})
+				batches = append(batches, sinks.newLineBatch(paint))
+			}
+			batch := &batches[batchIndex]
+			sinks.plan.add(&batch.features, i)
+			if batch.borrowed {
+				continue
 			}
 			switch feature.GeometryType {
 			case mvt.LineStringType:
-				batches[batchIndex].paths = append(batches[batchIndex].paths, feature.Lines...)
+				batch.paths = append(batch.paths, feature.Lines...)
 			case mvt.PolygonType:
-				batches[batchIndex].paths = appendPolygonPaths(batches[batchIndex].paths, feature.Polygons)
+				batch.paths = appendPolygonPaths(batch.paths, feature.Polygons)
 			}
 		}
 	}
-	return emitLines(batches, options.Indexed, limit, sinks)
+	return emitLines(batches, layer.Order, options.Indexed, limit, sinks)
 }
 
-func emitLines(batches []lineBatch, indexed bool, limit int, sinks lineSinks) error {
-	for _, batch := range batches {
+func emitLines(batches []lineBatch, order int, indexed bool, limit int, sinks lineSinks) error {
+	borrowing := sinks.plan.borrowing()
+	for i := range batches {
+		batch := &batches[i]
 		paint := batch.paint
-		// Dash lengths and path offsets depend on the evaluated width or offset,
-		// so only plain lines have a width-independent form. The width guard
-		// matches the baked tessellator, which emits nothing at or below Epsilon.
-		if sinks.extruded != nil && len(paint.dashes) == 0 && paint.offset == 0 {
-			if paint.width <= geometry.Epsilon {
-				continue
+		route, pattern := sinks.route(paint)
+		switch route {
+		case skippedRoute:
+			continue
+		case extrudedRoute:
+			if err := sinks.plan.beginRun(stableExtruded, order, paint.lineCap, paint.lineJoin, &batch.features); err != nil {
+				return err
 			}
-			var scratch geometry.ExtrudedMesh
-			if sinks.scratch != nil {
-				scratch = sinks.scratch.extruded
+			var mesh geometry.ExtrudedMesh
+			var err error
+			if !borrowing {
+				mesh, err = sinks.tessellateExtruded(batch.paths, paint, limit, indexed)
 			}
-			mesh, err := geometry.TessellateExtrudedLinesInto(scratch, batch.paths, geometry.ExtrudedLineStyle{Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
+			if err == nil {
+				err = sinks.extruded(mesh, paint.color, paint.pixels/2)
+			}
+			sinks.plan.end()
+			if err != nil {
+				return err
+			}
+		case dashedRoute:
+			if err := sinks.plan.beginRun(stableDashed, order, paint.lineCap, paint.lineJoin, &batch.features); err != nil {
+				return err
+			}
+			var mesh geometry.DashedMesh
+			var err error
+			if !borrowing {
+				mesh, err = sinks.tessellateDashed(batch.paths, limit, indexed)
+			}
+			if err == nil {
+				err = sinks.dashed(mesh, paint.color, paint.pixels, paint.width, pattern)
+			}
+			sinks.plan.end()
+			if err != nil {
+				return err
+			}
+		default:
+			mesh, err := geometry.TessellateLines(batch.paths, geometry.LineStyle{Width: paint.width, Offset: paint.offset, Dashes: paint.dashes, Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
 			if err != nil {
 				return resourceError(err)
 			}
-			if sinks.scratch != nil {
-				sinks.scratch.extruded = mesh
-			}
-			if err := sinks.extruded(mesh, paint.color, paint.pixels/2); err != nil {
+			if err := sinks.baked(mesh, paint.color); err != nil {
 				return err
 			}
-			continue
-		}
-		// Dash lengths are multiples of the width, so a pattern and the distance
-		// along each path replace baked dashes. Dash caps and joins, path offsets
-		// and longer patterns have no such form here.
-		if pattern, ok := geometry.NewDashPattern(paint.dashes, paint.width); ok && sinks.dashed != nil && paint.offset == 0 && paint.lineCap != "round" && paint.lineCap != "square" {
-			var scratch geometry.DashedMesh
-			if sinks.scratch != nil {
-				scratch = sinks.scratch.dashed
-			}
-			mesh, err := geometry.TessellateDashedLinesInto(scratch, batch.paths, limit, indexed)
-			if err != nil {
-				return resourceError(err)
-			}
-			if sinks.scratch != nil {
-				sinks.scratch.dashed = mesh
-			}
-			if err := sinks.dashed(mesh, paint.color, paint.pixels, paint.width, pattern); err != nil {
-				return err
-			}
-			continue
-		}
-		mesh, err := geometry.TessellateLines(batch.paths, geometry.LineStyle{Width: paint.width, Offset: paint.offset, Dashes: paint.dashes, Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
-		if err != nil {
-			return resourceError(err)
-		}
-		if err := sinks.baked(mesh, paint.color); err != nil {
-			return err
 		}
 	}
 	return nil
+}
+
+// tessellateExtruded tessellates into the sinks' scratch storage, if any.
+func (s lineSinks) tessellateExtruded(paths [][]geometry.Point, paint linePaint, limit int, indexed bool) (geometry.ExtrudedMesh, error) {
+	var scratch geometry.ExtrudedMesh
+	if s.scratch != nil {
+		scratch = s.scratch.extruded
+	}
+	mesh, err := geometry.TessellateExtrudedLinesInto(scratch, paths, geometry.ExtrudedLineStyle{Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
+	if err != nil {
+		return geometry.ExtrudedMesh{}, resourceError(err)
+	}
+	if s.scratch != nil {
+		s.scratch.extruded = mesh
+	}
+	return mesh, nil
+}
+
+// tessellateDashed is tessellateExtruded for dashed lines.
+func (s lineSinks) tessellateDashed(paths [][]geometry.Point, limit int, indexed bool) (geometry.DashedMesh, error) {
+	var scratch geometry.DashedMesh
+	if s.scratch != nil {
+		scratch = s.scratch.dashed
+	}
+	mesh, err := geometry.TessellateDashedLinesInto(scratch, paths, limit, indexed)
+	if err != nil {
+		return geometry.DashedMesh{}, resourceError(err)
+	}
+	if s.scratch != nil {
+		s.scratch.dashed = mesh
+	}
+	return mesh, nil
 }
 
 func resourceError(err error) error {

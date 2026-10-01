@@ -36,6 +36,7 @@ type liveOptions struct {
 	keepPreparation           bool
 	reuseDecoded              bool
 	deferHiddenRefresh        bool
+	reuseStable               bool
 	cameraSelectInterval      time.Duration
 }
 
@@ -93,6 +94,7 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 	limits.DiscardPreparation = !options.keepPreparation
 	limits.ReuseDecoded = options.reuseDecoded
 	limits.DeferHiddenRefresh = options.deferHiddenRefresh
+	limits.ReuseStable = options.reuseStable
 	limits.CameraSelectInterval = options.cameraSelectInterval
 	limits.DrawMargin = options.drawMargin
 	if options.workers != 0 {

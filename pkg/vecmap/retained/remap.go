@@ -77,8 +77,20 @@ func remap(input *scene.Scene, old *fragment, nextID *uint64) (*fragment, int, e
 // is total. Indices compare by length and content: an unindexed mesh never equals
 // an indexed one. Every vertex section must match.
 func sameMesh(a, b *scene.Mesh) bool {
-	return len(a.Indices) == len(b.Indices) && slices.Equal(a.Vertices, b.Vertices) && slices.Equal(a.Offsets, b.Offsets) &&
+	return sharedMesh(a, b) || len(a.Indices) == len(b.Indices) && slices.Equal(a.Vertices, b.Vertices) && slices.Equal(a.Offsets, b.Offsets) &&
 		slices.Equal(a.Positions, b.Positions) && slices.Equal(a.Indices, b.Indices)
+}
+
+// sharedMesh reports whether two meshes are the same immutable buffers, as when
+// a replacement borrows its predecessor's geometry, which makes them equal
+// without comparing their content.
+func sharedMesh(a, b *scene.Mesh) bool {
+	return sameBuffer(a.Vertices, b.Vertices) && sameBuffer(a.Offsets, b.Offsets) && sameBuffer(a.Positions, b.Positions) &&
+		sameBuffer(a.Indices, b.Indices) && (a.Indices == nil) == (b.Indices == nil)
+}
+
+func sameBuffer[T any](a, b []T) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
 func sameTexture(a, b *scene.Texture) bool {

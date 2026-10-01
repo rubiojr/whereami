@@ -6,11 +6,13 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"sync/atomic"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 	"github.com/rubiojr/whereami/pkg/vecmap/mvt"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
+	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 	"github.com/rubiojr/whereami/pkg/vecmap/sprite"
 	"github.com/rubiojr/whereami/pkg/vecmap/style"
 	"github.com/rubiojr/whereami/pkg/vecmap/view"
@@ -82,6 +84,14 @@ type Prepared struct {
 	symbols    []placement.Symbol
 	limits     []mvt.LayerLimits
 	valid      bool
+	// With ResidentGeometry: the plan of the stable batches, and the
+	// preparation's identity, which builds give their fragments.
+	plan   *compiler.StablePlan
+	origin stableOrigin
+	// base is the fragment a borrowing preparation draws its StableMesh
+	// from, and source what a build prepares in full if borrowing fails.
+	base   *StableBase
+	source *Source
 }
 
 // Assets supplies already decoded immutable font maps (which may merge multiple
@@ -100,6 +110,9 @@ type BuildResult struct {
 	Fragment     *Fragment
 	MissingFonts []string
 	Limits       []mvt.LayerLimits
+	// Borrowed reports that the fragment's StableMesh is the one a
+	// PrepareSourceReusing preparation borrowed, not a new one.
+	Borrowed bool
 }
 
 // Source is a decoded tile: features with triangulated fills, independent of
@@ -108,7 +121,10 @@ type BuildResult struct {
 type Source struct {
 	tile    *mvt.Tile
 	indexed bool
+	id      uint64 // unique per decode, so a StableBase names its source without retaining it
 }
+
+var sources atomic.Uint64
 
 // Decode decodes bounded MVT input for PrepareSource. indexed must match the
 // PrepareOptions.Indexed of every preparation that uses the source.
@@ -117,7 +133,48 @@ func Decode(data []byte, indexed bool) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Source{tile: tile, indexed: indexed}, nil
+	return &Source{tile: tile, indexed: indexed, id: sources.Add(1)}, nil
+}
+
+// stableOrigin is what a fragment's StableMesh was prepared from.
+type stableOrigin struct {
+	plan    *compiler.StablePlan
+	source  uint64
+	layers  []style.CompiledLayer
+	options PrepareOptions // without Zoom
+}
+
+// StableBase is a built fragment's StableMesh with the plan and inputs it was
+// prepared from; see PrepareSourceReusing. The zero value borrows nothing. It
+// holds the mesh's buffers, not the rest of the fragment.
+type StableBase struct {
+	mesh   scene.Mesh
+	origin stableOrigin
+}
+
+// StableBase returns what PrepareSourceReusing needs to borrow f's
+// StableMesh: zero unless f was built with ResidentGeometry and has one.
+func (f *Fragment) StableBase() StableBase {
+	if f == nil || f.Scene == nil || f.stable.plan == nil {
+		return StableBase{}
+	}
+	for _, mesh := range f.Scene.Meshes {
+		if mesh.ID == compiler.StableMesh {
+			return StableBase{mesh: mesh, origin: f.stable}
+		}
+	}
+	return StableBase{}
+}
+
+// Valid reports whether b has a StableMesh to borrow.
+func (b StableBase) Valid() bool { return b.origin.plan != nil }
+
+// matches reports whether a preparation borrowing b would differ from b's
+// only in its style zoom.
+func (b StableBase) matches(source *Source, layers []style.CompiledLayer, options PrepareOptions) bool {
+	options.Zoom = 0
+	return b.Valid() && source != nil && source.id == b.origin.source && options == b.origin.options && options.ResidentGeometry &&
+		len(layers) == len(b.origin.layers) && (len(layers) == 0 || &layers[0] == &b.origin.layers[0])
 }
 
 // Prepare decodes bounded MVT input and compiles caller-supplied style layers using
@@ -138,6 +195,39 @@ func Prepare(data []byte, layers []style.CompiledLayer, options PrepareOptions) 
 
 // PrepareSource is Prepare for an already decoded tile, with identical output.
 func PrepareSource(source *Source, layers []style.CompiledLayer, options PrepareOptions) (*Prepared, error) {
+	var planner *compiler.StablePlanner
+	if options.ResidentGeometry {
+		planner = compiler.NewStablePlanner(nil)
+	}
+	return prepareSource(source, layers, options, planner)
+}
+
+// PrepareSourceReusing is PrepareSource, with identical output, that borrows
+// base's StableMesh when base was prepared from the same source, layers and
+// options except the style zoom, and every stable batch (fills, patterns,
+// extruded and shader-dashed lines) comes out the same at the new zoom. It
+// then evaluates the style but doesn't tessellate or pack those batches. If
+// they differ it prepares in full, and a build that finds a pattern sprite
+// newly present or missing prepares in full again. base's mesh must stay
+// unmodified.
+func PrepareSourceReusing(source *Source, layers []style.CompiledLayer, options PrepareOptions, base StableBase) (*Prepared, error) {
+	if !base.matches(source, layers, options) {
+		return PrepareSource(source, layers, options)
+	}
+	p, err := prepareSource(source, layers, options, compiler.NewStablePlanner(base.origin.plan))
+	if err != nil {
+		return PrepareSource(source, layers, options) // a different batch, or an error the full path reports
+	}
+	p.base, p.source = &base, source
+	return p, nil
+}
+
+// Borrowed reports whether builds of p borrow a StableMesh, unless they find
+// a pattern sprite newly present or missing; see BuildResult.Borrowed.
+func (p *Prepared) Borrowed() bool { return p != nil && p.base != nil }
+
+func prepareSource(source *Source, layers []style.CompiledLayer, options PrepareOptions, planner *compiler.StablePlanner) (*Prepared, error) {
+	requested := options // before defaults, as callers pass them again
 	if err := options.validate(layers); err != nil {
 		return nil, err
 	}
@@ -152,10 +242,10 @@ func PrepareSource(source *Source, layers []style.CompiledLayer, options Prepare
 	for i, layer := range layers {
 		p.orders[i] = layer.Order
 	}
-	err := compiler.CompileTile(layers, tile.Layers, compiler.LayerOptions{
+	err := compiler.CompileTilePlanned(layers, tile.Layers, compiler.LayerOptions{
 		SourceZoom: int(options.Tile.Z), Zoom: options.Zoom, Indexed: options.Indexed, TriangleLimit: options.TriangleLimit,
 		ExtrudeLines: options.ResidentGeometry, ShaderDashes: options.ResidentDashes, Coarser: options.Coarser,
-	}, func(primitive compiler.Primitive) error {
+	}, planner, func(primitive compiler.Primitive) error {
 		p.primitives = append(p.primitives, primitive)
 		return nil
 	}, func(layer style.CompiledLayer) error {
@@ -168,6 +258,11 @@ func PrepareSource(source *Source, layers []style.CompiledLayer, options Prepare
 	}
 	if err != nil {
 		return nil, err
+	}
+	if planner != nil {
+		p.plan = planner.Plan()
+		p.origin = stableOrigin{source: source.id, layers: layers, options: requested}
+		p.origin.options.Zoom = 0
 	}
 	p.valid = true
 	return p, nil
@@ -255,6 +350,9 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	if p.options.CompactVertices {
 		packing.CompactVertices()
 	}
+	if p.base != nil {
+		packing.Borrow(p.base.mesh, p.base.origin.plan)
+	}
 	var atlasID uint64
 	if len(renderable) > 0 {
 		atlasID = packing.GlyphAtlas(atlas)
@@ -262,6 +360,15 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	packing.Reserve(p.primitives)
 	p.pack(packing, renderable, atlasID, assets.Sprite)
 	packed, sources, err := packing.Finish()
+	if errors.Is(err, compiler.ErrStableMismatch) && p.base != nil {
+		options := p.origin.options // as the caller passed them
+		options.Zoom = p.options.Zoom
+		full, err := PrepareSource(p.source, p.origin.layers, options)
+		if err != nil {
+			return nil, err
+		}
+		return full.build(assets, maximumTextureBytes)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +389,11 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 		}
 	}
 	fragment := &Fragment{Scene: packed, Draws: sources, Symbols: p.metrics(layouts, assets)}
-	return &BuildResult{Fragment: fragment, MissingFonts: missing, Limits: p.Limits()}, nil
+	if p.plan != nil {
+		fragment.stable = p.origin
+		fragment.stable.plan = packing.StablePlan(p.plan)
+	}
+	return &BuildResult{Fragment: fragment, MissingFonts: missing, Limits: p.Limits(), Borrowed: p.base != nil}, nil
 }
 
 func (p *Prepared) pack(b *compiler.FragmentBuilder, layouts map[int]*glyph.PreparedLayout, atlas uint64, lookup compiler.SpriteLookup) {

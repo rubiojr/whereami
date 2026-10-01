@@ -93,7 +93,7 @@ func (s *Store) Apply(changes []Change) error {
 	}
 	for _, change := range changes {
 		if change.Scene != nil {
-			if err := change.Scene.Validate(); err != nil {
+			if err := change.Scene.ValidateExcept(s.validated(change.Key)); err != nil {
 				return fmt.Errorf("fragment %q: %w", change.Key, err)
 			}
 		}
@@ -117,6 +117,25 @@ func (s *Store) Apply(changes []Change) error {
 	s.parts, s.nextID = next, nextID
 	s.reused += reused
 	return nil
+}
+
+// validated reports which meshes of a replacement for key are the buffers of
+// the mesh with the same local ID it replaces, whose content passed
+// validation when applied and is immutable.
+func (s *Store) validated(key string) func(*scene.Mesh) bool {
+	old := s.parts[key]
+	if old == nil {
+		return nil
+	}
+	return func(mesh *scene.Mesh) bool {
+		id := old.meshes[mesh.ID]
+		for i := range old.scene.Meshes {
+			if previous := &old.scene.Meshes[i]; previous.ID == id && id != 0 {
+				return sharedMesh(previous, mesh)
+			}
+		}
+		return false
+	}
 }
 
 // ReusedVersions counts replaced resources that kept their revision because their

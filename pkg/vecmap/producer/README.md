@@ -101,6 +101,13 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   `mvt.FeatureSet`s, so retaining them adds little GC work. On the Madrid trace
   preparation took 45% less wall time and process CPU fell 3–11%, for 35–90 MiB
   more RSS (docs/vecmap-rhi.md). The viewer turns it on.
+- `Limits.ReuseStable` prepares a tile for a new style zoom with
+  `tiles.PrepareSourceReusing`, borrowing the `StableMesh` of its installed
+  fragment. It needs `ResidentGeometry` and borrows only with `ReuseDecoded`, since
+  a fragment names its decoded source. A new response clears the base.
+  `PrepareCauses.Stable` counts builds that borrowed. On the Madrid trace every
+  style-zoom preparation borrowed and process CPU fell 10–15%. The viewer turns
+  it on.
 - `Limits.DeferHiddenRefresh` prepares a tile again for newer paint inputs only
   once it is in the selected cover. Prefetch-ring tiles beyond `DrawMargin` and
   covered parents keep their older fragment until a pan selects them, and are

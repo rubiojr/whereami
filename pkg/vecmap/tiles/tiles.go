@@ -57,6 +57,7 @@ type Fragment struct {
 	Scene   *scene.Scene
 	Draws   []Draw
 	Symbols []Symbol
+	stable  stableOrigin
 }
 
 type Change struct {

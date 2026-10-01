@@ -349,6 +349,29 @@ its baked quad with a zero scale. A `Unit` layout with such a scale is
 `ErrPackingInput`; `glyph.PrepareUnitLayouts` never produces one. The element limit
 bounds the three meshes together.
 
+### Borrowing the stable mesh
+
+Packing proves the stable mesh identical across sixteenth steps only after
+tessellating and packing it again. `CompileTilePlanned` follows each stable batch
+(background, fill, pattern, extruded or shader-dashed line) with a `StablePlanner`:
+in emission order, a run records a hash of the batch's kind, layer, cap, join and
+source feature indices (seeded per process with `hash/maphash`), its element count
+and whether paint emitted it. `FragmentBuilder.StablePlan` adds the draw each run
+produced after `Finish`. A `StablePlan` holds no geometry, about 32 bytes a run.
+
+A planner with a reference plan borrows: it evaluates the style as usual but
+appends no polygon, builds no path and tessellates no stable batch, and emits
+placeholder primitives tagged with their run. The first run that differs, a run
+that paint now shows or hides, or a missing or extra run returns
+`ErrStableMismatch`. `FragmentBuilder.Borrow` then publishes the earlier
+`StableMesh` as is and draws each placeholder from its run's recorded range with
+the new material, through the same material and texture code as full packing.
+Producer fragments break draws per primitive, so materials can't change the draw
+structure. A pattern sprite that is newly present or missing would change the
+mesh and is `ErrStableMismatch` at `Finish`. Element, vertex and draw limits count
+the borrowed mesh, and validation skips only its contents, which passed when it
+was built.
+
 Checkpoint **re90** keeps compiler coverage at **100%**, including provenance,
 pass order, boundary-preserving coalescing, precise periods, empty output, draw and
 element limits, failure atomicity and sealed publication.

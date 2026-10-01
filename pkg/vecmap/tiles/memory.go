@@ -18,7 +18,7 @@ func (p *Prepared) RetainedBytes() uint64 {
 	if p == nil {
 		return 0
 	}
-	n := uint64(unsafe.Sizeof(*p)) + arrayBytes(p.orders) + arrayBytes(p.primitives) + arrayBytes(p.symbols) + arrayBytes(p.limits)
+	n := uint64(unsafe.Sizeof(*p)) + arrayBytes(p.orders) + arrayBytes(p.primitives) + arrayBytes(p.symbols) + arrayBytes(p.limits) + p.plan.RetainedBytes()
 	for _, v := range p.primitives {
 		n += arrayBytes(v.Mesh.Vertices) + arrayBytes(v.Mesh.Indices) + uint64(len(v.LayerID)) + uint64(len(v.PatternName))
 	}
@@ -60,7 +60,7 @@ func (f *Fragment) RetainedBytes() uint64 {
 	if f == nil {
 		return 0
 	}
-	n := uint64(unsafe.Sizeof(*f)) + sceneBytes(f.Scene) + arrayBytes(f.Draws) + arrayBytes(f.Symbols)
+	n := uint64(unsafe.Sizeof(*f)) + sceneBytes(f.Scene) + arrayBytes(f.Draws) + arrayBytes(f.Symbols) + f.stable.plan.RetainedBytes()
 	for _, v := range f.Symbols {
 		n += symbolStrings(v.Candidate)
 	}

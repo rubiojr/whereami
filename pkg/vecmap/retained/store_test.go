@@ -2,6 +2,7 @@ package retained
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -292,4 +293,44 @@ func TestVertexSectionsDecideWhetherAMeshIsReused(t *testing.T) {
 	exact, err := New(Limits{Bytes: 24*3 + 16*3 + 8*3 + 4*9})
 	require.NoError(t, err)
 	require.NoError(t, exact.Apply([]Change{{"a", sectioned()}}))
+}
+
+// A replacement that borrows its predecessor's buffers is the same immutable
+// payload: it keeps the revision without comparing or validating it again.
+func TestReplacementSharingBuffersKeepsRevision(t *testing.T) {
+	s := newStore(t, Limits{})
+	first := triangle()
+	require.NoError(t, s.Apply([]Change{{"a", first}}))
+	before := snapshot(t, s, "a")
+
+	shared := triangle()
+	shared.Meshes[0] = first.Meshes[0]
+	shared.Draws[0].Material.Color = [4]float32{0.5, 0.5, 0.5, 1}
+	require.NoError(t, s.Apply([]Change{{"a", shared}}))
+	after := snapshot(t, s, "a")
+	assert.Equal(t, before.Meshes[0].Revision, after.Meshes[0].Revision)
+	assert.Equal(t, uint64(2), s.ReusedVersions(), "mesh and texture")
+
+	// Deliberately break the immutability contract to show what is trusted.
+	first.Meshes[0].Vertices[0].X = float32(math.NaN())
+	borrowed := triangle()
+	borrowed.Meshes[0] = first.Meshes[0]
+	require.NoError(t, s.Apply([]Change{{"a", borrowed}}), "shared buffers aren't validated again")
+	copied := triangle()
+	copied.Meshes[0].Vertices = slices.Clone(first.Meshes[0].Vertices)
+	assert.Error(t, s.Apply([]Change{{"a", copied}}), "a copy is")
+	assert.Error(t, s.Apply([]Change{{"b", borrowed}}), "and so is a new key")
+	renamed := triangle()
+	renamed.Meshes[0] = first.Meshes[0]
+	renamed.Meshes[0].ID, renamed.Draws[0].Mesh = 5, 5
+	assert.Error(t, s.Apply([]Change{{"a", renamed}}), "and a mesh the fragment didn't have")
+
+	a, b := triangle().Meshes[0], triangle().Meshes[0]
+	assert.False(t, sharedMesh(&a, &b))
+	b = a
+	assert.True(t, sharedMesh(&a, &b))
+	b.Indices = b.Indices[:0]
+	assert.False(t, sharedMesh(&a, &b), "another length")
+	a.Indices, b.Indices = []uint32{}, nil
+	assert.False(t, sharedMesh(&a, &b), "indexed and not")
 }

@@ -118,6 +118,17 @@ initial coverage needs more upload operations. Backends must scale map-aligned
 vertex offsets by `OffsetScale`; the QRhi adapter does. The default is off and
 preserves the single-mesh output exactly.
 
+`PrepareSourceReusing` goes further for the stable mesh, which the Store keeps
+anyway: given the `StableBase` of a fragment built from the same `Source` (named by a
+per-decode ID, so the base retains no source), the same layer storage and the same
+options apart from `Zoom`, it evaluates the style and borrows that fragment's
+`StableMesh` when every stable batch comes out the same (see the compiler's
+"Borrowing the stable mesh"). The new fragment shares the old buffers and
+`BuildResult.Borrowed` reports it. A different batch prepares in full; a build that
+finds a pattern sprite newly present or missing prepares and builds in full.
+Output is identical to `PrepareSource` either way. Every sixteenth step of the
+pinned Liberty tile from 8.5 to 9.44, at Coarser 0 and 1, borrows.
+
 `PrepareOptions.ResidentSymbols` does the same for icons and text. Quads are packed
 at a base size in `compiler.SymbolMesh` (local ID 3) and the evaluated icon or text
 size travels as `Material.OffsetScale`. Candidates, text bounds and placement

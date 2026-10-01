@@ -16,7 +16,8 @@ type entry struct {
 	source        string
 	raw           []byte
 	prepared      *tiles.Prepared
-	decoded       *tiles.Source // Limits.ReuseDecoded; charged as Prepared
+	decoded       *tiles.Source    // Limits.ReuseDecoded; charged as Prepared
+	stable        tiles.StableBase // Limits.ReuseStable: fragment's StableMesh, part of its charge
 	fragment      *tiles.Fragment
 	style, assets uint64 // owner epochs, never native generations
 	usage         CacheUsage
@@ -514,6 +515,7 @@ func (s *state) loaded(r result) {
 		next = *old
 	}
 	next.raw, next.prepared, next.decoded, next.style = nil, nil, nil, 0
+	next.stable = tiles.StableBase{} // prepared from the replaced response
 	next.usage = entryUsage(tile, &next)
 	next.usage.Raw = 2 * uint64(len(r.data))
 	if !s.admitPrepared(tile, &next) {

@@ -24,6 +24,7 @@ func requireSameAcrossZooms(t *testing.T, data []byte, layers []style.CompiledLa
 		require.NoError(t, err)
 		got, err := PrepareSource(source, layers, options)
 		require.NoError(t, err)
+		want.origin.source = got.origin.source // separate decodes of the same bytes
 		require.Equal(t, want, got, "zoom %g", zoom)
 	}
 	assert.Equal(t, charge, source.RetainedBytes(), "preparation leaves the source unchanged")

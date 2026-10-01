@@ -19,9 +19,10 @@ type compileJob struct {
 	cancel   context.CancelFunc
 	tile     view.TileID
 	source   string
-	raw      []byte          // the cached response, never modified
-	prepared *tiles.Prepared // a reusable preparation, or nil to prepare raw
-	decoded  *tiles.Source   // raw already decoded, or nil to decode it
+	raw      []byte           // the cached response, never modified
+	prepared *tiles.Prepared  // a reusable preparation, or nil to prepare raw
+	decoded  *tiles.Source    // raw already decoded, or nil to decode it
+	stable   tiles.StableBase // a fragment whose StableMesh the preparation may borrow
 	layers   []style.CompiledLayer
 	options  tiles.PrepareOptions
 	style    uint64 // owner style epoch the job prepares for
@@ -107,6 +108,7 @@ type compileResult struct {
 	prepared            *tiles.Prepared
 	decoded             *tiles.Source // decoded by this job
 	fragment            *tiles.Fragment
+	borrowed            bool   // the build borrowed the job's stable base
 	assets              uint64 // owner asset epoch of the build
 	ranPrepare, built   bool
 	preparing, building time.Duration
@@ -154,7 +156,7 @@ func prepareTile(j compileJob) compileResult {
 			r.decoded = source
 		}
 		if r.err == nil {
-			r.prepared, r.err = tiles.PrepareSource(source, j.layers, j.options)
+			r.prepared, r.err = tiles.PrepareSourceReusing(source, j.layers, j.options, j.stable)
 		}
 		r.preparing, r.ranPrepare = time.Since(started), true
 	}
@@ -169,7 +171,7 @@ func (p *Producer) buildTile(r compileResult) compileResult {
 	r.building, r.built, r.assets = time.Since(started), true, assets.epoch
 	r.stage, r.err = "build", err
 	if err == nil {
-		r.fragment = built.Fragment
+		r.fragment, r.borrowed = built.Fragment, built.Borrowed
 	}
 	return r
 }
@@ -236,6 +238,9 @@ func (s *state) startCompile(tile view.TileID, e *entry, place tilePlace) compil
 	if j.prepared == nil {
 		j.cause = prepareCauseOf(e, s.working.Style)
 		j.decoded = e.decoded
+		if s.p.limits.ReuseStable {
+			j.stable = e.stable
+		}
 	}
 	s.compiling[tile] = j
 	s.stats.PeakCompiling = max(s.stats.PeakCompiling, len(s.compiling))
@@ -261,6 +266,9 @@ func (s *state) compiled(r compileResult) {
 	if r.built {
 		s.stats.Building.observe(r.building)
 		s.stats.Builds++
+		if r.borrowed {
+			s.stats.PrepareCauses.Stable++
+		}
 	}
 	old := s.entries[j.tile]
 	if s.p.ctx.Err() != nil || j.ctx.Err() != nil || j.style != s.style || !s.desired[j.tile] || old == nil || old.source != j.source ||
@@ -284,6 +292,9 @@ func (s *state) compiled(r compileResult) {
 		}
 		if r.decoded != nil && s.p.limits.ReuseDecoded {
 			next.decoded = r.decoded
+		}
+		if s.p.limits.ReuseStable {
+			next.stable = r.fragment.StableBase()
 		}
 		next.preparedUse = s.stats.Builds
 		next.usage = entryUsage(j.tile, &next)

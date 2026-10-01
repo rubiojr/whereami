@@ -49,6 +49,7 @@ func main() {
 	flag.Uint64Var(&live.sceneBytes, "cpu-scene-bytes", 256<<20, "live budget of one composed scene; a view that exceeds it shows coarser stand-in tiles")
 	flag.BoolVar(&live.keepPreparation, "keep-preparation", false, "keep prepared primitives after a tile is built, for asset changes")
 	flag.BoolVar(&live.reuseDecoded, "reuse-decoded", true, "keep each tile's decoded source, so a new style zoom prepares it without decoding and triangulating again")
+	flag.BoolVar(&live.reuseStable, "reuse-stable", true, "prepare a tile for a new style zoom borrowing its previous fills and extruded lines when they come out the same (needs -resident-geometry and -reuse-decoded)")
 	flag.BoolVar(&live.deferHiddenRefresh, "defer-hidden-refresh", true, "prepare tiles beyond -draw-margin and unused parents for a new style zoom only once a pan draws them")
 	flag.DurationVar(&live.cameraSelectInterval, "camera-select-interval", 16*time.Millisecond, "least time between label placements and scene compositions that only camera motion asks for (at most 1s); zero places for every camera update")
 	flag.Float64Var(&live.drawMargin, "draw-margin", 256, "draw live tiles within this many logical pixels of the viewport; tiles beyond stay compiled for a pan; zero draws every loaded tile")
@@ -229,7 +230,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d reuse_decoded=%t defer_hidden_refresh=%t camera_select_interval=%s\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers, options.liveOptions.reuseDecoded, options.liveOptions.deferHiddenRefresh, options.liveOptions.cameraSelectInterval)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d reuse_decoded=%t reuse_stable=%t defer_hidden_refresh=%t camera_select_interval=%s\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers, options.liveOptions.reuseDecoded, options.liveOptions.reuseStable, options.liveOptions.deferHiddenRefresh, options.liveOptions.cameraSelectInterval)
 	if options.diagnostics {
 		pacing.report()
 		waits.report()
@@ -243,7 +244,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 		fmt.Printf("producer_loads=%d prepares=%d builds=%d rejected=%d peak_jobs=%d peak_cache_bytes=%d peak_leases=%d peak_lease_bytes=%d pending=%d failed=%d last_error=%q\n", s.Loads, s.Prepares, s.Builds, s.Rejected, s.PeakJobs, s.PeakCacheBytes, s.PeakLeases, s.PeakLeaseBytes, s.Pending, s.Failed, s.LastError)
 		fmt.Printf("producer_requested=%d selected=%d fallbacks=%d error_stage=%q response_bytes=%d raw_capacity_bytes=%d\n", s.Requested, s.SelectedTiles, s.Fallbacks, s.LastErrorStage, s.ResponseBytes, s.RawCapacityBytes)
 		c := s.PrepareCauses
-		fmt.Printf("prepare_causes first=%d style_zoom=%d style=%d repeat=%d ring=%d parent=%d wasted=%d decoded=%d\n", c.First, c.StyleZoom, c.Style, c.Repeat, c.Ring, c.Parent, c.Wasted, c.Decoded)
+		fmt.Printf("prepare_causes first=%d style_zoom=%d style=%d repeat=%d ring=%d parent=%d wasted=%d decoded=%d stable=%d\n", c.First, c.StyleZoom, c.Style, c.Repeat, c.Ring, c.Parent, c.Wasted, c.Decoded, c.Stable)
 		fmt.Printf("cache_raw=%d prepared=%d fragments=%d profiles=%d peak_raw=%d peak_prepared=%d peak_fragments=%d peak_profiles=%d\n", s.Cache.Raw, s.Cache.Prepared, s.Cache.Fragments, s.Cache.Profiles, s.PeakCache.Raw, s.PeakCache.Prepared, s.PeakCache.Fragments, s.PeakCache.Profiles)
 		fmt.Printf("preparation_evictions=%d preparation_bytes_freed=%d uncached_preparations=%d capacity_retries=%d continuity_evictions=%d continuity_bytes_freed=%d\n", s.PreparationEvictions, s.PreparationBytesFreed, s.UncachedPreparations, s.CapacityRetries, s.ContinuityEvictions, s.ContinuityBytesFreed)
 		fmt.Printf("load_style_reuses=%d style_reuses=%d skipped_builds=%d deferred_selections=%d unchanged_current=%d\n", s.LoadStyleReuses, s.StyleReuses, s.SkippedBuilds, s.DeferredSelections, s.UnchangedCurrent)

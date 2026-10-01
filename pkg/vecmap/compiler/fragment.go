@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"slices"
+
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
@@ -35,6 +37,9 @@ type DrawSource struct {
 type FragmentBuilder struct {
 	packing SceneBuilder
 	sources []DrawSource
+	// runDraws is, per StablePlan run, the index of the draw its primitive
+	// made, or -1.
+	runDraws []int
 }
 
 func NewFragmentBuilder(indexed bool, maximumElements, maximumDraws int) *FragmentBuilder {
@@ -106,7 +111,54 @@ func (b *FragmentBuilder) Primitive(tile view.TileID, primitive Primitive, looku
 	}
 	start := b.begin()
 	period := b.packing.primitive(tile, 0, primitive, lookup)
+	if run := primitive.StableRun; run > 0 && b.packing.err == nil {
+		for len(b.runDraws) < run {
+			b.runDraws = append(b.runDraws, -1)
+		}
+		if len(b.packing.result.Draws) > start {
+			b.runDraws[run-1] = start
+		}
+	}
 	b.capture(start, DrawSource{Layer: primitive.Order, Part: BaseDraw, PatternPeriod: period})
+}
+
+// Borrow publishes mesh, the StableMesh of an earlier build of the same tile,
+// as this build's StableMesh. Primitives that a CompileTilePlanned borrowing
+// plan emitted draw from it with the ranges plan records; other stable
+// geometry is an error, and Finish fails with ErrStableMismatch when a pattern
+// sprite's presence would change the mesh. Call after Split, ResidentSymbols
+// and CompactVertices, before packing; mesh must not be modified.
+func (b *FragmentBuilder) Borrow(mesh scene.Mesh, plan *StablePlan) {
+	if !b.packing.unused() {
+		return
+	}
+	if !b.packing.split || plan == nil || mesh.ID != StableMesh {
+		b.packing.err = ErrPackingInput
+		return
+	}
+	b.packing.borrowed, b.packing.stablePlan = &mesh, plan
+}
+
+// StablePlan completes compiled, the plan of the CompileTilePlanned call whose
+// primitives were packed, with the draw of each run, so a later build can
+// borrow this build's StableMesh. A borrowing build returns its plan. Call
+// after a successful Finish of a split builder.
+func (b *FragmentBuilder) StablePlan(compiled *StablePlan) *StablePlan {
+	if b.packing.stablePlan != nil {
+		return b.packing.stablePlan
+	}
+	if compiled == nil || !b.packing.closed || b.packing.err != nil || !b.packing.split {
+		return nil
+	}
+	plan := &StablePlan{runs: slices.Clone(compiled.runs)}
+	for i, draw := range b.runDraws {
+		if draw >= 0 && i < len(plan.runs) {
+			published := b.packing.result.Draws[draw]
+			run := &plan.runs[i]
+			run.drawn, run.first, run.count, run.layout = true, published.First, published.Count, published.Layout
+		}
+	}
+	return plan
 }
 
 // SymbolLayer preserves icons/all halos/all fills ordering. first is the global
