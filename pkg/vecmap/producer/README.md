@@ -266,6 +266,14 @@ pre-pack attempts. `DeferredSelections` counts mixed covers rejected before plac
 `UnchangedCurrent` counts native mailbox updates that needed no continuity selection.
 These counters describe avoided work, not wall-time savings.
 
+`PrepareCauses` splits Prepares by how the inputs of a tile's last installed
+preparation differ: `First` (none installed), `StyleZoom` (only the evaluated
+style zoom), `Style` (other inputs) and `Repeat` (identical inputs, such as a
+discarded preparation needed for new assets). `Ring` and `Parent` count the
+preparations of desired tiles outside the camera's visible cover: prefetch-ring
+targets and fallback parents. `Wasted` counts preparations whose result was
+rejected as obsolete.
+
 Raw-cache admission occurs after receiving the bounded response, when its compact
 size is known. Cache failure preserves the previous entry, including its raw and
 prepared data, atomically. The transport slot remains separately bounded; a small

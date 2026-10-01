@@ -34,7 +34,7 @@ func churnState(t *testing.T, r Request) *state {
 // takes demand queued meanwhile between the two phases, as the owner does
 // while a compiler prepares.
 func (s *state) build(tile view.TileID, e *entry) {
-	j := s.startCompile(tile, e)
+	j := s.startCompile(tile, e, s.placeOf(tile, s.visibleCover()))
 	r := prepareTile(j)
 	s.inputs()
 	if r.err == nil && j.ctx.Err() == nil {
@@ -452,4 +452,73 @@ func TestHeldEpochReleasesOnExhaustionAndPreparationBound(t *testing.T) {
 	s.inputs()
 	assert.Equal(t, uint64(4), s.style, "two covers of preparation bound a held epoch")
 	assert.Zero(t, s.workingPrepares)
+}
+
+func TestPrepareCausesExplainEveryPreparation(t *testing.T) {
+	r := testRequest(t) // targets derive from the camera
+	s := churnState(t, r)
+	tile := s.visibleCover()[0]
+	s.entries[tile] = &entry{raw: tilePBF(), source: r.Style.Source}
+	submit := func(change func(*Request)) {
+		change(&r)
+		_, err := s.p.Submit(r)
+		require.NoError(t, err)
+	}
+	restyle := func(change func(*Style)) func(*Request) {
+		return func(r *Request) {
+			next := *r.Style
+			next.Epoch++
+			change(&next)
+			r.Style = &next
+		}
+	}
+	// Publish each epoch: an unpublished working epoch holds newer styles.
+	compile := func(msg string) {
+		require.True(t, s.compileNext(), msg)
+		s.publish()
+		if lease, ok := s.p.Next(); ok {
+			lease.Release()
+		}
+	}
+	compile("first")
+	submit(restyle(func(style *Style) { style.Options.Zoom = 2.0625 }))
+	s.inputs()
+	compile("style zoom")
+	s.p.limits.DiscardPreparation = true
+	submit(restyle(func(style *Style) { style.Options.CandidateLimit = 8 }))
+	s.inputs()
+	compile("other style input")
+	require.Nil(t, s.entries[tile].prepared)
+	submit(func(r *Request) { r.Assets = &Assets{Epoch: 2, Bytes: 1} })
+	s.inputs()
+	compile("new assets prepare a discarded preparation again")
+	// A style queued while Prepare runs makes that preparation obsolete.
+	submit(restyle(func(style *Style) { style.Options.Zoom = 2.125 }))
+	s.inputs()
+	submit(restyle(func(style *Style) { style.Options.Zoom = 2.1875 }))
+	require.True(t, s.compileNext())
+	assert.Equal(t, PrepareCauses{First: 1, StyleZoom: 2, Style: 1, Repeat: 1, Wasted: 1}, s.stats.PrepareCauses)
+	assert.Equal(t, uint64(5), s.stats.Prepares)
+}
+
+func TestPrepareCausesPlaceTiles(t *testing.T) {
+	r := testRequest(t)
+	s := churnState(t, r)
+	visible := s.visibleCover()
+	var ring, parent view.TileID
+	for _, tile := range s.order {
+		switch {
+		case slices.Contains(s.targets, tile) && !slices.Contains(visible, tile):
+			ring = tile
+		case !slices.Contains(s.targets, tile):
+			parent = tile
+		}
+	}
+	require.NotEqual(t, ring, parent)
+	for _, tile := range []view.TileID{visible[0], ring, parent} {
+		s.entries[tile] = &entry{raw: tilePBF(), source: r.Style.Source}
+	}
+	for s.compileNext() {
+	}
+	assert.Equal(t, PrepareCauses{First: 3, Ring: 1, Parent: 1}, s.stats.PrepareCauses)
 }

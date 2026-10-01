@@ -483,13 +483,49 @@ Ranges are min–max over runs. ¹ A copy of `style.json` with
   preparations, about 4.4 per load; preparation (2.2–2.3 s), building (1.2–1.3 s)
   and selection (0.7–0.8 s) run on one compiler goroutine. MapLibre requests 10
   distinct tiles (six z9, two z8, and z5/z4 prefetch parents), 18 requests in a
-  run. Why vecmap prepares a tile several times along the trace isn't broken
-  down yet.
+  run. The preparations are broken down below.
 - In the basic loop the GUI thread blocks in the buffer swap, so the 8 ms trace
   timer fires every 33 ms: MapLibre still renders at 60 Hz but its camera moves
   at 30 Hz. In the threaded loop the plugin warns "Threaded rendering is not
   optimal" and, while the map isn't fully loaded, also refreshes from a 250 ms
   timer; neither showed up as late frames.
+
+#### Why vecmap prepares tiles several times
+
+`prepare_causes` (`producer.Status.PrepareCauses`) attributes each preparation.
+Three runs on each backend (OpenGL and Vulkan agree), same corpus and trace:
+
+| Preparations | Coarser 1 | Coarser 0 |
+| --- | ---: | ---: |
+| Total | 289–298 | 501–511 |
+| First for a cached tile | 71–72 | 129–132 |
+| Again for a new style zoom | 217–227 | 370–379 |
+| Other style change, repeat, eviction | 0 | 0 |
+| Wasted (obsolete when finished) | 4–7 | 6–8 |
+| For prefetch-ring tiles | 173–180 | 203–210 |
+| For fallback parents | 41–43 | 81–90 |
+
+Every adopted style epoch prepares every desired tile again. The trace crosses
+15 sixteenth-zoom steps, and each one makes `liveSource.update` submit a new
+`Style`; `reuseStyle` only helps when the exact previous inputs return. Resident
+geometry, symbols and dashes keep the GPU buffers (`ReusedVersions` ~1,450 at
+Coarser 1), but the CPU still decodes, evaluates and tessellates the tile again
+to produce those identical bytes. Most desired tiles aren't on screen: the
+prefetch ring and fallback parents take 74% of preparations at Coarser 1 and 57%
+at Coarser 0. A one-off cross-tabulation (two runs each) put the style-zoom
+re-preparations at 58–59 visible, 135–140 ring and 24–28 parent tiles at
+Coarser 1, and 168–175, 148–150 and 54–59 at Coarser 0. A preparation and build
+average about 12 ms on the one compiler goroutine, so the ring's style-zoom
+re-preparations alone cost about 1.7 s of the 7 s CPU at Coarser 1.
+
+Most of a re-preparation doesn't depend on the style zoom. A CPU profile of
+`tiles.Prepare` over the 20 corpus z9 tiles at eight sixteenth-zoom steps
+(Coarser 1, the viewer's resident options; 160 preparations in 1.65 s) spent 59%
+in `mvt.DecodeTile` and 33% triangulating fills, on identical bytes each time;
+extruded lines, width-independent with resident geometry, took most of the rest.
+Style evaluation and symbol preparation took about a tenth. Go's background GC
+added another 1.06 s on other cores. Build, repeated per epoch too, wasn't
+profiled.
 
 #### Vulkan FIFO stalls in live mode on native Wayland
 

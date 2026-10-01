@@ -25,6 +25,80 @@ type compileJob struct {
 	options  tiles.PrepareOptions
 	style    uint64 // owner style epoch the job prepares for
 	limit    uint64 // texture bytes the build may produce
+	cause    prepareCause
+	place    tilePlace
+}
+
+// tilePlace is where a desired tile lies relative to the camera's view.
+type tilePlace uint8
+
+const (
+	placeVisible tilePlace = iota
+	placeRing              // a prefetch target around the visible tiles
+	placeParent            // a fallback parent that is not a target
+)
+
+type prepareCause uint8
+
+const (
+	prepareFirst prepareCause = iota
+	prepareStyleZoom
+	prepareStyle
+	prepareRepeat
+)
+
+// prepareCauseOf says why an entry needs preparing for style: how the inputs of
+// its last installed preparation differ.
+func prepareCauseOf(e *entry, style *Style) prepareCause {
+	last := e.styleSnapshot
+	switch {
+	case last == nil:
+		return prepareFirst
+	case samePreparation(last, style):
+		return prepareRepeat
+	}
+	zoomed := *last
+	zoomed.Options.Zoom = style.Options.Zoom
+	if samePreparation(&zoomed, style) {
+		return prepareStyleZoom
+	}
+	return prepareStyle
+}
+
+func (c *PrepareCauses) add(cause prepareCause, place tilePlace) {
+	switch cause {
+	case prepareFirst:
+		c.First++
+	case prepareStyleZoom:
+		c.StyleZoom++
+	case prepareStyle:
+		c.Style++
+	default:
+		c.Repeat++
+	}
+	switch place {
+	case placeRing:
+		c.Ring++
+	case placeParent:
+		c.Parent++
+	}
+}
+
+// placeOf classifies a desired tile against visible, the camera's cover without
+// a prefetch ring.
+func (s *state) placeOf(tile view.TileID, visible []view.TileID) tilePlace {
+	switch {
+	case slices.Contains(visible, tile):
+		return placeVisible
+	case slices.Contains(s.targets, tile):
+		return placeRing
+	}
+	return placeParent
+}
+
+// visibleCover is the latest request's cover without a prefetch ring.
+func (s *state) visibleCover() []view.TileID {
+	return view.VisibleTileCoverRing(s.request.Camera, s.request.Style.Options.Coarser, 0)
 }
 
 type compileResult struct {
@@ -97,12 +171,13 @@ func (s *state) compile() {
 		return
 	}
 	cover := s.selectedCover() // starting a job does not change it
+	visible := s.visibleCover()
 	for len(s.compiling) < s.p.limits.Compilers {
 		tile, e, ok := s.nextCompile(cover)
 		if !ok {
 			return
 		}
-		s.p.compileJobs <- s.startCompile(tile, e)
+		s.p.compileJobs <- s.startCompile(tile, e, s.placeOf(tile, visible))
 	}
 }
 
@@ -131,14 +206,17 @@ func (s *state) nextCompile(cover []view.TileID) (view.TileID, *entry, bool) {
 
 // startCompile registers a job for a cached tile. A preparation made for the
 // working style is reused, so an asset change only builds again.
-func (s *state) startCompile(tile view.TileID, e *entry) compileJob {
+func (s *state) startCompile(tile view.TileID, e *entry, place tilePlace) compileJob {
 	ctx, cancel := context.WithCancel(s.p.ctx)
 	options := s.working.Style.Options
 	options.Tile = tile
 	j := compileJob{ctx: ctx, cancel: cancel, tile: tile, source: e.source, raw: e.raw, layers: s.working.Style.Layers,
-		options: options, style: s.style, limit: max(s.p.limits.CacheBytes/uint64(s.p.limits.Compilers), 1)}
+		options: options, style: s.style, limit: max(s.p.limits.CacheBytes/uint64(s.p.limits.Compilers), 1), place: place}
 	if e.style == s.style {
 		j.prepared = e.prepared
+	}
+	if j.prepared == nil {
+		j.cause = prepareCauseOf(e, s.working.Style)
 	}
 	s.compiling[tile] = j
 	s.stats.PeakCompiling = max(s.stats.PeakCompiling, len(s.compiling))
@@ -155,6 +233,7 @@ func (s *state) compiled(r compileResult) {
 	if r.ranPrepare {
 		s.stats.Preparing.observe(r.preparing)
 		s.stats.Prepares++
+		s.stats.PrepareCauses.add(j.cause, j.place)
 		s.workingPrepares++
 	}
 	if r.built {
@@ -165,6 +244,9 @@ func (s *state) compiled(r compileResult) {
 	if s.p.ctx.Err() != nil || j.ctx.Err() != nil || j.style != s.style || !s.desired[j.tile] || old == nil || old.source != j.source ||
 		(r.built && r.assets != s.assets) {
 		s.stats.Rejected++
+		if r.ranPrepare {
+			s.stats.PrepareCauses.Wasted++
+		}
 		if r.err == nil && !r.built {
 			s.stats.SkippedBuilds++
 		}

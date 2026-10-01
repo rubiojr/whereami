@@ -174,8 +174,24 @@ type Status struct {
 	PausedUntil                                 time.Time // a busy source takes requests again; zero when not paused
 	Cache, PeakCache                            CacheUsage
 	Loading, Preparing, Building, Selecting     PhaseTime
+	PrepareCauses                               PrepareCauses
 	ResponseBytes, RawCapacityBytes             uint64 // completed responses, before cache admission
 	Requested, SelectedTiles, Fallbacks         int    // latest CPU target, not native Current
+}
+
+// PrepareCauses splits Prepares by why the tile's last installed preparation
+// could not be reused, and counts those for tiles the camera doesn't show: the
+// prefetch ring around the visible tiles, and parents loaded as fallbacks.
+// Wasted counts preparations never installed because newer demand made them
+// obsolete.
+type PrepareCauses struct {
+	First     uint64 // the cached tile had no installed preparation
+	StyleZoom uint64 // only the evaluated style zoom differed
+	Style     uint64 // other preparation inputs differed
+	Repeat    uint64 // identical inputs, for example after a discarded preparation
+	Ring      uint64
+	Parent    uint64
+	Wasted    uint64
 }
 
 // Lease pins an immutable snapshot until Release. Keep it alive through every
