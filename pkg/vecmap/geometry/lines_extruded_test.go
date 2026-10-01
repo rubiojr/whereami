@@ -155,3 +155,50 @@ func FuzzExtrudedLines(f *testing.F) {
 		}
 	})
 }
+
+func TestTessellateIntoReusesStorageWithTheSameResult(t *testing.T) {
+	random := rand.New(rand.NewPCG(7, 11))
+	path := func(n int) []Point {
+		points := make([]Point, n)
+		for i := range points {
+			points[i] = Point{X: random.Float64() * 4096, Y: random.Float64() * 4096}
+		}
+		return points
+	}
+	small, large := [][]Point{path(3)}, [][]Point{path(40), path(25), {{X: 1, Y: 1}}}
+	for _, indexed := range []bool{false, true} {
+		var extruded ExtrudedMesh
+		var dashed DashedMesh
+		// Grow, shrink, then grow again into storage holding stale vertices.
+		for _, paths := range [][][]Point{small, large, small, large, nil} {
+			want, err := TessellateExtrudedLines(paths, ExtrudedLineStyle{Cap: "round", Join: "round"}, MaxLineTriangles, indexed)
+			require.NoError(t, err)
+			previous := extruded
+			extruded, err = TessellateExtrudedLinesInto(extruded, paths, ExtrudedLineStyle{Cap: "round", Join: "round"}, MaxLineTriangles, indexed)
+			require.NoError(t, err)
+			assert.Equal(t, want, extruded)
+			if cap(previous.Vertices) >= cap(extruded.Vertices) && len(extruded.Vertices) > 0 {
+				assert.Same(t, &previous.Vertices[:1][0], &extruded.Vertices[0], "reused vertex storage")
+			}
+
+			wantDashed, err := TessellateDashedLines(paths, MaxLineTriangles, indexed)
+			require.NoError(t, err)
+			previousDashed := dashed
+			dashed, err = TessellateDashedLinesInto(dashed, paths, MaxLineTriangles, indexed)
+			require.NoError(t, err)
+			assert.Equal(t, len(wantDashed.Vertices), len(dashed.Vertices))
+			assert.Equal(t, len(wantDashed.Indices), len(dashed.Indices))
+			if len(wantDashed.Vertices) > 0 {
+				assert.Equal(t, wantDashed.Vertices, dashed.Vertices)
+				assert.Equal(t, wantDashed.Indices, dashed.Indices)
+			}
+			if cap(previousDashed.Vertices) >= len(dashed.Vertices) && len(dashed.Vertices) > 0 {
+				assert.Same(t, &previousDashed.Vertices[:1][0], &dashed.Vertices[0], "reused dashed storage")
+			}
+		}
+	}
+	_, err := TessellateExtrudedLinesInto(ExtrudedMesh{}, small, ExtrudedLineStyle{}, -1, true)
+	assert.ErrorIs(t, err, ErrGeometryLimit)
+	_, err = TessellateDashedLinesInto(DashedMesh{}, small, -1, true)
+	assert.ErrorIs(t, err, ErrGeometryLimit)
+}

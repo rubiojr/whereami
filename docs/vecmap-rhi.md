@@ -662,6 +662,39 @@ at Coarser 0 but updates Current about a tenth less often. The viewer uses 16 ms
 Together with the validation change, Coarser 1 OpenGL went from 6.16–6.36 s to
 4.57–4.87 s of process CPU, against MapLibre's 1.20–1.31 s.
 
+##### Allocation churn
+
+With those defaults Go still allocated 8.2 GB per trace at Coarser 1, and at the
+peak RSS sample its heap held 331 MiB of objects of which about 170 MiB were
+live: peak RSS is mostly garbage awaiting collection. Preparation allocated 4.3
+GB (lines 2.5 GB), build 2.7 GB and selection 0.5 GB. Two scratch buffers were
+thrown away on every use:
+
+- Extruded and dashed line tessellation wrote a fresh array of `{Anchor,
+  Direction}` vertices for every batch, which the compiler immediately copied
+  into the primitive's separate anchor and direction arrays.
+  `geometry.TessellateExtrudedLinesInto` and `TessellateDashedLinesInto` reuse
+  the caller's storage, and compilers keep it across tiles in a `sync.Pool`;
+  the primitive takes exact-length copies.
+- `tiles.Set.place` rebuilt its collision reference list from nil for every
+  selection. The single-owner Set now reuses it; references hold no pointers.
+
+Allocation per trace fell from 8.2 to 6.7 GB and GC CPU from 0.96 to 0.79 s in
+single profiled runs.
+
+The viewer's `-gc-percent 50` trades CPU for heap. Three runs each on OpenGL
+with the changes above:
+
+| gc-percent | Coarser 1 CPU | Coarser 1 RSS | GC CPU | Coarser 0 CPU | Coarser 0 RSS |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 25 | 5.42–5.59 s | 444–451 MiB | 1.47–1.52 s | 7.07–7.45 s | 581–610 MiB |
+| 50 | 4.51–4.83 s | 487–512 MiB | 0.73–0.81 s | 6.18–6.41 s | 664–695 MiB |
+| 100 | 4.22–4.57 s | 605–613 MiB | 0.38–0.39 s | 5.57–5.95 s | 805–862 MiB |
+| 200 | 3.94–4.08 s | 749–906 MiB | 0.19–0.20 s | 5.11–5.63 s | 1095–1127 MiB |
+
+Each doubling halves GC CPU and adds 20–35% peak RSS; no setting approaches
+MapLibre on both. Allocating less moves the whole curve, so the default stays.
+
 #### Vulkan FIFO stalls in live mode on native Wayland
 
 In live mode on Vulkan under headless mutter, the default FIFO present mode (and

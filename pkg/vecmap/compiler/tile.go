@@ -3,6 +3,8 @@ package compiler
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"sync"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/mvt"
@@ -56,7 +58,9 @@ func CompileTile[F mvt.Features](layers []style.CompiledLayer, sources map[strin
 	if err != nil || emit == nil {
 		return ErrOptions
 	}
-	assembly := tileAssembly{remaining: limit, limit: limit, emit: emit}
+	scratch := lineScratches.Get().(*lineScratch)
+	defer lineScratches.Put(scratch)
+	assembly := tileAssembly{remaining: limit, limit: limit, emit: emit, lines: scratch}
 	for _, layer := range layers {
 		if !layer.VisibleAt(options.Zoom) || layer.Hidden() {
 			continue
@@ -72,20 +76,25 @@ type tileAssembly struct {
 	remaining int
 	limit     int
 	emit      func(Primitive) error
+	lines     *lineScratch
 }
+
+// lineScratches keeps tessellation storage across the tiles a compiler
+// prepares. It holds only scratch vertices and indices, never emitted data.
+var lineScratches = sync.Pool{New: func() any { return new(lineScratch) }}
 
 func (a *tileAssembly) layer(layer style.CompiledLayer, features mvt.Features, options LayerOptions, symbols func(style.CompiledLayer) error) error {
 	solid := func(mesh geometry.Mesh, color style.Color) error {
 		return a.append(Primitive{Order: layer.Order, LayerID: layer.ID, Mesh: mesh, Color: color}, false)
 	}
-	lines := lineSinks{baked: solid}
+	lines := lineSinks{baked: solid, scratch: a.lines}
 	if options.ExtrudeLines {
 		lines.baked = func(mesh geometry.Mesh, color style.Color) error {
 			return a.append(Primitive{Order: layer.Order, LayerID: layer.ID, Mesh: mesh, Color: color, Dynamic: true}, false)
 		}
 		lines.extruded = func(mesh geometry.ExtrudedMesh, color style.Color, halfWidth float64) error {
 			primitive := Primitive{Order: layer.Order, LayerID: layer.ID, Color: color, HalfWidth: halfWidth,
-				Mesh: geometry.Mesh{Vertices: make([]geometry.Point, len(mesh.Vertices)), Indices: mesh.Indices}, Directions: make([]geometry.Point, len(mesh.Vertices))}
+				Mesh: geometry.Mesh{Vertices: make([]geometry.Point, len(mesh.Vertices)), Indices: slices.Clone(mesh.Indices)}, Directions: make([]geometry.Point, len(mesh.Vertices))}
 			for i, vertex := range mesh.Vertices {
 				primitive.Mesh.Vertices[i], primitive.Directions[i] = vertex.Anchor, vertex.Direction
 			}
@@ -96,7 +105,7 @@ func (a *tileAssembly) layer(layer style.CompiledLayer, features mvt.Features, o
 		lines.dashed = func(mesh geometry.DashedMesh, color style.Color, pixels, width float64, pattern geometry.DashPattern) error {
 			count := len(mesh.Vertices)
 			primitive := Primitive{Order: layer.Order, LayerID: layer.ID, Color: color, HalfWidth: pixels / 2, Dashes: pattern, DashUnit: width,
-				Mesh: geometry.Mesh{Vertices: make([]geometry.Point, count), Indices: mesh.Indices}, Directions: make([]geometry.Point, count), Distances: make([]float64, count)}
+				Mesh: geometry.Mesh{Vertices: make([]geometry.Point, count), Indices: slices.Clone(mesh.Indices)}, Directions: make([]geometry.Point, count), Distances: make([]float64, count)}
 			for i, vertex := range mesh.Vertices {
 				primitive.Mesh.Vertices[i], primitive.Directions[i], primitive.Distances[i] = vertex.Anchor, vertex.Direction, vertex.Distance
 			}

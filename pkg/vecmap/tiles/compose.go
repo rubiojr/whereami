@@ -148,7 +148,8 @@ func (s *Set) spaces(cover []view.TileID, wraps []int) ([]scene.TileSpace, error
 }
 
 func (s *Set) place(spaces []scene.TileSpace, camera view.Camera, workLimit int) (map[SymbolKey]placement.Accepted, error) {
-	var references []placement.CollisionReference[SymbolKey]
+	references := s.references[:0]
+	defer func() { s.references = references[:0] }()
 	for _, space := range spaces {
 		transform := view.TileTransform(camera, space.Tile, space.Wrap)
 		symbols := s.tiles[space.Tile].symbols

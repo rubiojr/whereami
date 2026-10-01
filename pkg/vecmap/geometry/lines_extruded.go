@@ -39,16 +39,24 @@ type ExtrudedLineStyle struct {
 // widths change. Inputs are neither modified nor retained; the result owns its
 // slices. maximumTriangles bounds all emitted triangles, including joins/caps.
 func TessellateExtrudedLines(paths [][]Point, style ExtrudedLineStyle, maximumTriangles int, indexed bool) (ExtrudedMesh, error) {
+	return TessellateExtrudedLinesInto(ExtrudedMesh{}, paths, style, maximumTriangles, indexed)
+}
+
+// TessellateExtrudedLinesInto is TessellateExtrudedLines writing into dst's
+// storage, for callers that tessellate many batches and copy each result. The
+// result shares dst's slices and overwrites their contents; pass it back as dst
+// for the next call.
+func TessellateExtrudedLinesInto(dst ExtrudedMesh, paths [][]Point, style ExtrudedLineStyle, maximumTriangles int, indexed bool) (ExtrudedMesh, error) {
 	if maximumTriangles < 0 || maximumTriangles > MaxLineTriangles {
 		return ExtrudedMesh{}, fmt.Errorf("%w: invalid line triangle limit", ErrGeometryLimit)
 	}
 	mesh := NewBuilder[ExtrudedVertex](indexed, maximumTriangles*3)
 	capacity := lineVertexCapacity(paths, LineStyle{Cap: style.Cap, Join: style.Join}, maximumTriangles)
 	if indexed {
-		mesh.Indices = make([]uint32, 0, capacity)
+		mesh.Indices = emptied(dst.Indices, capacity)
 		capacity /= 2
 	}
-	mesh.Vertices = make([]ExtrudedVertex, 0, capacity)
+	mesh.Vertices = emptied(dst.Vertices, capacity)
 	for _, rawPath := range paths {
 		path := cleanLine(rawPath)
 		if len(path) < 2 {
@@ -64,6 +72,15 @@ func TessellateExtrudedLines(paths [][]Point, style ExtrudedLineStyle, maximumTr
 		}
 	}
 	return ExtrudedMesh{Vertices: mesh.Vertices, Indices: mesh.Indices}, nil
+}
+
+// emptied returns values with no elements and room for n, reusing its storage
+// when that is large enough.
+func emptied[S ~[]E, E any](values S, n int) S {
+	if values == nil || cap(values) < n {
+		return make(S, 0, n)
+	}
+	return values[:0]
 }
 
 func appendExtrudedSegment(mesh *Builder[ExtrudedVertex], start, end Point, cap string) error {

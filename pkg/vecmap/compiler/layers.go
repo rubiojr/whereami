@@ -67,11 +67,19 @@ type ExtrudedSink func(geometry.ExtrudedMesh, style.Color, float64) error
 type DashedSink func(mesh geometry.DashedMesh, color style.Color, pixels, width float64, pattern geometry.DashPattern) error
 
 // lineSinks routes tessellated lines. A nil extruded or dashed sink keeps those
-// lines baked.
+// lines baked. With scratch, extruded and dashed meshes borrow its storage
+// until the sink returns, and the sinks must copy what they keep.
 type lineSinks struct {
 	baked    SolidSink
 	extruded ExtrudedSink
 	dashed   DashedSink
+	scratch  *lineScratch
+}
+
+// lineScratch is tessellation storage reused by every line batch of a tile.
+type lineScratch struct {
+	extruded geometry.ExtrudedMesh
+	dashed   geometry.DashedMesh
 }
 
 // PatternSink consumes an owned mesh, logical sprite name, tile-unit scale and
@@ -284,9 +292,16 @@ func emitLines(batches []lineBatch, indexed bool, limit int, sinks lineSinks) er
 			if paint.width <= geometry.Epsilon {
 				continue
 			}
-			mesh, err := geometry.TessellateExtrudedLines(batch.paths, geometry.ExtrudedLineStyle{Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
+			var scratch geometry.ExtrudedMesh
+			if sinks.scratch != nil {
+				scratch = sinks.scratch.extruded
+			}
+			mesh, err := geometry.TessellateExtrudedLinesInto(scratch, batch.paths, geometry.ExtrudedLineStyle{Cap: paint.lineCap, Join: paint.lineJoin}, limit, indexed)
 			if err != nil {
 				return resourceError(err)
+			}
+			if sinks.scratch != nil {
+				sinks.scratch.extruded = mesh
 			}
 			if err := sinks.extruded(mesh, paint.color, paint.pixels/2); err != nil {
 				return err
@@ -297,9 +312,16 @@ func emitLines(batches []lineBatch, indexed bool, limit int, sinks lineSinks) er
 		// along each path replace baked dashes. Dash caps and joins, path offsets
 		// and longer patterns have no such form here.
 		if pattern, ok := geometry.NewDashPattern(paint.dashes, paint.width); ok && sinks.dashed != nil && paint.offset == 0 && paint.lineCap != "round" && paint.lineCap != "square" {
-			mesh, err := geometry.TessellateDashedLines(batch.paths, limit, indexed)
+			var scratch geometry.DashedMesh
+			if sinks.scratch != nil {
+				scratch = sinks.scratch.dashed
+			}
+			mesh, err := geometry.TessellateDashedLinesInto(scratch, batch.paths, limit, indexed)
 			if err != nil {
 				return resourceError(err)
+			}
+			if sinks.scratch != nil {
+				sinks.scratch.dashed = mesh
 			}
 			if err := sinks.dashed(mesh, paint.color, paint.pixels, paint.width, pattern); err != nil {
 				return err

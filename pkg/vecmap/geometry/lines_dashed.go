@@ -91,10 +91,20 @@ func (p DashPattern) Covers(distance, width float64) bool {
 // emits no joins. Distances restart at each path and skip segments no longer than
 // Epsilon. Inputs are neither modified nor retained; the result owns its slices.
 func TessellateDashedLines(paths [][]Point, maximumTriangles int, indexed bool) (DashedMesh, error) {
+	return TessellateDashedLinesInto(DashedMesh{}, paths, maximumTriangles, indexed)
+}
+
+// TessellateDashedLinesInto is TessellateDashedLines writing into dst's
+// storage, like TessellateExtrudedLinesInto.
+func TessellateDashedLinesInto(dst DashedMesh, paths [][]Point, maximumTriangles int, indexed bool) (DashedMesh, error) {
 	if maximumTriangles < 0 || maximumTriangles > MaxLineTriangles {
 		return DashedMesh{}, fmt.Errorf("%w: invalid line triangle limit", ErrGeometryLimit)
 	}
 	mesh := NewBuilder[DashedVertex](indexed, maximumTriangles*3)
+	mesh.Vertices = dst.Vertices[:0]
+	if indexed {
+		mesh.Indices = dst.Indices[:0]
+	}
 	for _, rawPath := range paths {
 		path := cleanLine(rawPath)
 		distance := 0.0

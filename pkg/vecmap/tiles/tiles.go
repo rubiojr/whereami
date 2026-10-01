@@ -78,6 +78,7 @@ type Set struct {
 	tiles              map[view.TileID]fragment
 	maxTiles, maxDraws int
 	cached             *Snapshot
+	references         []placement.CollisionReference[SymbolKey] // place's storage, reused by each selection
 }
 
 func New(limits retained.Limits) (*Set, error) {
