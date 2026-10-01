@@ -1,0 +1,182 @@
+Qt 6.11.2: report Vulkan finish failures before retirement/readback completion.
+
+The failure is sticky: endFrame must not record a submitted or unsuccessfully
+restarted command buffer, and later frames must not reuse its command pool.
+The exported marker lets an adapter reject an unpatched runtime with the same
+Qt version. This is a Qt dependency correction, not application map logic.
+
+diff --git a/src/gui/rhi/qrhivulkan.cpp b/src/gui/rhi/qrhivulkan.cpp
+--- a/src/gui/rhi/qrhivulkan.cpp
++++ b/src/gui/rhi/qrhivulkan.cpp
+@@ -2589,7 +2589,7 @@ void QRhiVulkan::releaseSwapChainResources(QRhiSwapChain *swapChain)
+     // NB! surface and similar must remain intact
+ }
+ 
+-void QRhiVulkan::ensureCommandPoolForNewFrame()
++QRhi::FrameOpResult QRhiVulkan::ensureCommandPoolForNewFrame()
+ {
+     VkCommandPoolResetFlags flags = 0;
+ 
+@@ -2600,7 +2600,16 @@ void QRhiVulkan::ensureCommandPoolForNewFrame()
+         flags |= VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT;
+ 
+     // put all command buffers allocated from this slot's pool to initial state
+-    df->vkResetCommandPool(dev, cmdPool[currentFrameSlot], flags);
++    const VkResult err = df->vkResetCommandPool(dev, cmdPool[currentFrameSlot], flags);
++    if (err != VK_SUCCESS) {
++        qWarning("Failed to reset command pool: %d", err);
++        if (err == VK_ERROR_DEVICE_LOST) {
++            deviceLost = true;
++            return QRhi::FrameOpDeviceLost;
++        }
++        return QRhi::FrameOpError;
++    }
++    return QRhi::FrameOpSuccess;
+ }
+ 
+ double QRhiVulkan::elapsedSecondsFromTimestamp(quint64 timestamp[2], bool *ok)
+@@ -2623,6 +2632,8 @@ double QRhiVulkan::elapsedSecondsFromTimestamp(quint64 timestamp[2], bool *ok)
+ 
+ QRhi::FrameOpResult QRhiVulkan::beginFrame(QRhiSwapChain *swapChain, QRhi::BeginFrameFlags)
+ {
++    if (finishError != QRhi::FrameOpSuccess)
++        return finishError;
+     QVkSwapChain *swapChainD = QRHI_RES(QVkSwapChain, swapChain);
+     const int frameResIndex = swapChainD->bufferCount > 1 ? swapChainD->currentFrameSlot : 0;
+     QVkSwapChain::FrameResources &frame(swapChainD->frameRes[frameResIndex]);
+@@ -2670,7 +2681,9 @@ QRhi::FrameOpResult QRhiVulkan::beginFrame(QRhiSwapChain *swapChain, QRhi::BeginFrameFlags)
+         swapChainD->ds->lastActiveFrameSlot = currentFrameSlot;
+ 
+     // reset the command pool
+-    ensureCommandPoolForNewFrame();
++    QRhi::FrameOpResult resetResult = ensureCommandPoolForNewFrame();
++    if (resetResult != QRhi::FrameOpSuccess)
++        return resetResult;
+ 
+     // start recording to this frame's command buffer
+     QRhi::FrameOpResult cbres = startPrimaryCommandBuffer(&frame.cmdBuf);
+@@ -2739,6 +2752,9 @@ QRhi::FrameOpResult QRhiVulkan::endFrame(QRhiSwapChain *swapChain, QRhi::EndFrameFlags flags)
+         inst->handle()->endFrame(swapChainD->window);
+     });
+ 
++    if (finishError != QRhi::FrameOpSuccess)
++        return finishError;
++
+     recordPrimaryCommandBuffer(&swapChainD->cbWrapper);
+ 
+     int frameResIndex = swapChainD->bufferCount > 1 ? swapChainD->currentFrameSlot : 0;
+@@ -2981,6 +2997,8 @@ QRhi::FrameOpResult QRhiVulkan::waitCommandCompletion(int frameSlot)
+ 
+ QRhi::FrameOpResult QRhiVulkan::beginOffscreenFrame(QRhiCommandBuffer **cb, QRhi::BeginFrameFlags)
+ {
++    if (finishError != QRhi::FrameOpSuccess)
++        return finishError;
+     // Switch to the next slot manually. Swapchains do not know about this
+     // which is good. So for example an onscreen, onscreen, offscreen,
+     // onscreen, onscreen, onscreen sequence of frames leads to 0, 1, 0, 0, 1,
+@@ -2996,7 +3014,9 @@ QRhi::FrameOpResult QRhiVulkan::beginOffscreenFrame(QRhiCommandBuffer **cb, QRhi::BeginFrameFlags)
+     if (waitResult != QRhi::FrameOpSuccess)
+         return waitResult;
+ 
+-    ensureCommandPoolForNewFrame();
++    QRhi::FrameOpResult resetResult = ensureCommandPoolForNewFrame();
++    if (resetResult != QRhi::FrameOpSuccess)
++        return resetResult;
+ 
+     QVkCommandBuffer *cbWrapper = ofr.cbWrapper[currentFrameSlot];
+     QRhi::FrameOpResult cbres = startPrimaryCommandBuffer(&cbWrapper->cb);
+@@ -3034,6 +3054,9 @@ QRhi::FrameOpResult QRhiVulkan::endOffscreenFrame(QRhi::EndFrameFlags flags)
+     Q_ASSERT(ofr.active);
+     ofr.active = false;
+ 
++    if (finishError != QRhi::FrameOpSuccess)
++        return finishError;
++
+     QVkCommandBuffer *cbWrapper(ofr.cbWrapper[currentFrameSlot]);
+     recordPrimaryCommandBuffer(cbWrapper);
+ 
+@@ -3088,6 +3111,8 @@ QRhi::FrameOpResult QRhiVulkan::endOffscreenFrame(QRhi::EndFrameFlags flags)
+ 
+ QRhi::FrameOpResult QRhiVulkan::finish()
+ {
++    if (finishError != QRhi::FrameOpSuccess)
++        return finishError;
+     QVkSwapChain *swapChainD = nullptr;
+     if (inFrame) {
+         // There is either a swapchain or an offscreen frame on-going.
+@@ -3110,22 +3135,36 @@ QRhi::FrameOpResult QRhiVulkan::finish()
+         }
+         QRhi::FrameOpResult submitres = endAndSubmitPrimaryCommandBuffer(cb, VK_NULL_HANDLE, nullptr, nullptr);
+         if (submitres != QRhi::FrameOpSuccess)
+-            return submitres;
++            return finishError = submitres;
+     }
+ 
+-    df->vkQueueWaitIdle(gfxQueue);
++    const VkResult waitResult = df->vkQueueWaitIdle(gfxQueue);
++    if (waitResult != VK_SUCCESS) {
++        qWarning("Failed to wait for graphics queue: %d", waitResult);
++        if (waitResult == VK_ERROR_DEVICE_LOST) {
++            deviceLost = true;
++            return finishError = QRhi::FrameOpDeviceLost;
++        }
++        return finishError = QRhi::FrameOpError;
++    }
+ 
+     if (inFrame) {
+         // The current frame slot's command pool needs to be reset.
+-        ensureCommandPoolForNewFrame();
++        const QRhi::FrameOpResult resetResult = ensureCommandPoolForNewFrame();
++        if (resetResult != QRhi::FrameOpSuccess)
++            return finishError = resetResult;
+         // Allocate and begin recording on a new command buffer.
++        QRhi::FrameOpResult startResult;
+         if (ofr.active) {
+-            startPrimaryCommandBuffer(&ofr.cbWrapper[currentFrameSlot]->cb);
++            startResult = startPrimaryCommandBuffer(&ofr.cbWrapper[currentFrameSlot]->cb);
+         } else {
+             QVkSwapChain::FrameResources &frame(swapChainD->frameRes[swapChainD->currentFrameSlot]);
+-            startPrimaryCommandBuffer(&frame.cmdBuf);
+-            swapChainD->cbWrapper.cb = frame.cmdBuf;
++            startResult = startPrimaryCommandBuffer(&frame.cmdBuf);
++            if (startResult == QRhi::FrameOpSuccess)
++                swapChainD->cbWrapper.cb = frame.cmdBuf;
+         }
++        if (startResult != QRhi::FrameOpSuccess)
++            return finishError = startResult;
+     }
+ 
+     executeDeferredReleases(true);
+@@ -3134,6 +3173,10 @@ QRhi::FrameOpResult QRhiVulkan::finish()
+     return QRhi::FrameOpSuccess;
+ }
+ 
++// Runtime capability marker for consumers of this version-pinned Qt correction.
++// Symbol presence distinguishes the patched library from an unpatched SDK build.
++extern "C" Q_GUI_EXPORT void qt_rhi_checked_vulkan_finish_v1() {}
++
+ static inline QRhiPassResourceTracker::UsageState toPassTrackerUsageState(const QVkBuffer::UsageState &bufUsage)
+ {
+     QRhiPassResourceTracker::UsageState u;
+diff --git a/src/gui/rhi/qrhivulkan_p.h b/src/gui/rhi/qrhivulkan_p.h
+--- a/src/gui/rhi/qrhivulkan_p.h
++++ b/src/gui/rhi/qrhivulkan_p.h
+@@ -891,7 +891,7 @@ public:
+                             int startLayer, int layerCount,
+                             int startLevel, int levelCount);
+     void updateShaderResourceBindings(QRhiShaderResourceBindings *srb);
+-    void ensureCommandPoolForNewFrame();
++    QRhi::FrameOpResult ensureCommandPoolForNewFrame();
+     double elapsedSecondsFromTimestamp(quint64 timestamp[2], bool *ok);
+     void printExtraErrorInfo(VkResult err);
+     void setDefaultScissor(QVkCommandBuffer *cbD);
+@@ -927,6 +927,9 @@ public:
+     VkDeviceSize ubufAlign;
+     VkDeviceSize texbufAlign;
+     bool deviceLost = false;
++    // A failed finish may leave a submitted or non-recording command buffer.
++    // Do not reuse the backend until the owning QRhi is destroyed.
++    QRhi::FrameOpResult finishError = QRhi::FrameOpSuccess;
+     bool releaseCachedResourcesCalledBeforeFrameStart = false;
+ 
+ #ifdef Q_OS_WIN

@@ -704,6 +704,11 @@ void qtrhi_QRhiDriverInfo_delete(QRhiDriverInfo* self) {
 	delete self;
 }
 
+int qtrhi_QRhi_backend(const QRhi* self) {
+	QRhi::Implementation _ret = self->backend();
+	return static_cast<int>(_ret);
+}
+
 const char* qtrhi_QRhi_backendName(const QRhi* self) {
 	return (const char*) self->backendName();
 }

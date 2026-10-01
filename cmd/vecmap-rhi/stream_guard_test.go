@@ -3,6 +3,8 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +14,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStreamCompletionFailureStopsSameContextRecreation(t *testing.T) {
+	for _, err := range []error{vecmaprhi.ErrNativeCompletion, vecmaprhi.ErrUnsupportedCompletion, errors.New("ordinary reset")} {
+		t.Run(err.Error(), func(t *testing.T) {
+			epoch := &nativeEpoch{generation: 1, pending: &retained.PacketWithData[*scene.Document]{}}
+			stream := &viewerStream{epoch: epoch, report: func(streamStatus) {}, status: streamStatus{Ready: true}}
+			stream.complete(epoch, vecmaprhi.BatchResult{Reset: true, Err: fmt.Errorf("test: %w", err)})
+			assert.True(t, epoch.dead)
+			assert.Nil(t, epoch.pending)
+			assert.False(t, stream.status.Ready)
+			if errors.Is(err, vecmaprhi.ErrNativeCompletion) || errors.Is(err, vecmaprhi.ErrUnsupportedCompletion) {
+				assert.ErrorIs(t, stream.status.Err, err)
+			} else {
+				assert.NoError(t, stream.status.Err)
+			}
+		})
+	}
+}
 
 func TestViewerBudgetPreflight(t *testing.T) {
 	// Reject before constructing QApplication or starting the worker.

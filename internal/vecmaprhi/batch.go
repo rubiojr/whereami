@@ -3,6 +3,7 @@
 package vecmaprhi
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -12,10 +13,21 @@ import (
 	"github.com/rubiojr/whereami/pkg/vecmap/scene"
 )
 
+// ErrNativeCompletion means native submission/completion failed. The caller must
+// stop using this QRhi, rather than recreating a Planner namespace on the same
+// potentially non-recording command buffer.
+var ErrNativeCompletion = errors.New("native completion failed")
+
+// ErrUnsupportedCompletion means the loaded Vulkan backend lacks the version-pinned
+// Qt correction that reports idle-wait and command-buffer restart failures.
+var ErrUnsupportedCompletion = errors.New("unsupported native completion")
+
 // BatchResult is delivered on the render thread. Enqueue it to the Planner owner;
 // callbacks must not block or reenter the renderer. Reset invalidates this entire
 // renderer/Planner namespace, including earlier successful tickets. Recreate both
 // and ignore messages from the old instance; Reset is NOT a failed-batch ack.
+// ErrNativeCompletion requires stopping native use and replacing the QRhi itself;
+// a new renderer/Planner on the failed context is insufficient.
 type BatchResult struct {
 	Ticket         uint64
 	Success, Reset bool
@@ -282,12 +294,16 @@ func (b *BatchRenderer) complete() {
 }
 
 func (b *BatchRenderer) drain(context *rhi.QRhi) bool {
+	if b.warming && !b.prepared && context.Backend() == rhi.QRhi__Vulkan && !rhi.LibraryHasSymbol("Qt6Gui", 6, "qt_rhi_checked_vulkan_finish_v1") {
+		b.invalidate(fmt.Errorf("%w: Vulkan requires the Qt %s checked-finish patch; see docs/vecmap-rhi-completion.md", ErrUnsupportedCompletion, rhi.QtVersion))
+		return false
+	}
 	start := time.Now()
 	result := b.finish(context)
 	b.r.stats.CompletionDrains++
 	b.r.stats.CompletionDrainTime += time.Since(start)
 	if result != rhi.QRhi__FrameOpSuccess || context.IsDeviceLost() {
-		b.invalidate(fmt.Errorf("native completion drain failed: %d", result))
+		b.invalidate(fmt.Errorf("%w: native completion drain failed: %d", ErrNativeCompletion, result))
 		return false
 	}
 	return true

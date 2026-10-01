@@ -203,12 +203,15 @@ precede backend result writes during destruction, and OpenGL readback can block.
 `frameSwapped` is not a submission-success signal either. Resolve the native
 submission and final-reference boundaries before introducing result ownership.
 
-The audit also records a limitation of the checked Vulkan baseline:
-Qt 6.11.2's `QRhiVulkan::finish` discards `vkQueueWaitIdle` and command-buffer
-restart results. `BatchRenderer` resets on errors exposed by `Finish` or
-`IsDeviceLost`; it cannot detect errors hidden by both. **1aaq** tracks the native
-error-reporting integration needed before claiming completion and retirement
-under those failures.
+Vulkan batch completion now requires the [Qt 6.11.2 checked-finish
+patch](../../patches/README.md), delivered by **1aaq**. It propagates idle-wait,
+pool reset and command-buffer restart failures, and prevents further frame use
+of the failed context. A generated `QLibrary` binding checks the loaded runtime's
+capability marker; an unpatched library returns `ErrUnsupportedCompletion` before
+Planner-owned uploads. Reported finish errors return `ErrNativeCompletion` and
+reset the namespace without acknowledging its batch. Stop native use and replace
+the QRhi itself before recovery. The viewer stops on these errors instead of
+recreating a map node on the failed context.
 
 ### Signal subscription ownership
 

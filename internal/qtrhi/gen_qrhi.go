@@ -2299,6 +2299,10 @@ func UnsafeNewQRhi(h unsafe.Pointer) *QRhi {
 	return newQRhi((*C.QRhi)(h))
 }
 
+func (this *QRhi) Backend() QRhi__Implementation {
+	return (QRhi__Implementation)(C.qtrhi_QRhi_backend(this.h))
+}
+
 func (this *QRhi) BackendName() string {
 	_ret := C.qtrhi_QRhi_backendName(this.h)
 	return C.GoString(_ret)

@@ -85,6 +85,11 @@ The checked-in bindings target **Qt 6.11.2**. Build and runtime version checks
 reject another Qt version. Install the matching Qt Quick, QML, Qt Shader Tools,
 and Qt base private development headers.
 
+Vulkan batch execution also requires the
+[Qt 6.11.2 checked-finish dependency patch](../patches/README.md). The viewer
+checks the loaded runtime's capability marker and reports a missing correction
+before executing Planner-owned uploads.
+
 ```sh
 make rhi-build
 
@@ -2171,6 +2176,16 @@ returning success. **1aaq** tracks exposing those failures; checking QRhi's publ
 return value does not prove native completion when Qt hides an error. The audit
 now includes the live-target replay evidence and explicit submission, completion,
 retirement and final-native-access requirements for a future integration.
+
+**1aaq** implements that native hardening with a version-pinned Qt patch and a
+generated runtime-symbol check. Failed producing submission, native idle wait or
+command-buffer restart prevents acknowledgement and poisons the Qt context until
+destruction. The viewer stops on completion errors instead of recreating on that
+context. Eighteen native fault subprocesses cover general/device-loss results
+for wait, pool reset and restart; the basic-loop retirement cases keep the Planner
+busy without reclaiming capacity. Both the corrected Vulkan and distribution
+OpenGL 2× race suites pass. See the [completion checkpoint](vecmap-rhi-completion.md#checked-vulkan-completion-1aaq)
+for the tested dependency boundary and limitations.
 
 ### Live target data and fixture replacement
 
@@ -4307,6 +4322,10 @@ backend, select a matching SDK/runtime or bundle a controlled Qt build, then
 build and verify the adapter in that environment. A runtime branch name alone
 does not pin its exact Qt patch version: coordinate runtime updates or ship Qt
 under `/app` if exact dependency control is required.
+
+Include `patches/qt-6.11.2-checked-vulkan-finish.patch` in that controlled Qt build.
+The Vulkan batch renderer requires its runtime marker as well as Qt version
+6.11.2; using patched headers with an unpatched QtGui library is insufficient.
 
 The production application remains on its existing renderer while these gates
 are open. This prototype adds explicit opt-in build/test targets.

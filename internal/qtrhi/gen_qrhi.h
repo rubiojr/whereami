@@ -262,6 +262,7 @@ void qtrhi_QRhiDriverInfo_setDeviceType(QRhiDriverInfo* self, int deviceType);
 
 void qtrhi_QRhiDriverInfo_delete(QRhiDriverInfo* self);
 
+int qtrhi_QRhi_backend(const QRhi* self);
 const char* qtrhi_QRhi_backendName(const QRhi* self);
 const char* qtrhi_QRhi_backendNameWithImpl(int impl);
 QRhiDriverInfo* qtrhi_QRhi_driverInfo(const QRhi* self);

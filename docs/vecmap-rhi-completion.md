@@ -4,7 +4,7 @@ Checkpoint: **w47r**, following checked submission commit **07301d5**.
 
 ## Decision
 
-Keep stock Qt and the checked producing-frame submission path. Qt 6.11.2's
+The **w47r** decision retained the checked producing-frame submission path. Qt 6.11.2's
 readback callback cannot establish successful submission, safe cancellation and
 completed retirement together. The audit resolves the proposed callback-only
 replacement; a future asynchronous executor needs the integration boundary and
@@ -12,9 +12,10 @@ acceptance tests below.
 
 Review on **2026-10-01** also found an error-reporting limit in the checked Vulkan
 path: `QRhiVulkan::finish` ignores idle-wait and command-buffer restart results.
-Follow-up **1aaq** tracks exposing those failures before acknowledging native
-completion. Checking the public `finish` result is necessary, but does not cover
-errors that Qt discards internally.
+Follow-up **1aaq** supplies a version-pinned Qt correction and runtime guard,
+described under [checked Vulkan completion](#checked-vulkan-completion-1aaq).
+Checking the public `finish` result requires a runtime that actually reports
+those native failures.
 
 The current checked in-frame `finish()` path remains the correctness baseline.
 Replacing it with `QRhiReadbackResult::completed` alone does not preserve its
@@ -137,19 +138,20 @@ In [QRhiVulkan::finish](https://github.com/qt/qtbase/blob/v6.11.2/src/gui/rhi/qr
 errors reset the namespace. It cannot observe a native error that neither check
 exposes. The checked path therefore establishes reported submission success; its
 completion/retirement proof also depends on the native idle wait succeeding.
-Current tests do not prove behavior when Qt hides a wait or restart failure.
+The public-result tests from **w47r** could not observe a hidden native failure.
+**1aaq** adds native-return injection against the corrected runtime.
 
-**1aaq** requires a version-pinned Qt correction or generated backend integration
+**1aaq** selects a version-pinned Qt correction
 that exposes those results with valid submission and lifetime ordering. A failed
 wait must not be treated as completed retirement, and a failed restart must not
 leave the adapter acknowledging a healthy namespace. Adding a later queue wait
 alone does not fix the producing-submission or command-buffer restart boundary.
 
-## Implementation boundary to choose
+## Asynchronous implementation boundary
 
-The stock-Qt baseline can continue supporting live retained targets while keeping
-checked submission and measured retirement drains. No API change is needed for
-that work.
+The checked-submission baseline supports live retained targets and measured
+retirement drains. Its Vulkan runtime now includes the **1aaq** dependency
+correction. Removing the drains requires the separate asynchronous boundary below.
 
 For the original performance goal, the recommended sequence is **live targets
 first**, followed by workload measurements, then backend-specific completion if
@@ -237,3 +239,44 @@ Native runs enabled `QT_RHI_LEAK_CHECK=1`. These verify the retained checked pat
 on working drivers and injected public return values. They do not inject failed
 Vulkan submissions, idle waits, command-buffer restarts or asynchronous readback
 teardown. Those failure cases remain explicit integration requirements.
+
+## Checked Vulkan completion: 1aaq
+
+The [Qt 6.11.2 dependency patch](../patches/README.md) now reports failed queue
+idle, pool reset and command-buffer restart operations. A failed finish latches
+the error until QRhi destruction, preventing later frame recording from using an
+already-submitted or unsuccessfully restarted command buffer. Forced retirement
+and readback processing are skipped on that failed finish.
+
+The Go adapter requires the runtime's `qt_rhi_checked_vulkan_finish_v1` marker
+before executing a Vulkan batch. `ErrUnsupportedCompletion` identifies a missing
+correction. `ErrNativeCompletion` identifies a reported submission/completion
+failure. Both stop the viewer; neither acknowledges a batch or recreates native
+work on the same failed QRhi. Ordinary node invalidation retains its existing
+recreation path.
+
+Verification on 2026-10-01, Go 1.27.1, corrected Qt 6.11.2 and Mesa 26.2.3:
+
+- **18 native fault subprocesses** on Radeon 860M / RADV: wait, pool reset and
+  command-buffer begin, each returning a general error or device loss. Upload
+  cases run in both render loops; retirement cases prove the basic-loop Planner
+  remains busy and charged without a retirement acknowledgement.
+- Unpatched Vulkan is rejected before any mesh upload or completion drain.
+- Full Vulkan bindings/adapter/viewer race suites pass against the corrected
+  dependency. OpenGL 2× race suites pass against the distribution runtime.
+- Full module coverage tests and binding reproduction pass. Adapter statement
+  coverage is **91.0%**; viewer subprocess coverage is separate from its parent.
+- Tagged staticcheck passes. Default staticcheck retains the existing generated
+  `internal/miqtquick` ST1006 diagnostics; QML lint reports existing UI warnings.
+  The vulnerability baseline is the previously recorded standard-library
+  **GO-2026-5024**.
+- Gopls does not include the opt-in files in its default build-tag metadata;
+  tagged build/test/staticcheck provide the native checks. Complexity review
+  retains the explicit viewer synchronization state machine (23) and generator
+  rewrite dispatch (13); the completion drain is below the review threshold.
+
+The interposer completes the real native operation before replacing its return
+value. These tests exercise Qt's native error-reporting boundary and application
+ownership, not physical GPU loss. They do not establish asynchronous readback
+ownership or failure-hard behavior for unrelated Qt operations. The callback-only
+replacement remains gated by the asynchronous requirements above.

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 
 	rhi "github.com/rubiojr/whereami/internal/qtrhi"
@@ -47,6 +48,9 @@ func (s *viewerStream) sync(item *rhi.QQuickItem, old *rhi.QSGNode, update strea
 		s.report(s.status)
 		return old
 	default:
+	}
+	if errors.Is(s.status.Err, vecmaprhi.ErrNativeCompletion) || errors.Is(s.status.Err, vecmaprhi.ErrUnsupportedCompletion) {
+		return old
 	}
 	if old == nil || s.epoch.dead {
 		if old != nil {
@@ -136,6 +140,9 @@ func (s *viewerStream) complete(e *nativeEpoch, result vecmaprhi.BatchResult) {
 	if result.Reset {
 		e.dead, e.pending = true, nil
 		s.status.Ready = false
+		if errors.Is(result.Err, vecmaprhi.ErrNativeCompletion) || errors.Is(result.Err, vecmaprhi.ErrUnsupportedCompletion) {
+			s.status.Err = result.Err
+		}
 	} else if e.pending == nil || e.pending.Batch == nil || e.pending.Batch.Ticket != result.Ticket {
 		s.status.Err = fmt.Errorf("native acknowledgement does not match outstanding packet")
 		e.dead = true
