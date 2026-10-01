@@ -14,3 +14,4 @@ dist/
 .kata.local.toml
 /tmp
 /.mcp.json
+/.claude
