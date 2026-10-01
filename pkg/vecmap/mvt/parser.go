@@ -275,17 +275,31 @@ func (l *Layer) FeatureClass(tags []uint32) (string, error) {
 
 // FeatureProperties validates tag references and returns an owned property map.
 func (l *Layer) FeatureProperties(tags []uint32) (Properties, error) {
-	if len(tags)%2 != 0 {
-		return nil, errors.New("MVT feature has an odd tag count")
+	if err := l.checkTags(tags); err != nil {
+		return nil, err
 	}
+	return l.properties(tags), nil
+}
+
+// checkTags validates key and value index pairs against the layer's tables.
+func (l *Layer) checkTags(tags []uint32) error {
+	if len(tags)%2 != 0 {
+		return errors.New("MVT feature has an odd tag count")
+	}
+	for index := 0; index < len(tags); index += 2 {
+		if uint64(tags[index]) >= uint64(len(l.keys)) || uint64(tags[index+1]) >= uint64(len(l.values)) {
+			return errors.New("MVT feature tag index is out of range")
+		}
+	}
+	return nil
+}
+
+// properties builds the property map of validated tags; a duplicate key keeps
+// its last value.
+func (l *Layer) properties(tags []uint32) Properties {
 	properties := make(Properties, len(tags)/2)
 	for index := 0; index < len(tags); index += 2 {
-		keyIndex := tags[index]
-		valueIndex := tags[index+1]
-		if uint64(keyIndex) >= uint64(len(l.keys)) || uint64(valueIndex) >= uint64(len(l.values)) {
-			return nil, errors.New("MVT feature tag index is out of range")
-		}
-		properties[l.keys[keyIndex]] = l.values[valueIndex].value
+		properties[l.keys[tags[index]]] = l.values[tags[index+1]].value
 	}
-	return properties, nil
+	return properties
 }

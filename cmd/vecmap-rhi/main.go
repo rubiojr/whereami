@@ -47,7 +47,7 @@ func main() {
 	flag.Uint64Var(&live.cacheBytes, "cpu-cache-bytes", 384<<20, "live raw/prepared/fragment/profile cache budget")
 	flag.Uint64Var(&live.sceneBytes, "cpu-scene-bytes", 256<<20, "live budget of one composed scene; a view that exceeds it shows coarser stand-in tiles")
 	flag.BoolVar(&live.keepPreparation, "keep-preparation", false, "keep prepared primitives after a tile is built, for asset changes")
-	flag.BoolVar(&live.reuseDecoded, "reuse-decoded", false, "keep each tile's decoded source, so a new style zoom prepares it without decoding and triangulating again; costs more GC than it saves today")
+	flag.BoolVar(&live.reuseDecoded, "reuse-decoded", true, "keep each tile's decoded source, so a new style zoom prepares it without decoding and triangulating again")
 	flag.Float64Var(&live.drawMargin, "draw-margin", 256, "draw live tiles within this many logical pixels of the viewport; tiles beyond stay compiled for a pan; zero draws every loaded tile")
 	flag.IntVar(&live.workers, "tile-workers", 4, "live transport workers (1-4); use 1 for ordered cache replay")
 	flag.IntVar(&live.compilers, "tile-compilers", 1, "live goroutines that prepare and build tiles (1-8); more finish a view sooner on more cores")

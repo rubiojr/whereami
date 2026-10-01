@@ -10,7 +10,7 @@ import (
 )
 
 func TestEvaluate(t *testing.T) {
-	context := Context{Zoom: 12, GeometryType: 2, Properties: map[string]any{"class": "primary", "rank": int64(2)}}
+	context := Context{Zoom: 12, GeometryType: 2, Properties: MapProperties{"class": "primary", "rank": int64(2)}}
 	tests := []struct {
 		name       string
 		expression any
@@ -80,7 +80,7 @@ func TestDepthAndBorrowedValues(t *testing.T) {
 	_, ok = Evaluate(cycle, Context{})
 	assert.False(t, ok)
 	fonts := []any{"Noto Sans Regular"}
-	properties := map[string]any{"fonts": fonts}
+	properties := MapProperties{"fonts": fonts}
 	result, ok := Evaluate([]any{"get", "fonts"}, Context{Properties: properties})
 	require.True(t, ok)
 	assert.Same(t, &fonts[0], &result.([]any)[0])
@@ -148,7 +148,7 @@ func TestComparisons(t *testing.T) {
 	// comparison, not deep equality, including composites containing interfaces.
 	for _, value := range []any{[]any{1}, map[string]any{"x": 1}, struct{ X any }{X: []int{1}}} {
 		for _, op := range []string{"==", "!="} {
-			got, ok := Evaluate([]any{op, []any{"get", "x"}, []any{"get", "x"}}, Context{Properties: map[string]any{"x": value}})
+			got, ok := Evaluate([]any{op, []any{"get", "x"}, []any{"get", "x"}}, Context{Properties: MapProperties{"x": value}})
 			require.True(t, ok)
 			assert.Equal(t, op == "!=", got)
 		}
@@ -191,13 +191,13 @@ func FuzzEvaluateJSON(f *testing.F) {
 		if json.Unmarshal(data, &expression) != nil {
 			return
 		}
-		Evaluate(expression, Context{Zoom: 12, GeometryType: 2, Properties: map[string]any{"rank": int64(2)}})
+		Evaluate(expression, Context{Zoom: 12, GeometryType: 2, Properties: MapProperties{"rank": int64(2)}})
 	})
 }
 
 func BenchmarkEvaluateFilter(b *testing.B) {
 	var expression any = []any{"all", []any{"==", []any{"geometry-type"}, "LineString"}, []any{"<", []any{"get", "rank"}, float64(3)}}
-	context := Context{GeometryType: 2, Properties: map[string]any{"rank": int64(2)}}
+	context := Context{GeometryType: 2, Properties: MapProperties{"rank": int64(2)}}
 	b.ReportAllocs()
 	for b.Loop() {
 		value, ok := Evaluate(expression, context)

@@ -13,7 +13,7 @@ import (
 // primitive string conversion. Substituted braces are not recursively expanded.
 // Properties are borrowed synchronously and normally contain MVT primitives.
 // Oversized/invalid text returns empty; an unmatched brace remains literal.
-func ExpandTokens(text string, properties map[string]any) string {
+func ExpandTokens(text string, properties style.Properties) string {
 	const maximumExpansions = 256
 	if len(text) > glyph.MaxTextBytes || !utf8.ValidString(text) {
 		return ""
@@ -31,7 +31,11 @@ func ExpandTokens(text string, properties map[string]any) string {
 		}
 		end := start + endOffset + 1
 		name := text[start+1 : end]
-		replacement := style.String(properties[name])
+		var value any
+		if properties != nil {
+			value, _ = properties.Get(name)
+		}
+		replacement := style.String(value)
 		retainedBytes := len(text) - (end + 1 - start)
 		if len(replacement) > glyph.MaxTextBytes-retainedBytes {
 			return ""

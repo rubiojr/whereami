@@ -3,6 +3,7 @@ package mvt
 import (
 	"math"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
@@ -22,8 +23,8 @@ func TestDecodeTileOwnedOrderedFeatures(t *testing.T) {
 	direct, err := DecodeTile(data, true)
 	require.NoError(t, err)
 	clear(data)
-	require.Len(t, expanded.Layers["shared"], 3)
-	features := expanded.Layers["shared"]
+	features := detached(expanded.Layers["shared"])
+	require.Len(t, features, 3)
 	assert.True(t, features[0].HasID)
 	assert.Zero(t, features[0].ID)
 	assert.False(t, features[1].HasID)
@@ -31,7 +32,8 @@ func TestDecodeTileOwnedOrderedFeatures(t *testing.T) {
 	assert.Equal(t, [][]geometry.Point{{{X: 0, Y: 0}, {X: 1, Y: 2}}}, features[1].Lines)
 	assert.Equal(t, []int{1, 2, 3}, []int{features[0].PointCount(), features[1].PointCount(), features[2].PointCount()})
 	for _, feature := range features {
-		assert.Equal(t, "primary", feature.Properties["class"])
+		class, _ := feature.Properties.Get("class")
+		assert.Equal(t, "primary", class)
 	}
 	assert.Empty(t, expanded.Limits)
 	assertEquivalentTile(t, expanded, direct)
@@ -52,7 +54,7 @@ func TestDecodeTileSkipsInvalidAndResourceLimitedFeatures(t *testing.T) {
 	))
 	tile, err := DecodeTile(data, true)
 	require.NoError(t, err)
-	require.Len(t, tile.Layers["land"], 2)
+	require.Equal(t, 2, tile.Layers["land"].Len())
 	require.Len(t, tile.Limits, 1)
 	assert.Equal(t, "land", tile.Limits[0].Name)
 	assert.Equal(t, 1, tile.Limits[0].Skipped)
@@ -164,10 +166,11 @@ func TestDecodePinnedTileHeadless(t *testing.T) {
 func assertEquivalentTile(t *testing.T, expanded, direct *Tile) {
 	t.Helper()
 	require.Len(t, direct.Layers, len(expanded.Layers))
-	for name, features := range expanded.Layers {
-		require.Len(t, direct.Layers[name], len(features))
+	for name, set := range expanded.Layers {
+		features, direct := detached(set), detached(direct.Layers[name])
+		require.Len(t, direct, len(features))
 		for index, want := range features {
-			got := direct.Layers[name][index]
+			got := direct[index]
 			assert.Equal(t, want.ID, got.ID)
 			assert.Equal(t, want.HasID, got.HasID)
 			assert.Equal(t, want.GeometryType, got.GeometryType)
@@ -220,8 +223,8 @@ func FuzzDecodeTile(f *testing.F) {
 		}
 		features, points, triangles := 0, 0, 0
 		for _, layer := range tile.Layers {
-			features += len(layer)
-			for _, feature := range layer {
+			features += layer.Len()
+			for _, feature := range detached(layer) {
 				points += feature.PointCount()
 				for _, polygon := range feature.Polygons {
 					triangles += len(polygon.Indices) / 3
@@ -232,4 +235,31 @@ func FuzzDecodeTile(f *testing.F) {
 		assert.LessOrEqual(t, points, MaxGeometryPoints)
 		assert.LessOrEqual(t, triangles, MaxTileStyleTriangles)
 	})
+}
+
+// detached materializes a set as features that own their containers, with
+// property maps, so they can be compared and kept.
+func detached(set Features) []Feature {
+	var result []Feature
+	var f Feature
+	for i := range set.Len() {
+		set.At(i, &f)
+		feature := Feature{ID: f.ID, HasID: f.HasID, GeometryType: f.GeometryType, Points: f.Points, Lines: slices.Clone(f.Lines)}
+		for _, polygon := range f.Polygons {
+			polygon.Holes = slices.Clone(polygon.Holes)
+			feature.Polygons = append(feature.Polygons, polygon)
+		}
+		switch properties := f.Properties.(type) {
+		case *flatProperties:
+			values := make(Properties, len(properties.tags)/2)
+			for i := 0; i < len(properties.tags); i += 2 {
+				values[properties.set.keys[properties.tags[i]]] = properties.set.values[properties.tags[i+1]]
+			}
+			feature.Properties = values
+		default:
+			feature.Properties = properties
+		}
+		result = append(result, feature)
+	}
+	return result
 }

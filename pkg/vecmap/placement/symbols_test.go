@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func collectSymbols(t *testing.T, features []mvt.Feature, layer style.CompiledLayer, options SymbolOptions) []Symbol {
+func collectSymbols(t *testing.T, features mvt.Features, layer style.CompiledLayer, options SymbolOptions) []Symbol {
 	t.Helper()
 	var symbols []Symbol
 	require.NoError(t, PrepareSymbols(features, layer, options, func(s Symbol) error { symbols = append(symbols, s); return nil }))
@@ -21,7 +21,7 @@ func collectSymbols(t *testing.T, features []mvt.Feature, layer style.CompiledLa
 }
 
 func TestPrepareSymbolsDefaultsAndSelection(t *testing.T) {
-	features := []mvt.Feature{
+	features := mvt.FeatureSlice{
 		{GeometryType: mvt.PointType, Properties: mvt.Properties{"name": "skip"}, Points: []geometry.Point{{X: 1}}},
 		{GeometryType: mvt.PointType, Properties: mvt.Properties{"name": "Madrid"}, Points: []geometry.Point{{X: 2}, {X: 3}}},
 	}
@@ -39,7 +39,7 @@ func TestPrepareSymbolsDefaultsAndSelection(t *testing.T) {
 	assert.Equal(t, want, symbols[0])
 	want.Anchor.X = 3
 	assert.Equal(t, want, symbols[1])
-	features[1].Properties["name"] = "changed"
+	features[1].Properties.(mvt.Properties)["name"] = "changed"
 	features[1].Points[0].X = 100
 	assert.Equal(t, "Madrid", symbols[0].Text)
 	assert.Equal(t, 2.0, symbols[0].Anchor.X)
@@ -63,7 +63,7 @@ func TestPrepareSymbolsEvaluatesTextIconPaint(t *testing.T) {
 		"text-color": "#123456", "text-opacity": 0.5, "text-halo-color": "white", "text-halo-width": 2.0,
 		"text-halo-blur": 3.0, "icon-color": "#010203", "text-padding": 6.0,
 	}}
-	symbols := collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{Zoom: 12, SourceZoom: 9, Limit: 10})
+	symbols := collectSymbols(t, mvt.FeatureSlice{feature}, layer, SymbolOptions{Zoom: 12, SourceZoom: 9, Limit: 10})
 	require.Len(t, symbols, 1)
 	assert.Equal(t, Symbol{
 		Order: 4, LayerID: "styled", Anchor: geometry.Point{X: 5}, LineAngle: math.Pi, IconLineAngle: 2 * math.Pi,
@@ -81,7 +81,7 @@ func TestPrepareSymbolsEvaluatesTextIconPaint(t *testing.T) {
 	layer.Layout["text-rotation-alignment"] = "map"
 	layer.Layout["icon-rotation-alignment"] = "viewport"
 	layer.Paint["text-color"] = "bad"
-	symbols = collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{Limit: 1})
+	symbols = collectSymbols(t, mvt.FeatureSlice{feature}, layer, SymbolOptions{Limit: 1})
 	assert.Equal(t, " a b\nc ", symbols[0].Text)
 	assert.False(t, symbols[0].ViewportAligned)
 	assert.True(t, symbols[0].IconViewportAligned)
@@ -94,7 +94,7 @@ func TestPrepareSymbolsSpacingFallbacksAndCallerVisibility(t *testing.T) {
 		"text-size": "bad", "text-offset": []any{1.0}, "icon-offset": "bad",
 	}}
 	feature := mvt.Feature{Lines: [][]geometry.Point{{{}, {X: 100}}}}
-	symbols := collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 17, Limit: 10})
+	symbols := collectSymbols(t, mvt.FeatureSlice{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 17, Limit: 10})
 	require.Len(t, symbols, 4)
 	assert.Equal(t, 12.5, symbols[0].Anchor.X)
 	assert.Equal(t, 16.0, symbols[0].TextSize)
@@ -103,19 +103,19 @@ func TestPrepareSymbolsSpacingFallbacksAndCallerVisibility(t *testing.T) {
 	assert.False(t, symbols[0].ViewportAligned)
 	assert.Equal(t, 25.0, SymbolSpacing(200, 14, 17))
 	// Spacing follows the zoom the tile is drawn at, not the lower style zoom.
-	assert.Equal(t, symbols, collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 16, Coarser: 1, Limit: 10}))
-	assert.Len(t, collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 16, Limit: 10}), 2)
+	assert.Equal(t, symbols, collectSymbols(t, mvt.FeatureSlice{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 16, Coarser: 1, Limit: 10}))
+	assert.Len(t, collectSymbols(t, mvt.FeatureSlice{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 16, Limit: 10}), 2)
 	layer.Layout["text-field"] = strings.Repeat("A", 257)
-	assert.Empty(t, collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{}))
+	assert.Empty(t, collectSymbols(t, mvt.FeatureSlice{feature}, layer, SymbolOptions{}))
 	layer.Layout["icon-image"] = "airport"
-	symbols = collectSymbols(t, []mvt.Feature{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 14, Limit: 1})
+	symbols = collectSymbols(t, mvt.FeatureSlice{feature}, layer, SymbolOptions{SourceZoom: 14, Zoom: 14, Limit: 1})
 	assert.Empty(t, symbols[0].Text)
 	assert.Equal(t, "airport", symbols[0].IconName)
 }
 
 func TestPrepareSymbolsBudgetsAndSinkErrors(t *testing.T) {
 	layer := style.CompiledLayer{Layout: map[string]any{"text-field": "A"}}
-	features := []mvt.Feature{{Points: []geometry.Point{{X: 1}, {X: 2}}}}
+	features := mvt.FeatureSlice{{Points: []geometry.Point{{X: 1}, {X: 2}}}}
 	var got []Symbol
 	sink := func(s Symbol) error { got = append(got, s); return nil }
 	err := PrepareSymbols(features, layer, SymbolOptions{Limit: 1}, sink)

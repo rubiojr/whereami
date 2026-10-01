@@ -27,7 +27,7 @@ func TestTileTraversalAndPrimitiveMetadata(t *testing.T) {
 	layers[6].Layout = map[string]any{"visibility": "none"}
 	layers[7].MinZoom = 11
 	layers[8].MaxZoom = 10
-	sources := map[string][]mvt.Feature{"source": {polygonFeature(nil), lineFeature(nil)}}
+	sources := map[string]mvt.FeatureSlice{"source": {polygonFeature(nil), lineFeature(nil)}}
 	var sequence []int
 	var primitives []Primitive
 	err := CompileTile(layers, sources, LayerOptions{SourceZoom: 9, Zoom: 10}, func(p Primitive) error {
@@ -56,23 +56,23 @@ func TestTileBudgetAndStreamingErrors(t *testing.T) {
 		emit := func(Primitive) error { calls++; return nil }
 		layers := tileLayers("background", "symbol", "background")
 		symbols := 0
-		err := CompileTile(layers, nil, LayerOptions{Indexed: indexed, TriangleLimit: 3}, emit, func(style.CompiledLayer) error { symbols++; return nil })
+		err := CompileTile[mvt.FeatureSlice](layers, nil, LayerOptions{Indexed: indexed, TriangleLimit: 3}, emit, func(style.CompiledLayer) error { symbols++; return nil })
 		assert.ErrorIs(t, err, mvt.ErrFeatureResourceLimit)
 		assert.Equal(t, 1, calls)
 		assert.Equal(t, 1, symbols)
 		calls = 0
-		require.NoError(t, CompileTile(layers, nil, LayerOptions{Indexed: indexed, TriangleLimit: 4}, emit, nil))
+		require.NoError(t, CompileTile[mvt.FeatureSlice](layers, nil, LayerOptions{Indexed: indexed, TriangleLimit: 4}, emit, nil))
 		assert.Equal(t, 2, calls)
 	}
 	sentinel := errors.New("sink failed")
 	layers := tileLayers("background", "symbol", "background")
 	calls := 0
-	err := CompileTile(layers, nil, LayerOptions{}, func(Primitive) error { calls++; return nil }, func(style.CompiledLayer) error { return sentinel })
+	err := CompileTile[mvt.FeatureSlice](layers, nil, LayerOptions{}, func(Primitive) error { calls++; return nil }, func(style.CompiledLayer) error { return sentinel })
 	assert.ErrorIs(t, err, sentinel)
 	assert.Equal(t, 1, calls)
-	assert.ErrorIs(t, CompileTile(layers, nil, LayerOptions{}, func(Primitive) error { return sentinel }, nil), sentinel)
-	assert.ErrorIs(t, CompileTile(nil, nil, LayerOptions{}, nil, nil), ErrOptions)
-	assert.ErrorIs(t, CompileTile(nil, nil, LayerOptions{Zoom: math.NaN()}, func(Primitive) error { return nil }, nil), ErrOptions)
+	assert.ErrorIs(t, CompileTile[mvt.FeatureSlice](layers, nil, LayerOptions{}, func(Primitive) error { return sentinel }, nil), sentinel)
+	assert.ErrorIs(t, CompileTile[mvt.FeatureSlice](nil, nil, LayerOptions{}, nil, nil), ErrOptions)
+	assert.ErrorIs(t, CompileTile[mvt.FeatureSlice](nil, nil, LayerOptions{Zoom: math.NaN()}, func(Primitive) error { return nil }, nil), ErrOptions)
 }
 
 func TestTileFilteringBeforeBudget(t *testing.T) {
@@ -82,7 +82,7 @@ func TestTileFilteringBeforeBudget(t *testing.T) {
 	layers[2].Paint = map[string]any{"fill-pattern": "dots", "fill-opacity": -1.0}
 	layers[3].SourceLayer = "missing"
 	calls := 0
-	err := CompileTile(layers, map[string][]mvt.Feature{"source": {polygonFeature(nil)}}, LayerOptions{TriangleLimit: 2}, func(p Primitive) error {
+	err := CompileTile(layers, map[string]mvt.FeatureSlice{"source": {polygonFeature(nil)}}, LayerOptions{TriangleLimit: 2}, func(p Primitive) error {
 		calls++
 		assert.Equal(t, 5, p.Order)
 		return nil
@@ -92,7 +92,7 @@ func TestTileFilteringBeforeBudget(t *testing.T) {
 	// Across batch kinds and layers, not just within background geometry.
 	layers = tileLayers("fill", "fill")
 	layers[1].Paint = map[string]any{"fill-pattern": "dots"}
-	err = CompileTile(layers, map[string][]mvt.Feature{"source": {polygonFeature(nil)}}, LayerOptions{TriangleLimit: 1}, func(Primitive) error { return nil }, nil)
+	err = CompileTile(layers, map[string]mvt.FeatureSlice{"source": {polygonFeature(nil)}}, LayerOptions{TriangleLimit: 1}, func(Primitive) error { return nil }, nil)
 	assert.ErrorIs(t, err, mvt.ErrFeatureResourceLimit)
 }
 

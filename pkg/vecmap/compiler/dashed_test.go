@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func dashedLayers() ([]style.CompiledLayer, map[string][]mvt.Feature) {
+func dashedLayers() ([]style.CompiledLayer, map[string]mvt.FeatureSlice) {
 	layers := tileLayers("line", "line", "line", "line", "line", "line", "line", "line")
 	width := []any{"interpolate", []any{"linear"}, []any{"zoom"}, 8.0, 1.0, 12.0, 9.0}
 	for i, layer := range []struct {
@@ -37,7 +37,7 @@ func dashedLayers() ([]style.CompiledLayer, map[string][]mvt.Feature) {
 		}
 	}
 	bend := mvt.Feature{GeometryType: mvt.LineStringType, Lines: [][]geometry.Point{{{X: 0, Y: 0}, {X: 10, Y: 0}, {X: 14, Y: 9}}}}
-	return layers, map[string][]mvt.Feature{"source": {bend}}
+	return layers, map[string]mvt.FeatureSlice{"source": {bend}}
 }
 
 func compileDashed(t *testing.T, options LayerOptions) map[string]Primitive {

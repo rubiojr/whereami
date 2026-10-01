@@ -10,8 +10,11 @@ tile, err := mvt.DecodeTile(data, true) // preserve Earcut indices
 if err != nil {
     return err
 }
-for _, feature := range tile.Layers["transportation"] {
-    // feature.Properties, Points, Lines and Polygons are Go-owned source data.
+roads := tile.Layers["transportation"] // *mvt.FeatureSet, nil when absent
+var feature mvt.Feature
+for i := range roads.Len() {
+    roads.At(i, &feature)
+    // feature.Properties, Points, Lines and Polygons borrow the set's storage.
 }
 ```
 
@@ -24,9 +27,19 @@ decode as a tile without layers.
 
 ## Ownership and failure policy
 
-`Tile`, `Feature`, `Properties` and `Polygon` are reusable source data. Completed
-tiles do not retain input PBF buffers; treat all reachable slices/maps as immutable
-after publication. Polygon `Vertices` is an expanded triangle list when `Indices`
+`DecodeTile` stores each source layer in a `FeatureSet`: geometry, ring bounds and
+triangulation in a few flat arrays, and properties as key/value index pairs into
+the layer's own tables. A retained set costs the garbage collector a few objects
+per layer instead of a map and several slices per feature: 62 Madrid tiles took
+1.9 ms per forced GC cycle against 6.9 ms as `[]Feature`. `At` fills a caller's
+`Feature` without allocating per feature: geometry borrows the set's storage,
+capped so appends never write into it, and its containers are reused by the next
+`At`. A duplicate property key reads as its last value, as in a map. `Features`
+is the interface compiler and placement read; `FeatureSlice` adapts `[]Feature`.
+
+`Tile`, `FeatureSet`, `Feature`, `Properties` and `Polygon` are reusable source data.
+Completed tiles do not retain input PBF buffers; treat all reachable slices/maps as
+immutable after publication. Polygon `Vertices` is an expanded triangle list when `Indices`
 is nil, or indexed positions otherwise. Features also retain original rings for
 outlines and placement.
 

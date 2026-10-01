@@ -9,6 +9,7 @@ var errFeatureResourceLimit = mvt.ErrFeatureResourceLimit
 // Shared source data passes from headless preparation to style evaluation without
 // conversion slices or maps. Published features are immutable.
 type vectorFeature = mvt.Feature
+type vectorFeatures = mvt.FeatureSlice
 type vectorPolygon = mvt.Polygon
 type featureProperties = mvt.Properties
 type resourceLimitSummary = mvt.LimitSummary

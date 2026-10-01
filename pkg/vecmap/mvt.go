@@ -57,7 +57,7 @@ func decodeTileFeatures(data []byte, tile vectorTileID, options tileDecodeOption
 	if err != nil {
 		return nil, err
 	}
-	bucket := &tileBucket{tile: tile, sourceLayers: make(map[string][]vectorFeature, len(layers))}
+	bucket := &tileBucket{tile: tile, sourceLayers: make(map[string]vectorFeatures, len(layers))}
 	fillBudget := triangulationBudget{remaining: maxTriangulationOps}
 	decoder := mvt.NewDecoder(options.indexed)
 	for _, layer := range layers {

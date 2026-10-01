@@ -9,7 +9,20 @@ const MaxExpressionDepth = 64
 type Context struct {
 	Zoom         float64
 	GeometryType uint32
-	Properties   map[string]any
+	Properties   Properties // nil has no properties
+}
+
+// Properties are a feature's properties, read by name.
+type Properties interface {
+	Get(name string) (any, bool)
+}
+
+// MapProperties are Properties held in a map.
+type MapProperties map[string]any
+
+func (m MapProperties) Get(name string) (any, bool) {
+	value, ok := m[name]
+	return value, ok
 }
 
 // Evaluate reuses the existing depth-limited interpreter. Expressions are trusted

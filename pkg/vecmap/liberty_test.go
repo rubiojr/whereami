@@ -201,7 +201,7 @@ func TestCompileLibertyPatternFill(t *testing.T) {
 	}
 	bucket := &tileBucket{
 		tile: vectorTileID{X: 0, Y: 0, Z: 12},
-		sourceLayers: map[string][]vectorFeature{
+		sourceLayers: map[string]vectorFeatures{
 			"landcover": {{
 				GeometryType: mvtPolygonType,
 				Properties:   featureProperties{"class": "wetland"},
@@ -226,7 +226,7 @@ func TestCompileLibertyTileDoesNotPublishFailedGeometry(t *testing.T) {
 		bucket := &tileBucket{
 			tile: vectorTileID{Z: 12}, compiled: true,
 			liberty: []libertyRenderPrimitive{{layerID: "old"}},
-			sourceLayers: map[string][]vectorFeature{"landcover": {{
+			sourceLayers: map[string]vectorFeatures{"landcover": {{
 				GeometryType: mvtPolygonType, Properties: featureProperties{"class": "wetland"},
 				Polygons: []vectorPolygon{{Vertices: []roadPoint{{}, {}, {}}, Indices: []uint32{0, 1, 3}}},
 			}}},

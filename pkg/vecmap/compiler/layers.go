@@ -101,11 +101,11 @@ type lineBatch struct {
 // as flat geometry. Callers select layer kind, visibility and source features.
 // Earlier sink calls remain accepted on a later error. Inputs are not mutated or
 // retained; emitted meshes own their buffers, while names can borrow style data.
-func CompileFill(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, solid SolidSink, pattern PatternSink) error {
+func CompileFill(features mvt.Features, layer style.CompiledLayer, options LayerOptions, solid SolidSink, pattern PatternSink) error {
 	return compileFill(features, layer, options, solid, pattern, lineSinks{baked: solid})
 }
 
-func compileFill(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, solid SolidSink, pattern PatternSink, outlines lineSinks) error {
+func compileFill(features mvt.Features, layer style.CompiledLayer, options LayerOptions, solid SolidSink, pattern PatternSink, outlines lineSinks) error {
 	geometryScale, limit, err := options.validated()
 	if err != nil || solid == nil || pattern == nil || outlines.baked == nil {
 		return ErrOptions
@@ -129,7 +129,9 @@ func compileFill(features []mvt.Feature, layer style.CompiledLayer, options Laye
 	if layer.Kind == "fill-extrusion" {
 		colorProperty = "fill-extrusion-color"
 	}
-	for _, feature := range features {
+	var feature mvt.Feature
+	for i := range featureCount(features) {
+		features.At(i, &feature)
 		if feature.GeometryType != mvt.PolygonType {
 			continue
 		}
@@ -207,18 +209,20 @@ func compileFill(features []mvt.Feature, layer style.CompiledLayer, options Laye
 // order, then tessellates with the existing geometry engine. Gap lines emit the
 // negative-offset side before the positive side. Caller visibility/publication
 // and streaming ownership/error rules match CompileFill.
-func CompileLine(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, solid SolidSink) error {
+func CompileLine(features mvt.Features, layer style.CompiledLayer, options LayerOptions, solid SolidSink) error {
 	return compileLine(features, layer, options, lineSinks{baked: solid})
 }
 
-func compileLine(features []mvt.Feature, layer style.CompiledLayer, options LayerOptions, sinks lineSinks) error {
+func compileLine(features mvt.Features, layer style.CompiledLayer, options LayerOptions, sinks lineSinks) error {
 	geometryScale, limit, err := options.validated()
 	if err != nil || sinks.baked == nil {
 		return ErrOptions
 	}
 	batches := make([]lineBatch, 0, 4)
 	indexes := make(map[string]int)
-	for _, feature := range features {
+	var feature mvt.Feature
+	for i := range featureCount(features) {
+		features.At(i, &feature)
 		evaluation := style.Context{Zoom: options.Zoom, GeometryType: feature.GeometryType, Properties: feature.Properties}
 		if !layer.Matches(evaluation) {
 			continue
@@ -370,4 +374,12 @@ func closedRing(ring []geometry.Point) []geometry.Point {
 	copy(closed, ring)
 	closed[len(ring)] = ring[0]
 	return closed
+}
+
+// featureCount is features.Len, with no features for a nil source.
+func featureCount(features mvt.Features) int {
+	if features == nil {
+		return 0
+	}
+	return features.Len()
 }

@@ -42,7 +42,7 @@ func TestCompileSymbolLayerPreservesPartialLimit(t *testing.T) {
 		"icon-rotate": 90.0, "symbol-sort-key": 7.0,
 	}}
 	bucket := &tileBucket{symbols: make([]libertySymbolCandidate, maxTileSymbols-1),
-		sourceLayers: map[string][]vectorFeature{"places": {{Properties: featureProperties{"name": "Madrid"}, Points: []roadPoint{{X: 1}, {X: 2}}}}}}
+		sourceLayers: map[string]vectorFeatures{"places": {{Properties: featureProperties{"name": "Madrid"}, Points: []roadPoint{{X: 1}, {X: 2}}}}}}
 	bucket.symbols[0].text = "earlier layer"
 	assert.ErrorIs(t, compileLibertySymbolLayer(bucket, layer, 10), errFeatureResourceLimit)
 	require.Len(t, bucket.symbols, maxTileSymbols)

@@ -101,7 +101,7 @@ func TestPrepareTileBudgetsAndOrdering(t *testing.T) {
 	layers, err := style.Parse([]byte(`{"version":8,"layers":[{"id":"background","type":"background","paint":{"background-color":"#ffffff"}},{"id":"first","type":"symbol","source-layer":"points","layout":{"text-field":"A"}},{"id":"second","type":"symbol","source-layer":"points","layout":{"text-field":"B"}}]}`))
 	require.NoError(t, err)
 	feature := mvt.Feature{GeometryType: mvt.PointType, Points: []geometry.Point{{X: 128, Y: 128}}}
-	p, err := prepareTile(map[string][]mvt.Feature{"points": {feature}}, layers, true)
+	p, err := prepareTile(map[string]mvt.FeatureSlice{"points": {feature}}, layers, true)
 	require.NoError(t, err)
 	require.Len(t, p.primitives, 1)
 	require.Len(t, p.symbols, 2)
@@ -115,7 +115,7 @@ func TestPrepareTileBudgetsAndOrdering(t *testing.T) {
 	}
 	assert.Equal(t, 1, visits)
 	feature.Points = make([]geometry.Point, placement.MaxSymbols/2+1)
-	p, err = prepareTile(map[string][]mvt.Feature{"points": {feature}}, layers, false)
+	p, err = prepareTile(map[string]mvt.FeatureSlice{"points": {feature}}, layers, false)
 	assert.ErrorIs(t, err, mvt.ErrFeatureResourceLimit)
 	assert.Nil(t, p, "earlier background and symbols must not publish on overflow")
 }

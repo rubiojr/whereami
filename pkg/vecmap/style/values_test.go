@@ -42,7 +42,7 @@ func TestTypedLayerValues(t *testing.T) {
 func TestNumberArrayValuesRetainComponentSemantics(t *testing.T) {
 	values := []any{float64(-1), math.Inf(1), math.NaN()}
 	layer := CompiledLayer{Layout: map[string]any{"offset": []any{"get", "value"}}}
-	ctx := Context{Properties: map[string]any{"value": values}}
+	ctx := Context{Properties: MapProperties{"value": values}}
 	got := layer.NumberArrayValue("offset", ctx)
 	require.Len(t, got, 3)
 	assert.Equal(t, -1.0, got[0])
@@ -52,10 +52,10 @@ func TestNumberArrayValuesRetainComponentSemantics(t *testing.T) {
 	assert.Equal(t, -1.0, values[0])
 	assert.Nil(t, layer.NumberArrayValue("missing", ctx))
 	for _, value := range []any{nil, "bad", []float64{1, 2}, []any{1.0, "bad"}} {
-		ctx.Properties["value"] = value
+		ctx.Properties.(MapProperties)["value"] = value
 		assert.Nil(t, layer.NumberArrayValue("offset", ctx))
 	}
-	ctx.Properties["value"] = []any{}
+	ctx.Properties.(MapProperties)["value"] = []any{}
 	assert.NotNil(t, layer.NumberArrayValue("offset", ctx))
 	assert.Empty(t, layer.NumberArrayValue("offset", ctx))
 }
@@ -73,7 +73,7 @@ func TestFontStackValues(t *testing.T) {
 	assert.Equal(t, "Noto Sans Regular", family)
 	assert.Equal(t, family, stack)
 	layer.Layout["text-font"] = []any{"get", "fonts"}
-	family, stack = layer.FontStack(Context{Properties: map[string]any{"fonts": []any{" A ", 1.0, "", "B", "A"}}})
+	family, stack = layer.FontStack(Context{Properties: MapProperties{"fonts": []any{" A ", 1.0, "", "B", "A"}}})
 	assert.Equal(t, "A", family)
 	assert.Equal(t, "A,B,A", stack)
 }

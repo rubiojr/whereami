@@ -14,8 +14,16 @@ const maxLibertyExpressionDepth = MaxExpressionDepth
 type libertyEvaluation struct {
 	zoom            float64
 	geometryID      uint32
-	properties      map[string]any
+	properties      Properties
 	expressionDepth int
+}
+
+// property reads a feature property; no properties means none exist.
+func (e libertyEvaluation) property(name string) (any, bool) {
+	if e.properties == nil {
+		return nil, false
+	}
+	return e.properties.Get(name)
 }
 
 func evaluateLibertyExpression(expression any, evaluation libertyEvaluation) (any, bool) {
@@ -43,7 +51,7 @@ func evaluateLibertyExpression(expression any, evaluation libertyEvaluation) (an
 		if !ok {
 			return nil, false
 		}
-		value, exists := evaluation.properties[name]
+		value, exists := evaluation.property(name)
 		if !exists {
 			return nil, true
 		}
@@ -56,7 +64,7 @@ func evaluateLibertyExpression(expression any, evaluation libertyEvaluation) (an
 		if !ok {
 			return false, true
 		}
-		_, exists := evaluation.properties[name]
+		_, exists := evaluation.property(name)
 		return exists, true
 	case "zoom":
 		return evaluation.zoom, true

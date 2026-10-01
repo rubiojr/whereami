@@ -21,7 +21,7 @@ type emission struct {
 	scale, opacity float64
 }
 
-func collect(t *testing.T, features []mvt.Feature, layer style.CompiledLayer, options LayerOptions) []emission {
+func collect(t *testing.T, features mvt.Features, layer style.CompiledLayer, options LayerOptions) []emission {
 	t.Helper()
 	var result []emission
 	solid := func(mesh geometry.Mesh, color style.Color) error {
@@ -58,7 +58,7 @@ func TestFillOrderingPaintAndOwnership(t *testing.T) {
 		"fill-color": []any{"get", "color"}, "fill-pattern": []any{"get", "pattern"},
 		"fill-opacity": 0.5, "fill-outline-color": "#0000ff",
 	}}
-	features := []mvt.Feature{
+	features := mvt.FeatureSlice{
 		polygonFeature(mvt.Properties{"pattern": "dots"}),
 		polygonFeature(mvt.Properties{"color": "#ff0000"}),
 		polygonFeature(mvt.Properties{"color": "#00ff00"}),
@@ -92,13 +92,13 @@ func TestExtrusionAndOutlineDefaults(t *testing.T) {
 	}}
 	feature := polygonFeature(nil)
 	feature.Polygons[0].Holes = [][]geometry.Point{{{X: 2, Y: 2}, {X: 3, Y: 2}, {X: 2, Y: 3}}, nil}
-	got := collect(t, []mvt.Feature{feature}, layer, LayerOptions{})
+	got := collect(t, mvt.FeatureSlice{feature}, layer, LayerOptions{})
 	require.Len(t, got, 2)
 	assert.Equal(t, style.Color{Red: 255, Alpha: 64}, got[0].color)
 	assert.Equal(t, style.Color{Blue: 255, Alpha: 128}, got[1].color)
 	for _, outline := range []any{"bad", "transparent"} {
 		layer.Paint["fill-outline-color"] = outline
-		assert.Len(t, collect(t, []mvt.Feature{feature}, layer, LayerOptions{}), 1)
+		assert.Len(t, collect(t, mvt.FeatureSlice{feature}, layer, LayerOptions{}), 1)
 	}
 }
 
@@ -107,7 +107,7 @@ func TestLineGapScaleAndOrdering(t *testing.T) {
 		"line-color": []any{"get", "color"}, "line-width": 4.0, "line-gap-width": 8.0,
 		"line-offset": 2.0, "line-opacity": 0.5,
 	}}
-	features := []mvt.Feature{lineFeature(mvt.Properties{"color": "#ff0000"}), lineFeature(mvt.Properties{"color": "#0000ff"}), lineFeature(mvt.Properties{"color": "#ff0000"})}
+	features := mvt.FeatureSlice{lineFeature(mvt.Properties{"color": "#ff0000"}), lineFeature(mvt.Properties{"color": "#0000ff"}), lineFeature(mvt.Properties{"color": "#ff0000"})}
 	got := collect(t, features, layer, LayerOptions{SourceZoom: 9, Zoom: 10})
 	require.Len(t, got, 4)
 	for i, offset := range []float64{-2, 4, -2, 4} {
@@ -133,7 +133,7 @@ func TestLineFilteringDashesAndPolygonPaths(t *testing.T) {
 	}, Layout: map[string]any{"line-cap": "round", "line-join": "round"}}
 	feature := polygonFeature(mvt.Properties{"color": "#ff0000", "width": 2.0})
 	feature.Polygons[0].Holes = [][]geometry.Point{{{X: 2, Y: 2}, {X: 3, Y: 2}, {X: 2, Y: 3}}}
-	features := []mvt.Feature{lineFeature(mvt.Properties{"skip": true}), lineFeature(mvt.Properties{"color": "bad"}),
+	features := mvt.FeatureSlice{lineFeature(mvt.Properties{"skip": true}), lineFeature(mvt.Properties{"color": "bad"}),
 		lineFeature(mvt.Properties{"color": "transparent"}), lineFeature(mvt.Properties{"color": "#ff0000", "width": -1.0}), feature}
 	got := collect(t, features, layer, LayerOptions{})
 	require.Len(t, got, 1)
@@ -145,7 +145,7 @@ func TestLineFilteringDashesAndPolygonPaths(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, got[0].mesh)
 	// Point features can retain empty batches; the parent filters empty emissions.
-	got = collect(t, []mvt.Feature{{GeometryType: mvt.PointType}}, style.CompiledLayer{Kind: "line"}, LayerOptions{})
+	got = collect(t, mvt.FeatureSlice{{GeometryType: mvt.PointType}}, style.CompiledLayer{Kind: "line"}, LayerOptions{})
 	require.Len(t, got, 1)
 	assert.Empty(t, got[0].mesh.Vertices)
 }
@@ -153,7 +153,7 @@ func TestLineFilteringDashesAndPolygonPaths(t *testing.T) {
 func TestCoarserEvaluatesStyleBelowTheDrawnZoom(t *testing.T) {
 	width := []any{"interpolate", []any{"linear"}, []any{"zoom"}, 9.0, 4.0, 10.0, 8.0}
 	line := style.CompiledLayer{Kind: "line", Paint: map[string]any{"line-color": "#ff0000", "line-width": width}}
-	features := []mvt.Feature{lineFeature(nil)}
+	features := mvt.FeatureSlice{lineFeature(nil)}
 	// A z9 tile drawn at zoom 10: the style gives the 4 pixels of zoom 9, and a
 	// pixel is half a tile unit.
 	got := collect(t, features, line, LayerOptions{SourceZoom: 9, Zoom: 9, Coarser: 1})
@@ -168,7 +168,7 @@ func TestCoarserEvaluatesStyleBelowTheDrawnZoom(t *testing.T) {
 	assert.Equal(t, want, got[0].mesh)
 
 	pattern := style.CompiledLayer{Paint: map[string]any{"fill-pattern": "dots"}}
-	polygons := []mvt.Feature{polygonFeature(nil)}
+	polygons := mvt.FeatureSlice{polygonFeature(nil)}
 	coarse := collect(t, polygons, pattern, LayerOptions{SourceZoom: 9, Zoom: 9, Coarser: 1})
 	require.Len(t, coarse, 1)
 	assert.Equal(t, collect(t, polygons, pattern, LayerOptions{SourceZoom: 9, Zoom: 10}), coarse)
@@ -187,7 +187,7 @@ func TestCompilerOptionsAndFailurePolicy(t *testing.T) {
 	assert.ErrorIs(t, CompileFill(nil, style.CompiledLayer{}, LayerOptions{}, noop, nil), ErrOptions)
 	assert.ErrorIs(t, CompileLine(nil, style.CompiledLayer{}, LayerOptions{}, nil), ErrOptions)
 	layer := style.CompiledLayer{Paint: map[string]any{"fill-color": []any{"get", "color"}}}
-	features := []mvt.Feature{polygonFeature(mvt.Properties{"color": "#ff0000"}), polygonFeature(mvt.Properties{"color": "#0000ff"})}
+	features := mvt.FeatureSlice{polygonFeature(mvt.Properties{"color": "#ff0000"}), polygonFeature(mvt.Properties{"color": "#0000ff"})}
 	calls := 0
 	stop := func(geometry.Mesh, style.Color) error {
 		calls++
@@ -213,8 +213,8 @@ func TestCompilerOptionsAndFailurePolicy(t *testing.T) {
 	layer.Paint = map[string]any{"fill-outline-color": "#ff0000"}
 	assert.ErrorIs(t, CompileFill(features[:1], layer, LayerOptions{TriangleLimit: 1}, stop, pattern), mvt.ErrFeatureResourceLimit)
 	assert.Equal(t, 1, calls)
-	assert.ErrorIs(t, CompileLine([]mvt.Feature{lineFeature(nil)}, style.CompiledLayer{}, LayerOptions{}, func(geometry.Mesh, style.Color) error { return sentinel }), sentinel)
-	assert.ErrorIs(t, CompileLine([]mvt.Feature{lineFeature(nil)}, style.CompiledLayer{}, LayerOptions{TriangleLimit: 1}, noop), mvt.ErrFeatureResourceLimit)
+	assert.ErrorIs(t, CompileLine(mvt.FeatureSlice{lineFeature(nil)}, style.CompiledLayer{}, LayerOptions{}, func(geometry.Mesh, style.Color) error { return sentinel }), sentinel)
+	assert.ErrorIs(t, CompileLine(mvt.FeatureSlice{lineFeature(nil)}, style.CompiledLayer{}, LayerOptions{TriangleLimit: 1}, noop), mvt.ErrFeatureResourceLimit)
 }
 
 func TestDashValuesAndPaintKeyCompatibility(t *testing.T) {
@@ -282,8 +282,8 @@ func TestIndexedFillWithoutFixture(t *testing.T) {
 	feature.Polygons[0].Indices = []uint32{0, 1, 2, 2, 1, 3}
 	for _, paint := range []map[string]any{nil, {"fill-pattern": "dots"}} {
 		layer := style.CompiledLayer{Paint: paint}
-		expanded := collect(t, []mvt.Feature{feature}, layer, LayerOptions{})
-		indexed := collect(t, []mvt.Feature{feature}, layer, LayerOptions{Indexed: true})
+		expanded := collect(t, mvt.FeatureSlice{feature}, layer, LayerOptions{})
+		indexed := collect(t, mvt.FeatureSlice{feature}, layer, LayerOptions{Indexed: true})
 		require.Len(t, indexed, 1)
 		require.Len(t, expanded, 1)
 		require.Len(t, indexed[0].mesh.Indices, 6)
@@ -302,7 +302,7 @@ func FuzzLayerCompilation(f *testing.F) {
 		if len(data) > 64 {
 			return
 		}
-		features := make([]mvt.Feature, 0, len(data))
+		features := make(mvt.FeatureSlice, 0, len(data))
 		for _, value := range data {
 			properties := mvt.Properties{"color": "#ff0000"}
 			if value%2 == 0 {

@@ -97,10 +97,10 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   it, so a new style zoom prepares the tile without decoding and triangulating it
   again. A source is about 13× its raw response. It is charged as Prepared, is
   evicted with the tile's preparation under admission pressure, and is cleared
-  when a new response replaces the raw bytes. Today it costs more than it saves:
-  decoded features are pointer-dense, so every GC cycle scans them. On the Madrid
-  trace preparation took 40% less wall time, but GC CPU went from 1.3 to 4.1 s and
-  process CPU rose by about a third (docs/vecmap-rhi.md).
+  when a new response replaces the raw bytes. Sources hold flat
+  `mvt.FeatureSet`s, so retaining them adds little GC work. On the Madrid trace
+  preparation took 45% less wall time and process CPU fell 3–11%, for 35–90 MiB
+  more RSS (docs/vecmap-rhi.md). The viewer turns it on.
 - Raw MVT remains cached alongside optional reusable Prepared data. A style change
   normally reparses/recompiles cached bytes; asset refresh reuses Prepared when available.
   Admission pressure evicts least-recently-built Prepared objects, or omits incoming

@@ -49,7 +49,7 @@ type Primitive struct {
 // survive later errors. Stage output until success for atomic publication. Source
 // features and styles obey CompileFill's bounded-input contract; they are neither
 // modified nor retained, apart from immutable name strings in emitted primitives.
-func CompileTile(layers []style.CompiledLayer, sources map[string][]mvt.Feature, options LayerOptions,
+func CompileTile[F mvt.Features](layers []style.CompiledLayer, sources map[string]F, options LayerOptions,
 	emit func(Primitive) error, symbols func(style.CompiledLayer) error,
 ) error {
 	_, limit, err := options.validated()
@@ -74,7 +74,7 @@ type tileAssembly struct {
 	emit      func(Primitive) error
 }
 
-func (a *tileAssembly) layer(layer style.CompiledLayer, features []mvt.Feature, options LayerOptions, symbols func(style.CompiledLayer) error) error {
+func (a *tileAssembly) layer(layer style.CompiledLayer, features mvt.Features, options LayerOptions, symbols func(style.CompiledLayer) error) error {
 	solid := func(mesh geometry.Mesh, color style.Color) error {
 		return a.append(Primitive{Order: layer.Order, LayerID: layer.ID, Mesh: mesh, Color: color}, false)
 	}

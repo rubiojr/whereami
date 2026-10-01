@@ -14,7 +14,7 @@ func TestLibertySceneCompilerPublishesLatestRequest(t *testing.T) {
 	var latest atomic.Pointer[libertySceneSnapshot]
 	compiler := newLibertySceneCompiler(latest.Store)
 	t.Cleanup(compiler.stop)
-	bucket := &tileBucket{tile: vectorTileID{Z: 4}, sourceLayers: map[string][]vectorFeature{}}
+	bucket := &tileBucket{tile: vectorTileID{Z: 4}, sourceLayers: map[string]vectorFeatures{}}
 	tiles := []loadedRoadTile{{id: bucket.tile, roads: bucket}}
 
 	compiler.request(1, 4, tiles)
@@ -29,7 +29,7 @@ func TestLibertySceneCompilerPublishesLatestRequest(t *testing.T) {
 }
 
 func TestCompileLibertySceneTilesReusesMatchingCompiledZoom(t *testing.T) {
-	bucket := &tileBucket{tile: vectorTileID{Z: 4}, sourceLayers: map[string][]vectorFeature{}}
+	bucket := &tileBucket{tile: vectorTileID{Z: 4}, sourceLayers: map[string]vectorFeatures{}}
 	require.NoError(t, compileLibertyTile(bucket, 4))
 
 	compiled := compileLibertySceneTiles([]loadedRoadTile{{id: bucket.tile, roads: bucket}}, 4)
@@ -39,7 +39,7 @@ func TestCompileLibertySceneTilesReusesMatchingCompiledZoom(t *testing.T) {
 }
 
 func TestCompileLibertySceneTilesPreservesSourceIdentityAtFractionalZoom(t *testing.T) {
-	bucket := &tileBucket{tile: vectorTileID{Z: 4}, sourceLayers: map[string][]vectorFeature{}}
+	bucket := &tileBucket{tile: vectorTileID{Z: 4}, sourceLayers: map[string]vectorFeatures{}}
 	require.NoError(t, compileLibertyTile(bucket, 4))
 
 	compiled := compileLibertySceneTiles([]loadedRoadTile{{id: bucket.tile, roads: bucket}}, 4.5)
@@ -58,7 +58,7 @@ func TestLibertyPrimitivesAtOrderReturnsContiguousLayer(t *testing.T) {
 }
 
 func TestCompiledLibertyOutputIsOrderedByLayer(t *testing.T) {
-	bucket := &tileBucket{tile: vectorTileID{Z: 9}, sourceLayers: map[string][]vectorFeature{}}
+	bucket := &tileBucket{tile: vectorTileID{Z: 9}, sourceLayers: map[string]vectorFeatures{}}
 	require.NoError(t, compileLibertyTile(bucket, 9))
 
 	assert.True(t, sort.SliceIsSorted(bucket.liberty, func(first, second int) bool {

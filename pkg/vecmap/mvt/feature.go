@@ -23,14 +23,16 @@ func (p Properties) Get(name string) (any, bool) {
 
 // Feature is Go-owned source geometry and properties, independent of style zoom.
 // Treat it and all reachable slices/maps as immutable after preparation.
+// Properties is a Properties map for features from DecodeLayer.
 type Feature struct {
 	ID           uint64
 	HasID        bool
 	GeometryType uint32
-	Properties   Properties
+	Properties   PropertySource
 	Points       []geometry.Point
 	Lines        [][]geometry.Point
 	Polygons     []Polygon
+	scratch      featureScratch // FeatureSet.At's reusable containers
 }
 
 // Polygon retains source rings and prepared topology. Nil Indices means Vertices
@@ -89,13 +91,29 @@ func NewDecoder(indexed bool) Decoder {
 // including duplicate layer names; accepted feature order is preserved.
 func (d *Decoder) DecodeLayer(l *Layer) ([]Feature, LimitSummary) {
 	features := make([]Feature, 0, min(len(l.features), MaxTileFeatures-d.features))
+	limits := d.decodeLayer(l, func(feature Feature, tags []uint32) {
+		feature.Properties = l.properties(tags)
+		features = append(features, feature)
+	})
+	return features, limits
+}
+
+// decodeLayerInto is DecodeLayer storing accepted features in set.
+func (d *Decoder) decodeLayerInto(l *Layer, set *FeatureSet) LimitSummary {
+	keyBase, valueBase := set.addTables(l)
+	return d.decodeLayer(l, func(feature Feature, tags []uint32) { set.add(feature, tags, keyBase, valueBase) })
+}
+
+// decodeLayer passes accepted features without properties, with their
+// validated tags, to accept.
+func (d *Decoder) decodeLayer(l *Layer, accept func(Feature, []uint32)) LimitSummary {
 	var limits LimitSummary
 	for index, data := range l.features {
 		if d.features >= MaxTileFeatures {
 			limits.add(index, fmt.Errorf("%w: tile exceeds %d-feature limit", ErrFeatureResourceLimit, MaxTileFeatures))
 			break
 		}
-		feature, triangles, err := d.prepareFeature(l, data)
+		feature, tags, triangles, err := d.prepareFeature(l, data)
 		if err != nil {
 			if errors.Is(err, ErrFeatureResourceLimit) || errors.Is(err, geometry.ErrResourceLimit) {
 				limits.add(index, err)
@@ -113,21 +131,20 @@ func (d *Decoder) DecodeLayer(l *Layer) ([]Feature, LimitSummary) {
 		d.features++
 		d.points += pointCount
 		d.triangles += triangles
-		features = append(features, feature)
+		accept(feature, tags)
 	}
-	return features, limits
+	return limits
 }
 
-func (d *Decoder) prepareFeature(l *Layer, data []byte) (Feature, int, error) {
+func (d *Decoder) prepareFeature(l *Layer, data []byte) (Feature, []uint32, int, error) {
 	raw, err := DecodeFeature(data)
 	if err != nil {
-		return Feature{}, 0, err
+		return Feature{}, nil, 0, err
 	}
-	properties, err := l.FeatureProperties(raw.Tags)
-	if err != nil {
-		return Feature{}, 0, err
+	if err := l.checkTags(raw.Tags); err != nil {
+		return Feature{}, nil, 0, err
 	}
-	feature := Feature{ID: raw.ID, HasID: raw.HasID, GeometryType: raw.GeometryType, Properties: properties}
+	feature := Feature{ID: raw.ID, HasID: raw.HasID, GeometryType: raw.GeometryType}
 	triangles := 0
 	switch raw.GeometryType {
 	case PointType:
@@ -145,9 +162,9 @@ func (d *Decoder) prepareFeature(l *Layer, data []byte) (Feature, int, error) {
 		}
 	}
 	if err != nil {
-		return Feature{}, 0, err
+		return Feature{}, nil, 0, err
 	}
-	return feature, triangles, nil
+	return feature, raw.Tags, triangles, nil
 }
 
 func (d *Decoder) triangulate(polygons []Polygon) (int, error) {

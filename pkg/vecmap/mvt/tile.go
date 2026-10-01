@@ -1,9 +1,10 @@
 package mvt
 
-// Tile owns prepared geometry and properties. Duplicate source-layer names are
-// appended in input order. Treat all data as immutable after publication.
+// Tile owns prepared geometry and properties in one FeatureSet per source-layer
+// name. Duplicate source-layer names are appended in input order. Treat all
+// data as immutable after publication.
 type Tile struct {
-	Layers map[string][]Feature
+	Layers map[string]*FeatureSet
 	Limits []LayerLimits
 }
 
@@ -21,15 +22,19 @@ func DecodeTile(data []byte, indexed bool) (*Tile, error) {
 	if err != nil {
 		return nil, err
 	}
-	tile := &Tile{Layers: make(map[string][]Feature, len(layers))}
+	tile := &Tile{Layers: make(map[string]*FeatureSet, len(layers))}
 	decoder := NewDecoder(indexed)
 	for _, layer := range layers {
-		features, limits := decoder.DecodeLayer(layer)
+		set := tile.Layers[layer.name]
+		if set == nil {
+			set = &FeatureSet{}
+		}
+		limits := decoder.decodeLayerInto(layer, set)
 		if limits.Skipped > 0 {
 			tile.Limits = append(tile.Limits, LayerLimits{Name: layer.name, LimitSummary: limits})
 		}
-		if len(features) > 0 {
-			tile.Layers[layer.name] = append(tile.Layers[layer.name], features...)
+		if set.Len() > 0 {
+			tile.Layers[layer.name] = set
 		}
 	}
 	return tile, nil

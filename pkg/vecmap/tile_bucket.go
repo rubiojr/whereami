@@ -6,7 +6,7 @@ type tileBucket struct {
 	segments     []roadSegment
 	land         fillBucket
 	water        fillBucket
-	sourceLayers map[string][]vectorFeature
+	sourceLayers map[string]vectorFeatures
 	// Compiler output is contiguous and ordered by style layer for render-time lookup.
 	liberty []libertyRenderPrimitive
 	raster  naturalEarthRaster

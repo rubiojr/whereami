@@ -527,31 +527,42 @@ Style evaluation and symbol preparation took about a tenth. Go's background GC
 added another 1.06 s on other cores. Build, repeated per epoch too, wasn't
 profiled.
 
-#### Reusing decoded tiles costs more GC than it saves
+#### Reusing decoded tiles across style zooms
 
 `tiles.Decode`/`PrepareSource` split decoding from compilation, and
-`producer.Limits.ReuseDecoded` (viewer `-reuse-decoded`) keeps each tile's decoded
-source so a new style zoom skips decoding and Earcut. Output is unchanged: a
-shared source prepares the same `Prepared` as a fresh decode on the synthetic and
-pinned Madrid tiles at every zoom tested. Five runs per row, same corpus and trace:
+`producer.Limits.ReuseDecoded` (viewer `-reuse-decoded`, on) keeps each tile's
+decoded source so a new style zoom skips decoding and Earcut. Output is
+unchanged: a shared source prepares the same `Prepared` as a fresh decode on the
+synthetic and pinned Madrid tiles at every zoom tested.
 
-| Coarser 1, OpenGL | Reuse off | Reuse on |
-| --- | ---: | ---: |
-| Preparation wall | 2.25–2.44 s | 1.35–1.37 s |
-| Build wall | 1.23–1.29 s | 1.37–1.40 s |
-| Selection wall | 0.70–0.80 s | 0.83–0.89 s |
-| Process CPU | 7.19–7.57 s | 9.40–10.06 s |
-| Peak RSS | 481–510 MiB | 537–562 MiB |
-| Settle after trace | 77–90 ms | 73–85 ms |
+The first version kept decoded tiles as `[]mvt.Feature`, a property map and
+several slices per feature. It cut preparation wall time by 40% but made process
+CPU a third higher and RSS 55–140 MiB larger: with the sources retained, GC CPU
+went from 1.31 to 4.15 s in a `GODEBUG=gctrace=1` run at Coarser 1, because every
+cycle scanned them. Retaining 62 corpus tiles cost 6.9 ms per forced GC cycle
+(459k objects): about 3 ms for the property maps and 3 ms for the geometry slices.
 
-Coarser 0 and Vulkan moved the same way: CPU 8.4–8.9 s against 11.9–12.5 s, RSS
-up 75–140 MiB. A `GODEBUG=gctrace=1` run each at Coarser 1 explains it: 237 GC
-cycles with 1.31 s of GC CPU without reuse, 174 cycles with 4.15 s with it.
-Decoded features are pointer-dense (property maps, interface values, a slice per
-line and ring), so every cycle scans the retained sources; the live heap was
-mostly pointer-free vertex and index buffers before. Reuse stays off by default.
-It would pay with a pointer-free decoded representation, which the producer
-plumbing doesn't need to change for.
+`DecodeTile` now stores each source layer in an `mvt.FeatureSet`: geometry, ring
+bounds and triangulation in a few flat arrays, and properties as tag pairs into
+the layer's key and value tables. Compiler and placement read features through
+`mvt.Features.At`; the legacy renderer keeps `[]Feature` through `FeatureSlice`.
+The same 62 tiles cost 1.9 ms per forced cycle (231k objects, mostly per-layer
+property values). Five runs per row, same corpus and trace:
+
+| Row | CPU, reuse off → on | Settle, off → on | Peak RSS, off → on |
+| --- | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 6.92–7.27 → 6.16–6.36 s | 70–83 → 75–84 ms | 479–521 → 524–549 MiB |
+| Coarser 1, Vulkan | 6.74–7.17 → 6.02–6.45 s | 74–84 → 75–84 ms | 432–474 → 468–512 MiB |
+| Coarser 0, OpenGL | 8.47–8.90 → 8.20–8.69 s | 319–353 → 249–304 ms | 598–687 → 635–696 MiB |
+| Coarser 0, Vulkan | 8.30–8.69 → 7.87–8.23 s | 331–348 → 253–333 ms | 547–600 → 636–670 MiB |
+
+Preparation wall time fell about 45% (2.25–2.57 s to 1.18–1.49 s); build rose
+about 4% and producer selection 15–25%. With reuse, GC CPU was 1.23 s against
+1.35 s without it (191 against 275 cycles). Presentation stayed at zero late
+frames in every run. Without reuse the flat representation costs no more than
+`[]Feature` did (Coarser 1 OpenGL 6.92–7.27 s against 7.19–7.57 s earlier). Some
+Coarser 0 Vulkan runs read 0 VRAM from fdinfo while reporting GPU time; the GPU
+memory column is unreliable for that row.
 
 #### Vulkan FIFO stalls in live mode on native Wayland
 

@@ -19,7 +19,7 @@ type preparedTile struct {
 	symbols    []placement.Symbol
 }
 
-func prepareTile(sources map[string][]mvt.Feature, layers []style.CompiledLayer, indexed bool) (*preparedTile, error) {
+func prepareTile[F mvt.Features](sources map[string]F, layers []style.CompiledLayer, indexed bool) (*preparedTile, error) {
 	p := &preparedTile{layers: layers, primitives: make([]compiler.Primitive, 0, len(layers))}
 	err := compiler.CompileTile(layers, sources, compiler.LayerOptions{SourceZoom: 9, Zoom: 10, Indexed: indexed},
 		func(primitive compiler.Primitive) error {

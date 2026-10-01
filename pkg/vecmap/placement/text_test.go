@@ -6,13 +6,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
+	"github.com/rubiojr/whereami/pkg/vecmap/style"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestExpandTokensPreservesBoundedNonrecursiveBehavior(t *testing.T) {
-	properties := map[string]any{"name": "Madrid", "n": 12.5, "b": true, "nested": "{name}", "": "empty"}
+	properties := style.MapProperties{"name": "Madrid", "n": 12.5, "b": true, "nested": "{name}", "": "empty"}
 	for _, tt := range []struct{ in, want string }{
 		{"{name}/{missing}/{n}/{b}", "Madrid//12.5/true"}, {"{}", "empty"},
 		{"{nested}", "{name}"}, {"{name", "{name"}, {"literal", "literal"},
@@ -42,7 +43,7 @@ func FuzzSymbolText(f *testing.F) {
 	f.Add("{name}", "Madrid")
 	f.Add("{name}\r\n{name}", "{nested}")
 	f.Fuzz(func(t *testing.T, text, value string) {
-		expanded := ExpandTokens(text, map[string]any{"name": value})
+		expanded := ExpandTokens(text, style.MapProperties{"name": value})
 		for _, result := range []string{expanded, BoundedText(NormalizeText(expanded))} {
 			require.LessOrEqual(t, len(result), glyph.MaxTextBytes)
 			require.True(t, utf8.ValidString(result))

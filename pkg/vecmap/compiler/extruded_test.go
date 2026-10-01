@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func extrusionLayers() ([]style.CompiledLayer, map[string][]mvt.Feature) {
+func extrusionLayers() ([]style.CompiledLayer, map[string]mvt.FeatureSlice) {
 	layers := tileLayers("fill", "line", "line", "line", "line", "line")
 	width := []any{"interpolate", []any{"linear"}, []any{"zoom"}, 8.0, 1.0, 12.0, 9.0}
 	layers[0].Paint = map[string]any{"fill-color": "#102030", "fill-outline-color": "#405060"}
@@ -27,7 +27,7 @@ func extrusionLayers() ([]style.CompiledLayer, map[string][]mvt.Feature) {
 	layers[4].ID, layers[4].Paint = "gap", map[string]any{"line-width": width, "line-gap-width": 2.0}
 	layers[5].ID, layers[5].Paint = "hairline", map[string]any{"line-width": 1e-12}
 	bend := mvt.Feature{GeometryType: mvt.LineStringType, Lines: [][]geometry.Point{{{X: 0, Y: 0}, {X: 10, Y: 0}, {X: 14, Y: 9}}}}
-	return layers, map[string][]mvt.Feature{"source": {polygonFeature(nil), bend}}
+	return layers, map[string]mvt.FeatureSlice{"source": {polygonFeature(nil), bend}}
 }
 
 func compilePrimitives(t *testing.T, options LayerOptions) []Primitive {

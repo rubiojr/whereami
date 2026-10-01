@@ -78,7 +78,7 @@ type SymbolOptions struct {
 // when another candidate would be emitted. Use remaining capacity across layers;
 // the function neither stores an output slice nor owns logging/cache/I/O policy.
 // Inputs are immutable bounded MVT features and application-owned style values.
-func PrepareSymbols(features []mvt.Feature, layer style.CompiledLayer, options SymbolOptions, emit func(Symbol) error) error {
+func PrepareSymbols(features mvt.Features, layer style.CompiledLayer, options SymbolOptions, emit func(Symbol) error) error {
 	if emit == nil {
 		return errors.New("symbol sink is nil")
 	}
@@ -86,7 +86,13 @@ func PrepareSymbols(features []mvt.Feature, layer style.CompiledLayer, options S
 		return ErrSymbolLimit
 	}
 	remaining := min(options.Limit, MaxSymbols)
-	for _, feature := range features {
+	count := 0
+	if features != nil {
+		count = features.Len()
+	}
+	var feature mvt.Feature
+	for i := range count {
+		features.At(i, &feature)
 		context := style.Context{Zoom: options.Zoom, GeometryType: feature.GeometryType, Properties: feature.Properties}
 		if !layer.Matches(context) {
 			continue
