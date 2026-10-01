@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -48,6 +49,8 @@ func main() {
 	flag.Uint64Var(&live.sceneBytes, "cpu-scene-bytes", 256<<20, "live budget of one composed scene; a view that exceeds it shows coarser stand-in tiles")
 	flag.BoolVar(&live.keepPreparation, "keep-preparation", false, "keep prepared primitives after a tile is built, for asset changes")
 	flag.BoolVar(&live.reuseDecoded, "reuse-decoded", true, "keep each tile's decoded source, so a new style zoom prepares it without decoding and triangulating again")
+	flag.BoolVar(&live.deferHiddenRefresh, "defer-hidden-refresh", true, "prepare tiles beyond -draw-margin and unused parents for a new style zoom only once a pan draws them")
+	flag.DurationVar(&live.cameraSelectInterval, "camera-select-interval", 16*time.Millisecond, "least time between label placements and scene compositions that only camera motion asks for (at most 1s); zero places for every camera update")
 	flag.Float64Var(&live.drawMargin, "draw-margin", 256, "draw live tiles within this many logical pixels of the viewport; tiles beyond stay compiled for a pan; zero draws every loaded tile")
 	flag.IntVar(&live.workers, "tile-workers", 4, "live transport workers (1-4); use 1 for ordered cache replay")
 	flag.IntVar(&live.compilers, "tile-compilers", 1, "live goroutines that prepare and build tiles (1-8); more finish a view sooner on more cores")
@@ -59,11 +62,18 @@ func main() {
 	flag.IntVar(&live.coarser, "coarser-tiles", 0, "draw live tiles from this many zoom levels below the camera zoom (0-2); 1 draws a tile 512 units wide as MapLibre does")
 	mapLibreStyle := flag.String("maplibre-style", "", "replay the live trace in QtLocation's MapLibre Native map with this offline style from maplibre-offline, instead of vecmap (needs QSG_RHI_BACKEND=opengl)")
 	gcPercent := flag.Int("gc-percent", 50, "garbage collector target percentage; lower keeps less garbage between collections; zero keeps the runtime's setting")
+	cpuProfile := flag.String("cpuprofile", "", "write a Go CPU profile of the run, up to when the costs are read, to this file")
+	memProfile := flag.String("memprofile", "", "write a Go heap profile to this file when the costs are read")
 	flag.Parse()
 	if *gcPercent > 0 {
 		debug.SetGCPercent(*gcPercent)
 	}
-	if err := run(*path, benchmarkOptions{liveOptions: live, mapLibreStyle: *mapLibreStyle, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
+	measure, err := startMeasurement(*cpuProfile, *memProfile)
+	if err == nil {
+		err = run(*path, benchmarkOptions{liveOptions: live, mapLibreStyle: *mapLibreStyle, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}, measure: measure})
+		err = errors.Join(err, measure.close())
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -80,6 +90,7 @@ type benchmarkOptions struct {
 	liveOptions             liveOptions
 	live                    *liveSource
 	mapLibreStyle           string
+	measure                 *measurement
 }
 
 func run(path string, options benchmarkOptions) error {
@@ -213,12 +224,12 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	finalStatus := status // teardown invalidates native readiness
 	mu.Unlock()
-	costs, costsErr := readProcessCosts() // before teardown closes DRM clients
+	costs, costsErr := options.measure.finish() // before teardown closes DRM clients
 	engine.Delete()
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d reuse_decoded=%t\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers, options.liveOptions.reuseDecoded)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d reuse_decoded=%t defer_hidden_refresh=%t camera_select_interval=%s\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers, options.liveOptions.reuseDecoded, options.liveOptions.deferHiddenRefresh, options.liveOptions.cameraSelectInterval)
 	if options.diagnostics {
 		pacing.report()
 		waits.report()

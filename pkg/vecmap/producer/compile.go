@@ -205,13 +205,21 @@ func (s *state) nextCompile(cover []view.TileID) (view.TileID, *entry, bool) {
 				continue
 			}
 			e := s.entries[tile]
-			if e == nil || e.source != s.working.Style.Source || (e.style == s.style && e.assets == s.assets) || s.failures[tile].attempts >= 3 {
+			if e == nil || e.source != s.working.Style.Source || (e.style == s.style && e.assets == s.assets) || s.failures[tile].attempts >= 3 ||
+				s.deferred(e, selected) {
 				continue
 			}
 			return tile, e, true
 		}
 	}
 	return view.TileID{}, nil, false
+}
+
+// deferred reports whether Limits.DeferHiddenRefresh postpones compiling a
+// desired entry that isn't at the working epoch. selected is whether the tile
+// is in the selected cover.
+func (s *state) deferred(e *entry, selected bool) bool {
+	return s.p.limits.DeferHiddenRefresh && !selected && e != nil && e.fragment != nil && e.source == s.working.Style.Source
 }
 
 // startCompile registers a job for a cached tile. A preparation made for the

@@ -47,6 +47,9 @@ type state struct {
 	failures                            map[view.TileID]failure
 	stats                               Status
 	dirty                               bool
+	cameraDirty                         bool      // only the camera changed since the last selection
+	selectedAt                          time.Time // the last selection, for Limits.CameraSelectInterval
+	wakeTimer                           *time.Timer
 	notify                              bool // the consumer can see a change the next report must signal
 	published                           bool // the working epoch reached a coherent publication attempt
 	workingPrepares                     int  // Prepare attempts since adoption; bounds a held epoch
@@ -102,6 +105,11 @@ func (p *Producer) run(set *tiles.Set) {
 	defer timer.Stop()
 	s := state{p: p, set: set, entries: make(map[view.TileID]*entry), running: make(map[view.TileID]job),
 		compiling: make(map[view.TileID]compileJob), failures: make(map[view.TileID]failure)}
+	defer func() {
+		if s.wakeTimer != nil {
+			s.wakeTimer.Stop()
+		}
+	}()
 	for {
 		if p.ctx.Err() != nil {
 			return
@@ -203,6 +211,7 @@ func (s *state) inputs() {
 		if targets == nil {
 			targets = view.VisibleTileCoverRing(r.Camera, r.Style.Options.Coarser, p.limits.PrefetchRing)
 		}
+		cameraOnly := s.request != nil && r.Style == s.request.Style && r.Assets == s.request.Assets && slices.Equal(targets, s.targets)
 		if !slices.Equal(targets, s.targets) {
 			if !s.advanceGeneration() {
 				return
@@ -228,7 +237,11 @@ func (s *state) inputs() {
 				j.cancel()
 			}
 		}
-		s.dirty = true
+		if cameraOnly {
+			s.cameraDirty = true
+		} else {
+			s.dirty = true
+		}
 	}
 	s.adopt()
 	if retry {
@@ -328,10 +341,12 @@ func (s *state) atWorkingEpoch(e *entry) bool {
 	return e != nil && e.fragment != nil && e.source == s.working.Style.Source && e.style == s.style && e.assets == s.assets
 }
 
-// pendingWork reports whether any desired tile can still reach the working epoch.
+// pendingWork reports whether any desired tile can still reach the working
+// epoch without a pan.
 func (s *state) pendingWork() bool {
+	cover := s.selectedCover()
 	for _, tile := range s.order {
-		if e := s.entries[tile]; s.desired[tile] && !s.atWorkingEpoch(e) && s.failures[tile].attempts < 3 {
+		if e := s.entries[tile]; s.desired[tile] && !s.atWorkingEpoch(e) && s.failures[tile].attempts < 3 && !s.deferred(e, slices.Contains(cover, tile)) {
 			return true
 		}
 	}
@@ -592,7 +607,7 @@ func errorMessage(err error) string {
 }
 
 func (s *state) publish() {
-	if !s.dirty || s.request == nil {
+	if (!s.dirty && !s.cameraDirty) || s.request == nil || (!s.dirty && s.cameraDeferred()) {
 		return
 	}
 	p := s.p
@@ -611,7 +626,7 @@ func (s *state) publish() {
 	}
 	if !s.coherentCover() {
 		s.stats.DeferredSelections++
-		s.dirty = false
+		s.dirty, s.cameraDirty = false, false
 		if !s.pendingWork() {
 			s.published = true // terminal failures block this epoch; don't hold newer paint for it
 		}
@@ -619,6 +634,7 @@ func (s *state) publish() {
 	}
 	s.published = true
 	started := time.Now()
+	s.selectedAt = started
 	snapshot, err := s.set.SelectBounded(s.drawn(), s.current.cover, s.request.Camera, 0, p.limits.SnapshotBytes)
 	s.stats.Selecting.observe(time.Since(started))
 	stage := "select"
@@ -632,7 +648,7 @@ func (s *state) publish() {
 	}
 	if err != nil {
 		s.errorAt(stage, err)
-		s.dirty = false
+		s.dirty, s.cameraDirty = false, false
 		return
 	}
 	p.mu.Lock()
@@ -651,7 +667,22 @@ func (s *state) publish() {
 	p.output = l
 	s.notify = true
 	s.stats.SelectedTiles, s.stats.Fallbacks = len(snapshot.Cover), snapshot.Fallbacks
-	s.dirty = false
+	s.dirty, s.cameraDirty = false, false
+}
+
+// cameraDeferred reports whether Limits.CameraSelectInterval postpones a
+// camera-only selection, and wakes the owner when the interval ends.
+func (s *state) cameraDeferred() bool {
+	wait := s.p.limits.CameraSelectInterval - time.Since(s.selectedAt)
+	if wait <= 0 {
+		return false
+	}
+	if s.wakeTimer == nil {
+		s.wakeTimer = time.AfterFunc(wait, s.p.signal)
+	} else {
+		s.wakeTimer.Reset(wait)
+	}
+	return true
 }
 
 // Use the same coverage policy and readiness as Set.SelectBounded, but reject
@@ -707,9 +738,14 @@ func (s *state) report() {
 	s.stats.CurrentGeneration, s.stats.CurrentSequence = s.current.generation, s.current.sequence
 	s.stats.Pending = len(s.running)
 	s.stats.Failed = 0
+	deferring := s.p.limits.DeferHiddenRefresh && s.working != nil
+	var cover []view.TileID
+	if deferring {
+		cover = s.selectedCover()
+	}
 	for _, tile := range s.order {
 		e := s.entries[tile]
-		if s.desired[tile] && (e == nil || e.style != s.style || e.assets != s.assets) {
+		if s.desired[tile] && (e == nil || e.style != s.style || e.assets != s.assets) && (!deferring || !s.deferred(e, slices.Contains(cover, tile))) {
 			if s.failures[tile].attempts >= 3 {
 				s.stats.Failed++
 			} else {
@@ -717,7 +753,7 @@ func (s *state) report() {
 			}
 		}
 	}
-	if s.dirty {
+	if s.dirty || s.cameraDirty {
 		s.stats.Pending++
 	}
 	s.stats.StyleHeld = s.working != nil && (s.working.Style != s.request.Style || s.working.Assets != s.request.Assets)

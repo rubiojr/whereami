@@ -564,6 +564,104 @@ frames in every run. Without reuse the flat representation costs no more than
 Coarser 0 Vulkan runs read 0 VRAM from fdinfo while reporting GPU time; the GPU
 memory column is unreliable for that row.
 
+#### Where the CPU and memory go
+
+Both modes also print `threads` (on-CPU time of the live threads from
+`/proc/self/task/*/schedstat`, grouped by name; `main` is Qt's GUI thread and
+Go's own threads carry the process name), `go` (the runtime's GC CPU estimate,
+cycles, bytes allocated, resident and live heap) and `memory` (current RSS
+split, and the moment of highest RSS sampled every 50 ms with the Go runtime's
+share). `-cpuprofile` and `-memprofile` write Go profiles that end where the
+costs are read.
+
+One profiled Coarser 1 OpenGL run after the decoded reuse above: of 6.75 s
+process CPU, Go's threads took 6.04 s. Qt's render thread took 0.36 s, the GUI
+thread 0.12 s, and Mesa, driver and Wayland threads about 0.25 s, so the Qt and
+driver side costs about 0.7 s, less than MapLibre's whole process. Go allocated
+10.9 GB during the 8 s trace (188 collections, about 1.2 s of GC). At the peak
+RSS sample (555 MiB) the Go runtime held 396 MiB, 176 MiB of it live objects,
+and everything else 159 MiB; the live heap was mostly CPU copies of fragments
+(peak 173 MB) and decoded sources. Native memory is in line with MapLibre's 220
+MiB whole process; Go's heap headroom and allocation churn are the difference.
+
+The CPU profile (6.46 s of samples) spent 1.26 s (19%) validating meshes,
+1.44 s preparing, 1.31 s building, 0.86 s selecting and about 0.75 s in GC mark
+workers.
+
+##### Validating each mesh version once
+
+`scene.Mesh.Validate` checked every vertex coordinate with a float64
+conversion, `IsNaN` and `IsInf`, branching per value, and the same vertices
+were checked three times: when `SceneBuilder` finished a fragment (0.27 s),
+when the Store applied it (0.20 s), and on every `Planner.SetTarget` for the
+whole composed scene (0.79 s), including meshes already resident. The check is
+now one maximum over each value's magnitude bits per section (2.1× faster on a
+3.9 MB mesh), and `SetTarget` skips the vertex and index checks of mesh
+versions that are resident or already targeted (`Scene.ValidateExcept`). A
+Version already always refers to the same immutable payload, and a resident one
+is never uploaded again; sizes, IDs and draws are still checked on every
+target. Five runs each against the decoded-reuse rows above:
+
+| Row | CPU before → after |
+| --- | ---: |
+| Coarser 1, OpenGL | 6.16–6.36 → 5.62–6.16 s |
+| Coarser 1, Vulkan | 6.02–6.45 → 5.38–5.93 s |
+| Coarser 0, OpenGL | 8.20–8.69 → 7.31–7.79 s |
+| Coarser 0, Vulkan | 7.87–8.23 → 7.07–7.49 s |
+
+##### Deferring hidden tiles at new style zooms
+
+`producer.Limits.DeferHiddenRefresh` (viewer `-defer-hidden-refresh`) prepares
+a tile again for newer paint inputs only once it is in the selected cover:
+drawn, or standing in for a drawn target. Prefetch-ring tiles beyond the draw
+margin and covered parents keep their older fragment until a pan selects them;
+their decoded source is retained, so that costs one preparation and build
+(about 8 ms) before the next coherent publication. Tiles without a fragment are
+still prepared ahead, and deferred tiles don't count as `Status.Pending`.
+Interleaved five-run A/B, same binary:
+
+| Row | Preparations off → on | CPU off → on | Settle off → on |
+| --- | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 297–302 → 216–219 | 5.55–6.24 → 4.97–5.44 s | 82–89 → 79–88 ms |
+| Coarser 1, Vulkan | 298–299 → 217–218 | 5.59–5.94 → 4.93–5.15 s | 70–85 → 78–88 ms |
+| Coarser 0, OpenGL | 533–547 → 457–467 | 7.28–7.65 → 6.88–7.45 s | 281–343 → 282–338 ms |
+| Coarser 0, Vulkan | 538–547 → 459–464 | 7.11–7.64 → 6.69–6.98 s | 254–341 → 280–343 ms |
+
+Final frames are pixel-identical, every run had zero late frames and no
+fallbacks in Current, and Current changed as often (70–75 times at Coarser 1,
+49–55 at Coarser 0). The longest hold of one drawable document reached 1.20 s
+in two of five Coarser 0 runs with deferral against at most 1.00 s without.
+Most ring tiles at Coarser 1 lie within the 256 px draw margin, so they are
+drawn and still refresh. The viewer turns deferral on.
+
+##### Fewer camera-only selections
+
+The trace moves the camera every 8 ms and each request reselected the cover:
+placement, collision and composition, 750–790 times at Coarser 1. The bridge
+promotes a document only when a native packet progresses, so it set 91 targets;
+it coalesced 265 documents in its pending slot and dropped 418 that matched the
+current snapshot. `producer.Limits.CameraSelectInterval` (viewer
+`-camera-select-interval`) is the least time between selections that only the
+camera asks for; requests within it coalesce and a timer selects the latest
+camera when it ends. Installed tiles, new targets, paint inputs and Current
+coverage still select at once, and a deferred selection counts as pending, so
+settlement waits for it. Labels are placed in shaders from resident anchors
+every frame either way; the interval only delays which labels collision
+admits. Five runs each, OpenGL, with deferral on:
+
+| Interval | Coarser 1 CPU | Selections | Current changes | Coarser 0 CPU | Selections | Current changes |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 5.04–5.38 s | 754–787 | 70–73 | 6.65–7.46 s | 588–724 | 50–57 |
+| 16 ms | 4.57–4.87 s | 409–437 | 67–71 | 6.48–6.83 s | 386–413 | 47–54 |
+| 33 ms | 4.61–4.92 s | 244–258 | 61–67 | 6.19–6.70 s | 265–300 | 44–51 |
+
+Settlement (51–85 ms at Coarser 1, 280–340 ms at Coarser 0), labels and peak
+RSS didn't change, and every run had zero late frames. 16 ms, one refresh at 60
+Hz, keeps the Coarser 1 saving and nearly every Current change; 33 ms saves more
+at Coarser 0 but updates Current about a tenth less often. The viewer uses 16 ms.
+Together with the validation change, Coarser 1 OpenGL went from 6.16–6.36 s to
+4.57–4.87 s of process CPU, against MapLibre's 1.20–1.31 s.
+
 #### Vulkan FIFO stalls in live mode on native Wayland
 
 In live mode on Vulkan under headless mutter, the default FIFO present mode (and

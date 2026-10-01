@@ -157,7 +157,7 @@ Window {id:window; visible:false; width:%d; height:%d; color:"#f8f4f0"; title:"M
 	for _, connection := range connections {
 		connection.Disconnect()
 	}
-	costs, costsErr := readProcessCosts() // before teardown closes DRM clients
+	costs, costsErr := options.measure.finish() // before teardown closes DRM clients
 	engine.Delete()
 	mu.Lock()
 	defer mu.Unlock()

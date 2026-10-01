@@ -159,28 +159,36 @@ func (m Mesh) BufferBytes() uint64 { return m.VertexBytes() + uint64(len(m.Indic
 // are checked against the largest section here and against the section of each
 // draw by Scene.Validate.
 func (m Mesh) Validate() error {
+	if err := m.validateSize(); err != nil {
+		return err
+	}
+	return m.validateContent()
+}
+
+func (m Mesh) validateSize() error {
 	count := uint64(len(m.Vertices)) + uint64(len(m.Offsets)) + uint64(len(m.Positions))
 	if m.ID == 0 || count == 0 || m.VertexBytes() > 1<<31-1 || len(m.Indices) > (1<<31-1)/4 {
 		return fmt.Errorf("invalid mesh %d", m.ID)
 	}
+	return nil
+}
+
+// validateContent checks every vertex and index, in time proportional to the
+// mesh.
+func (m Mesh) validateContent() error {
+	// The largest magnitude decides finiteness, without a branch per value.
+	var largestMagnitude uint32
 	for _, v := range m.Vertices {
-		for _, f := range [...]float32{v.X, v.Y, v.OffsetX, v.OffsetY, v.U, v.V} {
-			if !finite(f) {
-				return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
-			}
-		}
+		largestMagnitude = max(largestMagnitude, magnitude(v.X), magnitude(v.Y), magnitude(v.OffsetX), magnitude(v.OffsetY), magnitude(v.U), magnitude(v.V))
 	}
 	for _, v := range m.Offsets {
-		for _, f := range [...]float32{v.X, v.Y, v.OffsetX, v.OffsetY} {
-			if !finite(f) {
-				return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
-			}
-		}
+		largestMagnitude = max(largestMagnitude, magnitude(v.X), magnitude(v.Y), magnitude(v.OffsetX), magnitude(v.OffsetY))
 	}
 	for _, v := range m.Positions {
-		if !finite(v.X) || !finite(v.Y) {
-			return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
-		}
+		largestMagnitude = max(largestMagnitude, magnitude(v.X), magnitude(v.Y))
+	}
+	if largestMagnitude >= nonFinite {
+		return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
 	}
 	largest := max(len(m.Vertices), len(m.Offsets), len(m.Positions))
 	for _, index := range m.Indices {
@@ -227,11 +235,17 @@ type Frame struct {
 }
 
 // Validate runs before publishing a scene, off the GUI/render thread.
-func (s *Scene) Validate() error {
+func (s *Scene) Validate() error { return s.ValidateExcept(nil) }
+
+// ValidateExcept is Validate without the vertex and index checks of the meshes
+// for which checked reports true: immutable meshes that an earlier Validate
+// accepted. Their sizes and IDs, and the draws that read them, are still
+// checked. A nil checked validates every mesh.
+func (s *Scene) ValidateExcept(checked func(*Mesh) bool) error {
 	if s == nil {
 		return fmt.Errorf("nil scene")
 	}
-	meshes, err := validateMeshes(s.Meshes)
+	meshes, err := validateMeshes(s.Meshes, checked)
 	if err != nil {
 		return err
 	}
@@ -247,12 +261,17 @@ func (s *Scene) Validate() error {
 	return nil
 }
 
-func validateMeshes(values []Mesh) (map[uint64]*Mesh, error) {
+func validateMeshes(values []Mesh, checked func(*Mesh) bool) (map[uint64]*Mesh, error) {
 	meshes := make(map[uint64]*Mesh, len(values))
 	for i := range values {
 		mesh := &values[i]
-		if err := mesh.Validate(); err != nil {
+		if err := mesh.validateSize(); err != nil {
 			return nil, err
+		}
+		if checked == nil || !checked(mesh) {
+			if err := mesh.validateContent(); err != nil {
+				return nil, err
+			}
 		}
 		if _, exists := meshes[mesh.ID]; exists {
 			return nil, fmt.Errorf("duplicate mesh %d", mesh.ID)
@@ -338,7 +357,15 @@ func (m Material) validate() error {
 	return nil
 }
 
-func finite(f float32) bool { return !math.IsNaN(float64(f)) && !math.IsInf(float64(f), 0) }
+// nonFinite is the magnitude bits of infinity, the smallest of an infinity or
+// NaN: all exponent bits set.
+const nonFinite = 0x7f800000
+
+// magnitude is f's bits without the sign. Magnitudes of finite values are below
+// nonFinite.
+func magnitude(f float32) uint32 { return math.Float32bits(f) &^ (1 << 31) }
+
+func finite(f float32) bool { return magnitude(f) < nonFinite }
 
 func validColor(color [4]float32) bool {
 	for _, value := range color {

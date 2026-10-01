@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"path/filepath"
+	"time"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/compiler"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
@@ -34,6 +35,8 @@ type liveOptions struct {
 	coarser                   int
 	keepPreparation           bool
 	reuseDecoded              bool
+	deferHiddenRefresh        bool
+	cameraSelectInterval      time.Duration
 }
 
 type liveSource struct {
@@ -89,6 +92,8 @@ func newLiveSource(options liveOptions, budget retained.Budget) (*liveSource, er
 	// The viewer's assets never change, so preparation has no later use.
 	limits.DiscardPreparation = !options.keepPreparation
 	limits.ReuseDecoded = options.reuseDecoded
+	limits.DeferHiddenRefresh = options.deferHiddenRefresh
+	limits.CameraSelectInterval = options.cameraSelectInterval
 	limits.DrawMargin = options.drawMargin
 	if options.workers != 0 {
 		limits.Workers = options.workers

@@ -116,6 +116,8 @@ func (p *Planner) Current() *scene.Scene { return p.active }
 // SetTarget borrows an immutable retained snapshot and validates it on the calling
 // preparation worker. A Version must always refer to the same immutable payload;
 // this is guaranteed by snapshots from a single Store, not by hashing pixels here.
+// So the vertices of a mesh version that is resident or already targeted aren't
+// checked again: they were when it was first targeted.
 // Active plus desired resources must fit residency limits before target mutation.
 // Supersession is allowed only between batches. Nil clears the active scene;
 // obsolete allocations are then released through acknowledged batches.
@@ -126,7 +128,7 @@ func (p *Planner) SetTarget(target *scene.Scene) error {
 	if p.pending != nil {
 		return ErrBusy
 	}
-	resources, err := targetResources(target, p.limits)
+	resources, err := targetResources(target, p.limits, p.accepted)
 	if err != nil {
 		return err
 	}
@@ -157,7 +159,17 @@ func (p *Planner) fitsTarget(target map[Version]Resource) bool {
 	return bytes <= p.limits.Bytes && count <= p.limits.Resources
 }
 
-func targetResources(target *scene.Scene, limits ResidencyLimits) ([]Resource, error) {
+// accepted reports whether mesh's version passed an earlier SetTarget: it is
+// resident or in the current target. Its immutable payload needs no new vertex
+// checks, and a resident one is never uploaded again.
+func (p *Planner) accepted(mesh *scene.Mesh) bool {
+	version := Version{Kind: MeshResource, ID: mesh.ID, Revision: mesh.Revision}
+	_, resident := p.resident[version]
+	_, targeted := p.targetSet[version]
+	return resident || targeted
+}
+
+func targetResources(target *scene.Scene, limits ResidencyLimits, accepted func(*scene.Mesh) bool) ([]Resource, error) {
 	if target == nil {
 		return nil, nil
 	}
@@ -170,7 +182,7 @@ func targetResources(target *scene.Scene, limits ResidencyLimits) ([]Resource, e
 	if _, err := measure(target, bounded); err != nil {
 		return nil, err
 	}
-	if err := target.Validate(); err != nil {
+	if err := target.ValidateExcept(accepted); err != nil {
 		return nil, err
 	}
 	result := make([]Resource, 0, len(target.Meshes)+len(target.Textures))

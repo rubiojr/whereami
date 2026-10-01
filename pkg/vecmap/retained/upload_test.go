@@ -346,3 +346,39 @@ func TestReleaseBudgetBoundsRetirementSeparately(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBudget)
 	assert.Nil(t, p.pending, "rejected budgets issue no work")
 }
+
+// A mesh version passes vertex checks once: resident and targeted versions
+// keep their validated, immutable payload (which a resident one never uploads
+// again). New versions, sizes and draws are checked on every target.
+func TestSetTargetChecksVerticesOncePerVersion(t *testing.T) {
+	s := newStore(t, Limits{})
+	require.NoError(t, s.Apply([]Change{{"a", triangle()}}))
+	first := snapshot(t, s, "a")
+	tampered := func(change func(*scene.Scene)) *scene.Scene {
+		copied := *first
+		copied.Meshes = []scene.Mesh{first.Meshes[0]}
+		copied.Meshes[0].Vertices = []scene.Vertex{{X: float32(math.NaN())}, {X: 1}, {Y: 1}}
+		copied.Draws = append([]scene.Draw(nil), first.Draws...)
+		change(&copied)
+		return &copied
+	}
+	p := planner(t, ResidencyLimits{})
+	assert.Error(t, p.SetTarget(tampered(func(*scene.Scene) {})), "an unknown version is checked")
+	require.NoError(t, p.SetTarget(first))
+	require.NoError(t, p.SetTarget(tampered(func(*scene.Scene) {})), "targeted, not yet resident")
+	settle(t, p, Budget{Bytes: 1 << 20, Resources: 4})
+	require.NoError(t, p.SetTarget(tampered(func(*scene.Scene) {})), "resident")
+	batch, err := p.Next(Budget{Bytes: 1 << 20, Resources: 4})
+	require.NoError(t, err)
+	assert.Nil(t, batch, "a resident version uploads nothing")
+
+	for name, change := range map[string]func(*scene.Scene){
+		"new revision": func(s *scene.Scene) { s.Meshes[0].Revision++ },
+		"size":         func(s *scene.Scene) { s.Meshes[0].Vertices = nil },
+		"draw range":   func(s *scene.Scene) { s.Draws[0].Count = 6 },
+		"duplicate ID": func(s *scene.Scene) { s.Meshes = append(s.Meshes, s.Meshes[0]) },
+		"missing mesh": func(s *scene.Scene) { s.Draws[0].Mesh++ },
+	} {
+		assert.Error(t, p.SetTarget(tampered(change)), name)
+	}
+}

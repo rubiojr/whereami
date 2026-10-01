@@ -194,3 +194,68 @@ func TestLayoutSplitsBatchesAndSerializes(t *testing.T) {
 	assert.Equal(t, sectioned.Meshes[0].Positions, decoded.Meshes[0].Positions)
 	require.NoError(t, decoded.Validate())
 }
+
+func TestMeshValidateRejectsEveryNonFiniteField(t *testing.T) {
+	bad := []float32{float32(math.NaN()), -float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1)), math.Float32frombits(0x7f800001), math.Float32frombits(0xffffffff)}
+	good := []float32{0, float32(math.Copysign(0, -1)), math.MaxFloat32, -math.MaxFloat32, math.SmallestNonzeroFloat32, math.Float32frombits(0x7f7fffff)}
+	fields := []func(*Mesh) *float32{
+		func(m *Mesh) *float32 { return &m.Vertices[1].X }, func(m *Mesh) *float32 { return &m.Vertices[1].Y },
+		func(m *Mesh) *float32 { return &m.Vertices[1].OffsetX }, func(m *Mesh) *float32 { return &m.Vertices[1].OffsetY },
+		func(m *Mesh) *float32 { return &m.Vertices[1].U }, func(m *Mesh) *float32 { return &m.Vertices[1].V },
+		func(m *Mesh) *float32 { return &m.Offsets[2].X }, func(m *Mesh) *float32 { return &m.Offsets[2].Y },
+		func(m *Mesh) *float32 { return &m.Offsets[2].OffsetX }, func(m *Mesh) *float32 { return &m.Offsets[2].OffsetY },
+		func(m *Mesh) *float32 { return &m.Positions[0].X }, func(m *Mesh) *float32 { return &m.Positions[0].Y },
+	}
+	for i, field := range fields {
+		for _, values := range [][]float32{bad, good} {
+			for _, value := range values {
+				mesh := Mesh{ID: 1, Vertices: make([]Vertex, 3), Offsets: make([]OffsetVertex, 4), Positions: make([]PositionVertex, 2)}
+				*field(&mesh) = value
+				if &values[0] == &bad[0] {
+					assert.Error(t, mesh.Validate(), "field %d value %x", i, math.Float32bits(value))
+				} else {
+					assert.NoError(t, mesh.Validate(), "field %d value %x", i, math.Float32bits(value))
+				}
+			}
+		}
+	}
+}
+
+func BenchmarkMeshValidate(b *testing.B) {
+	mesh := Mesh{ID: 1, Vertices: make([]Vertex, 65536), Offsets: make([]OffsetVertex, 65536), Positions: make([]PositionVertex, 65536), Indices: make([]uint32, 3*65536)}
+	for i := range 65536 {
+		f := float32(i)
+		mesh.Vertices[i] = Vertex{X: f, Y: -f, OffsetX: 0.5, OffsetY: -0.5, U: f / 65536, V: 1}
+		mesh.Offsets[i] = OffsetVertex{X: f, Y: -f, OffsetX: 0.25, OffsetY: 1}
+		mesh.Positions[i] = PositionVertex{X: f, Y: f}
+		mesh.Indices[3*i], mesh.Indices[3*i+1], mesh.Indices[3*i+2] = uint32(i), uint32((i+1)%65536), uint32((i+2)%65536)
+	}
+	b.SetBytes(int64(mesh.BufferBytes()))
+	for b.Loop() {
+		if err := mesh.Validate(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestValidateExceptSkipsOnlyContentOfCheckedMeshes(t *testing.T) {
+	scene := func() *Scene {
+		return &Scene{Meshes: []Mesh{{ID: 1, Vertices: []Vertex{{X: float32(math.NaN())}, {}, {}}, Indices: []uint32{0, 1, 5}},
+			{ID: 2, Vertices: make([]Vertex, 3)}}, Draws: []Draw{{Mesh: 1, Count: 3}, {Mesh: 2, Count: 3}}}
+	}
+	first := func(m *Mesh) bool { return m.ID == 1 }
+	assert.Error(t, scene().Validate())
+	assert.Error(t, scene().ValidateExcept(func(m *Mesh) bool { return m.ID == 2 }))
+	require.NoError(t, scene().ValidateExcept(first), "non-finite vertices and out-of-range indices of a checked mesh")
+	for name, change := range map[string]func(*Scene){
+		"size":         func(s *Scene) { s.Meshes[0].Vertices = nil },
+		"zero ID":      func(s *Scene) { s.Meshes[0].ID = 0 },
+		"duplicate ID": func(s *Scene) { s.Meshes[1].ID = 1 },
+		"draw range":   func(s *Scene) { s.Draws[0].First = 3 },
+		"other mesh":   func(s *Scene) { s.Meshes[1].Vertices[2].V = float32(math.Inf(-1)) },
+	} {
+		invalid := scene()
+		change(invalid)
+		assert.Error(t, invalid.ValidateExcept(first), name)
+	}
+}

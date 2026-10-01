@@ -117,6 +117,22 @@ type Limits struct {
 	// new style zoom prepares the tile without decoding and triangulating it
 	// again. Sources are charged and reclaimed with preparations.
 	ReuseDecoded bool
+	// DeferHiddenRefresh prepares a tile again for newer paint inputs only once
+	// it is in the selected cover: drawn, or standing in for a drawn target.
+	// Hidden desired tiles (prefetch ring beyond DrawMargin, unused parents)
+	// keep their older fragment until a pan selects them, and are then prepared
+	// before the next coherent publication. Tiles without a fragment are still
+	// prepared ahead. During continuous zoom this skips preparations a later
+	// style zoom would make obsolete before they are drawn; Status.Pending
+	// doesn't count deferred tiles.
+	DeferHiddenRefresh bool
+	// CameraSelectInterval is the least time between selections (placement
+	// and composition) that only a camera change asks for. Camera requests
+	// within it coalesce into one selection when it ends, so the latest camera
+	// is always selected; other changes (installed tiles, targets, paint
+	// inputs, Current coverage) select at once. Zero selects for every camera
+	// request. At most one second.
+	CameraSelectInterval time.Duration
 	// DrawMargin bounds the composed scene to the targets within that many
 	// logical pixels of the viewport. Targets beyond it are still loaded and
 	// compiled, so a pan that brings them closer only composes and uploads
@@ -261,6 +277,7 @@ func New(loader Loader, limits Limits) (*Producer, error) {
 		limits.CacheBytes == 0 || limits.CacheBytes > 1<<30 || limits.SnapshotBytes == 0 || limits.SnapshotBytes > 1<<30 ||
 		limits.ProfileBytes == 0 || limits.ProfileBytes > 1<<30 || limits.RetryDelay <= 0 ||
 		!(limits.DrawMargin >= 0) || limits.DrawMargin > 1<<20 || limits.PrefetchRing < 0 || limits.PrefetchRing > view.MaxPrefetchRing ||
+		limits.CameraSelectInterval < 0 || limits.CameraSelectInterval > time.Second ||
 		limits.Compilers < 1 || limits.Compilers > 8 {
 		return nil, ErrInput
 	}

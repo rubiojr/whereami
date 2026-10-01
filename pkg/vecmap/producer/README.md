@@ -101,6 +101,21 @@ through 14. Submit copies that small slice. Camera updates coalesce in one slot.
   `mvt.FeatureSet`s, so retaining them adds little GC work. On the Madrid trace
   preparation took 45% less wall time and process CPU fell 3–11%, for 35–90 MiB
   more RSS (docs/vecmap-rhi.md). The viewer turns it on.
+- `Limits.DeferHiddenRefresh` prepares a tile again for newer paint inputs only
+  once it is in the selected cover. Prefetch-ring tiles beyond `DrawMargin` and
+  covered parents keep their older fragment until a pan selects them, and are
+  then prepared before the next coherent publication; tiles without a fragment
+  are still prepared ahead. Deferred tiles count neither as `Status.Pending` nor
+  as pending work that holds a newer style. On the Madrid trace it removed a
+  quarter of the preparations at Coarser 1 and cut process CPU about 10%, with
+  identical final frames. The viewer turns it on.
+- `Limits.CameraSelectInterval` is the least time between selections that only a
+  camera change asks for. Camera requests within it coalesce, and a timer wakes
+  the owner to select the latest camera when it ends; installed tiles, target,
+  paint input and Current coverage changes still select at once. A deferred
+  selection counts as `Status.Pending`, so settlement waits for it. The viewer
+  uses 16 ms: on the Madrid trace it halved selections and cut CPU about 9% at
+  Coarser 1.
 - Raw MVT remains cached alongside optional reusable Prepared data. A style change
   normally reparses/recompiles cached bytes; asset refresh reuses Prepared when available.
   Admission pressure evicts least-recently-built Prepared objects, or omits incoming

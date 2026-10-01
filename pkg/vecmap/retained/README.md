@@ -182,7 +182,11 @@ err = planner.Acknowledge(batch.Ticket, success)
   Each target obeys Store scene ceilings; resource revisions must be nonzero.
   The pointer and payload remain immutable borrows. Reusing a version with changed
   content is forbidden: Store guarantees this identity contract. Validation does
-  not hash/compare payloads against earlier versions.
+  not hash/compare payloads against earlier versions. Relying on the same
+  contract, it checks the vertices and indices of a mesh version only the first
+  time it is targeted: resident and already targeted versions keep the payload
+  that was checked, and a resident one is never uploaded again
+  (`scene.Scene.ValidateExcept`). Sizes, IDs and draws are checked every time.
 - Active plus desired **unique kind/ID/revision versions** must fit the configured
   residency ceilings before the target changes. Defaults/maxima are **1 GiB of
   logical payload and 16,384 resources**, sufficient for two maximum-sized Store

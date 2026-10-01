@@ -671,6 +671,12 @@ func TestLimitsChooseThePrefetchRingAndParents(t *testing.T) {
 		_, err := New(func(context.Context, Key, io.Writer) error { return nil }, limits)
 		assert.ErrorIs(t, err, ErrInput, "ring %d", ring)
 	}
+	limits.PrefetchRing = 0
+	for _, interval := range []time.Duration{-1, time.Second + 1} {
+		limits.CameraSelectInterval = interval
+		_, err := New(func(context.Context, Key, io.Writer) error { return nil }, limits)
+		assert.ErrorIs(t, err, ErrInput, "camera interval %s", interval)
+	}
 }
 
 func TestSubmitRejectsCoarserOutOfRange(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/sprite"
 	"github.com/rubiojr/whereami/pkg/vecmap/style"
@@ -575,4 +576,124 @@ func TestDecodedSourceFollowsItsResponse(t *testing.T) {
 	s.loaded(result{job: j, data: tilePBF()})
 	require.NotNil(t, s.entries[tile].raw)
 	assert.Nil(t, s.entries[tile].decoded, "a new response invalidates the old decode")
+}
+
+func TestDeferHiddenRefreshPreparesSelectedTilesOnly(t *testing.T) {
+	for _, deferring := range []bool{false, true} {
+		r := testRequest(t)
+		s := churnState(t, r)
+		s.p.limits.DeferHiddenRefresh, s.p.limits.DrawMargin = deferring, 1
+		for _, tile := range s.order {
+			s.entries[tile] = &entry{raw: tilePBF(), source: r.Style.Source}
+		}
+		publish := func() {
+			s.publish()
+			if lease, ok := s.p.Next(); ok {
+				lease.Release()
+			}
+		}
+		for s.compileNext() {
+		}
+		publish()
+		cover := s.selectedCover()
+		hidden := 0
+		for _, tile := range s.order {
+			if s.desired[tile] && !slices.Contains(cover, tile) {
+				hidden++
+			}
+		}
+		require.Positive(t, hidden, "ring tiles beyond the margin and covered parents")
+		assert.Equal(t, uint64(len(s.order)), s.stats.PrepareCauses.First, "tiles without a fragment are prepared ahead")
+
+		styleZoom(t, s, &r, 2.0625)
+		s.inputs()
+		before := s.stats.Prepares
+		for s.compileNext() {
+		}
+		publish()
+		s.report()
+		assert.Zero(t, s.stats.Pending, "deferred tiles aren't pending")
+		if !deferring {
+			assert.Equal(t, uint64(len(s.order)), s.stats.Prepares-before)
+			continue
+		}
+		assert.Equal(t, uint64(len(cover)), s.stats.Prepares-before, "only the selected cover")
+		assert.Equal(t, uint64(len(cover)), s.stats.PrepareCauses.StyleZoom)
+
+		// A pan that draws every target selects the hidden ring tiles: they
+		// hold the next publication until prepared at the working epoch.
+		s.p.limits.DrawMargin = 0
+		s.dirty = true
+		assert.False(t, s.coherentCover())
+		assert.True(t, s.pendingWork())
+		s.report()
+		assert.Positive(t, s.stats.Pending)
+		for s.compileNext() {
+		}
+		assert.True(t, s.coherentCover())
+		for _, tile := range s.selectedCover() {
+			assert.True(t, s.atWorkingEpoch(s.entries[tile]), "tile %v", tile)
+		}
+	}
+}
+
+func TestCameraSelectIntervalCoalescesCameraOnlySelections(t *testing.T) {
+	r := testRequest(t)
+	s := churnState(t, r)
+	for _, tile := range s.order {
+		s.entries[tile] = &entry{raw: tilePBF(), source: r.Style.Source}
+	}
+	for s.compileNext() {
+	}
+	publish := func() uint64 {
+		s.publish()
+		if lease, ok := s.p.Next(); ok {
+			lease.Release()
+		}
+		return s.stats.Selecting.Count
+	}
+	require.Equal(t, uint64(1), publish())
+	s.p.limits.CameraSelectInterval = time.Second
+	camera := func() {
+		_, err := s.p.Submit(r)
+		require.NoError(t, err)
+		s.inputs()
+	}
+
+	camera()
+	assert.True(t, s.cameraDirty)
+	assert.False(t, s.dirty, "a camera-only request")
+	assert.Equal(t, uint64(1), publish(), "within the interval")
+	s.report()
+	assert.Equal(t, 1, s.stats.Pending, "the deferred selection is pending")
+	s.selectedAt = s.selectedAt.Add(-time.Second)
+	assert.Equal(t, uint64(2), publish(), "the interval ended")
+	assert.False(t, s.cameraDirty)
+	s.report()
+	assert.Zero(t, s.stats.Pending)
+
+	camera()
+	s.dirty = true // an installed tile, for example
+	assert.Equal(t, uint64(3), publish(), "other changes select at once")
+	assert.False(t, s.cameraDirty, "and take the camera along")
+
+	styleZoom(t, s, &r, 2.0625)
+	s.inputs()
+	assert.True(t, s.dirty, "paint inputs aren't camera-only")
+
+	// The owner wakes when a deferred interval ends.
+	s.dirty, s.cameraDirty = false, true
+	s.p.limits.CameraSelectInterval = 10 * time.Millisecond
+	s.selectedAt = time.Now()
+	select {
+	case <-s.p.wake:
+	default:
+	}
+	s.publish()
+	assert.True(t, s.cameraDirty)
+	select {
+	case <-s.p.wake:
+	case <-time.After(time.Second):
+		t.Fatal("no wake after the interval")
+	}
 }
