@@ -301,9 +301,75 @@ while hidden under Xwayland presumably blocks its GUI thread the same way.
 
 `frameSwapped` and the swapchain waits are **not** display presentation
 timestamps. Neither is Xwayland's Present completion time, which is its own clock
-reading when the frame callback or timer fires. Kata `r24s` tracks real
-presentation timing for the MapLibre comparison. Poor cadence samples are
+reading when the frame callback or timer fires. Poor cadence samples are
 reported, not discarded.
+
+### Presentation timestamps on native Wayland
+
+`cmd/wayland-present` reports when the compositor actually showed each frame. It
+runs any native Wayland client with an `LD_PRELOAD` library that requests
+`wp_presentation` feedback for every `wl_surface` commit carrying a new buffer,
+then summarizes the compositor's answers. The viewer and MapLibre Native can be
+measured the same way, without changing either. Qt clients need
+`QT_QPA_PLATFORM=wayland`; X11 clients, including Qt's xcb platform under
+Xwayland, aren't supported.
+
+```sh
+QT_QPA_PLATFORM=wayland QSG_RHI_BACKEND=vulkan \
+  go run ./cmd/wayland-present -- bin/vecmap-rhi \
+  -scene /tmp/madrid-scene.json -duration 8s -diagnostics
+```
+
+```text
+presentation surface=38 surfaces=1 presented=475 discarded=0 clock=1 refresh=16.665805ms
+presentation_interval samples=444 p50=16.666ms p95=16.675ms p99=16.676ms max=33.33ms
+presentation_latency samples=445 p50=20.685997ms p95=22.939509ms p99=23.297454ms max=36.691055ms
+presentation_refreshes late_frames=2 missed_refreshes=2
+presentation_flags vsync=445 hw_clock=445 hw_completion=445 zero_copy=0
+```
+
+- The report covers the surface with the most feedback, the one the client draws
+  into. `-warmup` (default 30) presented frames are not sampled; `-log` keeps the
+  raw feedback.
+- `presentation_interval` is the time between consecutive displayed frames.
+  `presentation_latency` runs from the client's `wl_surface.commit` to display, on
+  the compositor's clock (`clock=1` is `CLOCK_MONOTONIC`).
+- `late_frames` counts intervals longer than one refresh and `missed_refreshes`
+  the refreshes without a new frame, from the vblank sequence of vsynced frames,
+  else the refresh duration.
+- `discarded` frames carried a new buffer but were never shown, for example
+  because the window was covered. Commits without a new buffer are ignored; with
+  Vulkan on mutter every frame's buffer commit is followed by one.
+- `hw_clock` and `hw_completion` mean the timestamp came from the display
+  hardware's page-flip completion.
+
+The preload is benchmark tooling, never linked into an application. The tool
+compiles it at run time from `cmd/wayland-present/preload/present.c` and the
+protocol code `wayland-scanner` generates. It needs `gcc` (or `CC`), `pkg-config`,
+`wayland-scanner`, and the libwayland-client and wayland-protocols development
+files.
+
+Measured on 2026-10-01: GNOME/mutter 50.5 on Wayland, Radeon 860M, Mesa 26.2.3,
+Qt 6.11.2, Madrid fixture, 8 s geographic trace, 60 Hz panel. Vulkan used the
+checked-finish Qt, with its `QWaylandIntegrationPlugin`,
+`QWaylandXdgShellIntegrationPlugin` and `QWaylandEglClientBufferPlugin` targets
+built; OpenGL used the distribution Qt.
+
+| Backend | Frames | Presented / discarded | Interval p50 / p99 / max | Late frames | Commit to display p50 / p99 | Callback interval p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Vulkan | 477 | 475 / 0 | 16.666 / 16.676 / 33.33 ms | 2 | 20.7 / 23.3 ms | 17.7 ms |
+| OpenGL | 381 | 377 / 3 | 16.666 / 16.675 / 16.676 ms | 0 | 21.0 / 22.9 ms | 18.1 ms |
+
+Every sampled frame had `vsync`, `hw_clock` and `hw_completion` set. The OpenGL
+window was hidden for its last 1.5 s: Qt reported `exposed=false`, rendering
+stopped and the 3 frames in flight were discarded. Native Wayland can't keep a
+window on top, so `-foreground` doesn't help there; check `discarded` and the
+viewer's gap records instead.
+
+Displayed frames are steadier than render callbacks: 16.676 ms against 17.7 ms at
+p99 on Vulkan. Callback jitter isn't presentation jitter. A frame reaches the
+display about 21 ms, a refresh and a quarter, after its commit on both backends.
+These are viewer-only numbers, not a MapLibre comparison.
 
 ## Optional indexed meshes
 
