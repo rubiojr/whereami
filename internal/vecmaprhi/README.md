@@ -203,6 +203,13 @@ precede backend result writes during destruction, and OpenGL readback can block.
 `frameSwapped` is not a submission-success signal either. Resolve the native
 submission and final-reference boundaries before introducing result ownership.
 
+The audit also records a limitation of the checked Vulkan baseline:
+Qt 6.11.2's `QRhiVulkan::finish` discards `vkQueueWaitIdle` and command-buffer
+restart results. `BatchRenderer` resets on errors exposed by `Finish` or
+`IsDeviceLost`; it cannot detect errors hidden by both. **1aaq** tracks the native
+error-reporting integration needed before claiming completion and retirement
+under those failures.
+
 ### Signal subscription ownership
 
 The regenerated `OnAfterFrameEnd` returns a `*qtrhi.SignalConnection`. Its owner must

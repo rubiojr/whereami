@@ -2164,6 +2164,14 @@ explicit submission and final-reference boundaries; live target work can proceed
 independently with the checked baseline. No native readback failure injection or
 new performance measurement was performed in this audit.
 
+The **2026-10-01** review resolves **w47r** with the decision to retain stock Qt
+and checked submission. It also identifies a limit in that baseline:
+`QRhiVulkan::finish` discards idle-wait and command-buffer restart errors before
+returning success. **1aaq** tracks exposing those failures; checking QRhi's public
+return value does not prove native completion when Qt hides an error. The audit
+now includes the live-target replay evidence and explicit submission, completion,
+retirement and final-native-access requirements for a future integration.
+
 ### Live target data and fixture replacement
 
 After the asynchronous-completion audit, the user asked which direction best serves
