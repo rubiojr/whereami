@@ -213,14 +213,34 @@ a controlled MapLibre comparison have not been measured yet.
 ### Control window placement when measuring pacing
 
 Use `-foreground` for desktop benchmark runs. It requests activation and keeps
-the window on top, reducing occlusion-related presentation throttling. This is
-an opt-in benchmark setting, not a change to production map windows.
+the window on top, so the compositor keeps presenting it. This is an opt-in
+benchmark setting, not a change to production map windows. It doesn't help if
+another on-top window covers the benchmark.
 
 `-diagnostics` reports GUI timer intervals, active/exposed tick counts, and gaps
-over 100 ms with window state and Qt's queued `frameSwapped` count. Diagnostics
-retain at most 60,000 timer samples and 64 gap records. Startup's first 30 render
-callbacks are excluded from gap records, consistently with rendering timings.
-The report also records the Qt platform plugin, renderer, device and trace type.
+over 100 ms with window state and Qt's queued `frameSwapped` count. It also times
+the render thread's `QRhi::beginFrame` and `endFrame` calls from the window's
+`beforeFrameBegin`, `beforeSynchronizing`/`beforeRendering`, `afterRendering` and
+`afterFrameEnd` signals:
+
+```text
+pacing_gap frame=208 timer=1.001776436s render_age=1.001675476s swapchain_wait=996.204609ms visible=true active=false exposed=true swaps=208
+pacing_gaps=4 swapchain_gaps=4
+frame_begin_wait samples=354 p50=11.272107ms p95=12.219364ms p99=654.396338ms max=996.204609ms
+frame_end_wait samples=353 p50=84.81µs p95=179.769µs p99=256.914µs max=302.12µs
+```
+
+Each gap carries the longest swapchain wait finished since the previous timer
+tick. `swapchain_gaps` counts gaps with a wait of at least 100 ms. **A nonzero
+count means the window system withheld buffers; that run doesn't measure the
+renderer.** Vulkan blocks in `beginFrame` (image acquisition), OpenGL in `endFrame`
+(buffer swap). An uncovered window waits up to one refresh there: 11.3 ms begin
+p50 on Vulkan and 16.5 ms end p50 on OpenGL at 60 Hz.
+
+Diagnostics retain at most 60,000 timer samples, 60,000 samples per wait and 64
+gap records. The first 30 frames are excluded from gap records and wait samples,
+consistently with rendering timings. The report also records the Qt platform
+plugin, renderer, device and trace type.
 
 Investigation of kata `vx93` on the XCB desktop found:
 
@@ -233,16 +253,57 @@ Investigation of kata `vx93` on the XCB desktop found:
 
 Both trace implementations exhibited gaps without the foreground control. The
 GUI timer stalled alongside rendering, while CPU draw work and GPU time remained
-small. Keeping the window on top removed the one-second gaps in these runs,
-including periods when the window was not active. Qt sometimes still reported
-`visible=true` and `exposed=true` during stalls, so those flags alone cannot certify
-a reliable timing run.
+small. Qt still reported `visible=true` and `exposed=true` during stalls, so those
+flags can't certify a timing run.
 
-This rules out the geographic camera as the specific cause of these observations
-and points to window/presentation pacing. It does not identify the exact blocking
-call in Qt, the driver or compositor. `frameSwapped` is **not** an actual display
-presentation timestamp; real presentation tracking remains a separate requirement
-for the MapLibre comparison. Poor cadence samples are reported, not discarded.
+#### Cause: Xwayland presents hidden windows once per second
+
+The desktop is GNOME (mutter 50.5) on Wayland. Qt's `xcb` platform talks to
+**Xwayland 24.1.13**, not a native X server. Mutter apparently withholds Wayland
+frame callbacks from a surface nobody can see. Xwayland's Present code then
+completes flips from a fallback timer, `TIMER_LEN_FLIP` = 1000 ms
+(`hw/xwayland/xwayland-present.c`: "the surface is not visible, in this case
+update with long interval"). Swapchain buffers come back once per second.
+Xwayland doesn't tell the X client its window is hidden, hence the stale
+`visible`/`exposed` flags.
+
+Stacks sampled with `eu-stack` during the stalls, six samples per backend, all
+identical:
+
+- Vulkan render thread: `QSGRenderThread::syncAndRender` → `QRhiVulkan::beginFrame`
+  → `vkAcquireNextImageKHR` → Mesa `x11_acquire_next_image` →
+  `wsi_drm_wait_for_explicit_sync_release` → `drmSyncobjTimelineWait`.
+- OpenGL render thread: `QRhiGles2::endFrame` → `glXSwapBuffers` →
+  `loader_dri3_swap_buffers_msc` → `xcb_wait_for_special_event`.
+- GUI thread, both backends: `QSGThreadedRenderLoop::polishAndSync`, waiting for
+  the render thread. That's why GUI timers stalled with rendering.
+
+Controls on 2026-10-01: Radeon 860M, Mesa 26.2.3, Qt 6.11.2 (checked-finish build
+for Vulkan, distribution build for OpenGL), Madrid fixture, `-foreground`. The
+window was minimized with `xdotool` from 3.5 s to 7.5 s, or covered by a second,
+later on-top viewer from 3 s to 8 s.
+
+| Run | Pacing gaps | Swapchain gaps | Longest begin wait | Longest end wait |
+| --- | ---: | ---: | ---: | ---: |
+| Vulkan, uncovered, 8 s | 0 | 0 | 52.7 ms | 0.27 ms |
+| Vulkan, minimized | 4 | 4 | 996 ms | 0.30 ms |
+| Vulkan, covered | 4 | 4 | 995 ms | 0.26 ms |
+| OpenGL, minimized | 3 | 3 | 0.10 ms | 1.001 s |
+
+Covering the window is enough. Without `-foreground` a new window can also open
+behind the active one: three runs gapped before any scripted change while the
+desktop was in use. In all eight runs with the new diagnostics, every pacing gap
+had a swapchain wait of at least 598 ms.
+
+This is a desktop measurement artifact, not a renderer regression, so the
+renderer is unchanged. A production Qt Quick window that keeps requesting frames
+while hidden under Xwayland presumably blocks its GUI thread the same way.
+
+`frameSwapped` and the swapchain waits are **not** display presentation
+timestamps. Neither is Xwayland's Present completion time, which is its own clock
+reading when the frame callback or timer fires. Kata `r24s` tracks real
+presentation timing for the MapLibre comparison. Poor cadence samples are
+reported, not discarded.
 
 ## Optional indexed meshes
 

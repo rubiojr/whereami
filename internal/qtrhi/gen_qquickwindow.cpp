@@ -14,6 +14,10 @@
 extern "C" {
 #endif
 
+void qtrhi_miqt_exec_callback_QQuickWindow_beforeSynchronizing(intptr_t);
+void qtrhi_miqt_exec_callback_QQuickWindow_beforeRendering(intptr_t);
+void qtrhi_miqt_exec_callback_QQuickWindow_afterRendering(intptr_t);
+void qtrhi_miqt_exec_callback_QQuickWindow_beforeFrameBegin(intptr_t);
 void qtrhi_miqt_exec_callback_QQuickWindow_afterFrameEnd(intptr_t);
 #ifdef __cplusplus
 } /* extern C */
@@ -39,6 +43,58 @@ void qtrhi_QQuickWindow_setGraphicsConfiguration(QQuickWindow* self, QQuickGraph
 
 QRhi* qtrhi_QQuickWindow_rhi(const QQuickWindow* self) {
 	return self->rhi();
+}
+
+void qtrhi_QQuickWindow_beforeSynchronizing(QQuickWindow* self) {
+	self->beforeSynchronizing();
+}
+
+void* qtrhi_QQuickWindow_connect_beforeSynchronizing(QQuickWindow* self, intptr_t slot) {
+	auto qtrhi_lifetime = std::shared_ptr<intptr_t>(new intptr_t(slot), [](intptr_t *p) { qtrhi_callback_released(*p); delete p; });
+	auto connection = QQuickWindow::connect(self, static_cast<void (QQuickWindow::*)()>(&QQuickWindow::beforeSynchronizing), self, [qtrhi_lifetime]() {
+		const auto qtrhi_call_lifetime = qtrhi_lifetime;
+		qtrhi_miqt_exec_callback_QQuickWindow_beforeSynchronizing(*qtrhi_call_lifetime);
+	}, Qt::DirectConnection);
+	return new QMetaObject::Connection(connection);
+}
+
+void qtrhi_QQuickWindow_beforeRendering(QQuickWindow* self) {
+	self->beforeRendering();
+}
+
+void* qtrhi_QQuickWindow_connect_beforeRendering(QQuickWindow* self, intptr_t slot) {
+	auto qtrhi_lifetime = std::shared_ptr<intptr_t>(new intptr_t(slot), [](intptr_t *p) { qtrhi_callback_released(*p); delete p; });
+	auto connection = QQuickWindow::connect(self, static_cast<void (QQuickWindow::*)()>(&QQuickWindow::beforeRendering), self, [qtrhi_lifetime]() {
+		const auto qtrhi_call_lifetime = qtrhi_lifetime;
+		qtrhi_miqt_exec_callback_QQuickWindow_beforeRendering(*qtrhi_call_lifetime);
+	}, Qt::DirectConnection);
+	return new QMetaObject::Connection(connection);
+}
+
+void qtrhi_QQuickWindow_afterRendering(QQuickWindow* self) {
+	self->afterRendering();
+}
+
+void* qtrhi_QQuickWindow_connect_afterRendering(QQuickWindow* self, intptr_t slot) {
+	auto qtrhi_lifetime = std::shared_ptr<intptr_t>(new intptr_t(slot), [](intptr_t *p) { qtrhi_callback_released(*p); delete p; });
+	auto connection = QQuickWindow::connect(self, static_cast<void (QQuickWindow::*)()>(&QQuickWindow::afterRendering), self, [qtrhi_lifetime]() {
+		const auto qtrhi_call_lifetime = qtrhi_lifetime;
+		qtrhi_miqt_exec_callback_QQuickWindow_afterRendering(*qtrhi_call_lifetime);
+	}, Qt::DirectConnection);
+	return new QMetaObject::Connection(connection);
+}
+
+void qtrhi_QQuickWindow_beforeFrameBegin(QQuickWindow* self) {
+	self->beforeFrameBegin();
+}
+
+void* qtrhi_QQuickWindow_connect_beforeFrameBegin(QQuickWindow* self, intptr_t slot) {
+	auto qtrhi_lifetime = std::shared_ptr<intptr_t>(new intptr_t(slot), [](intptr_t *p) { qtrhi_callback_released(*p); delete p; });
+	auto connection = QQuickWindow::connect(self, static_cast<void (QQuickWindow::*)()>(&QQuickWindow::beforeFrameBegin), self, [qtrhi_lifetime]() {
+		const auto qtrhi_call_lifetime = qtrhi_lifetime;
+		qtrhi_miqt_exec_callback_QQuickWindow_beforeFrameBegin(*qtrhi_call_lifetime);
+	}, Qt::DirectConnection);
+	return new QMetaObject::Connection(connection);
 }
 
 void qtrhi_QQuickWindow_afterFrameEnd(QQuickWindow* self) {

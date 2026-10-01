@@ -4,6 +4,8 @@ package main
 
 import (
 	"fmt"
+	"sync"
+	"time"
 
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/qml"
@@ -48,4 +50,24 @@ Window {id:window; visible:false; width:%d; height:%d; color:"#f8f4f0"; title:"v
 		window.RequestActivate()
 	}
 	return engine, nil
+}
+
+// connectSwapchainWaits times swapchain calls from render-thread signals.
+// Disconnect the subscriptions on the GUI thread before deleting the window.
+func connectSwapchainWaits(window *rhi.QQuickWindow, mu *sync.Mutex, waits *swapchainWaits) []*rhi.SignalConnection {
+	at := func(record func(*swapchainWaits, time.Time)) func() {
+		return func() {
+			now := time.Now()
+			mu.Lock()
+			defer mu.Unlock()
+			record(waits, now)
+		}
+	}
+	return []*rhi.SignalConnection{
+		window.OnBeforeFrameBegin(at((*swapchainWaits).beforeFrameBegin)),
+		window.OnBeforeSynchronizing(at((*swapchainWaits).frameBegun)),
+		window.OnBeforeRendering(at((*swapchainWaits).frameBegun)),
+		window.OnAfterRendering(at((*swapchainWaits).afterRendering)),
+		window.OnAfterFrameEnd(at((*swapchainWaits).afterFrameEnd)),
+	}
 }

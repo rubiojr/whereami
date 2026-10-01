@@ -42,7 +42,8 @@ func testViewerReload(t *testing.T) {
 	// Desktop Vulkan can deliver only a handful of frames during its first
 	// second. Allow checked startup/upload/retirement to finish; readiness and
 	// replacement pixels are still mandatory, never inferred from elapsed time.
-	err = run(path, benchmarkOptions{duration: 5 * time.Second, screenshot: output, foreground: true, reload: 10 * time.Millisecond, budget: retained.Budget{Bytes: 1024, Resources: 1}})
+	// Diagnostics connect and disconnect the swapchain signals in both loops.
+	err = run(path, benchmarkOptions{duration: 5 * time.Second, screenshot: output, foreground: true, diagnostics: true, reload: 10 * time.Millisecond, budget: retained.Budget{Bytes: 1024, Resources: 1}})
 	require.NoError(t, <-changed)
 	require.NoError(t, err)
 	image := qt.NewQImage8(output)

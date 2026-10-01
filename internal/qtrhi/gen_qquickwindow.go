@@ -105,6 +105,74 @@ func (this *QQuickWindow) Rhi() *QRhi {
 	return newQRhi(C.qtrhi_QQuickWindow_rhi(this.h))
 }
 
+func (this *QQuickWindow) BeforeSynchronizing() {
+	C.qtrhi_QQuickWindow_beforeSynchronizing(this.h)
+}
+func (this *QQuickWindow) OnBeforeSynchronizing(slot func()) *SignalConnection {
+	return newSignalConnection(unsafe.Pointer(C.qtrhi_QQuickWindow_connect_beforeSynchronizing(this.h, C.intptr_t(cgo.NewHandle(slot)))))
+}
+
+//export qtrhi_miqt_exec_callback_QQuickWindow_beforeSynchronizing
+func qtrhi_miqt_exec_callback_QQuickWindow_beforeSynchronizing(cb C.intptr_t) {
+	gofunc, ok := cgo.Handle(cb).Value().(func())
+	if !ok {
+		panic("miqt: callback of non-callback type (heap corruption?)")
+	}
+
+	gofunc()
+}
+
+func (this *QQuickWindow) BeforeRendering() {
+	C.qtrhi_QQuickWindow_beforeRendering(this.h)
+}
+func (this *QQuickWindow) OnBeforeRendering(slot func()) *SignalConnection {
+	return newSignalConnection(unsafe.Pointer(C.qtrhi_QQuickWindow_connect_beforeRendering(this.h, C.intptr_t(cgo.NewHandle(slot)))))
+}
+
+//export qtrhi_miqt_exec_callback_QQuickWindow_beforeRendering
+func qtrhi_miqt_exec_callback_QQuickWindow_beforeRendering(cb C.intptr_t) {
+	gofunc, ok := cgo.Handle(cb).Value().(func())
+	if !ok {
+		panic("miqt: callback of non-callback type (heap corruption?)")
+	}
+
+	gofunc()
+}
+
+func (this *QQuickWindow) AfterRendering() {
+	C.qtrhi_QQuickWindow_afterRendering(this.h)
+}
+func (this *QQuickWindow) OnAfterRendering(slot func()) *SignalConnection {
+	return newSignalConnection(unsafe.Pointer(C.qtrhi_QQuickWindow_connect_afterRendering(this.h, C.intptr_t(cgo.NewHandle(slot)))))
+}
+
+//export qtrhi_miqt_exec_callback_QQuickWindow_afterRendering
+func qtrhi_miqt_exec_callback_QQuickWindow_afterRendering(cb C.intptr_t) {
+	gofunc, ok := cgo.Handle(cb).Value().(func())
+	if !ok {
+		panic("miqt: callback of non-callback type (heap corruption?)")
+	}
+
+	gofunc()
+}
+
+func (this *QQuickWindow) BeforeFrameBegin() {
+	C.qtrhi_QQuickWindow_beforeFrameBegin(this.h)
+}
+func (this *QQuickWindow) OnBeforeFrameBegin(slot func()) *SignalConnection {
+	return newSignalConnection(unsafe.Pointer(C.qtrhi_QQuickWindow_connect_beforeFrameBegin(this.h, C.intptr_t(cgo.NewHandle(slot)))))
+}
+
+//export qtrhi_miqt_exec_callback_QQuickWindow_beforeFrameBegin
+func qtrhi_miqt_exec_callback_QQuickWindow_beforeFrameBegin(cb C.intptr_t) {
+	gofunc, ok := cgo.Handle(cb).Value().(func())
+	if !ok {
+		panic("miqt: callback of non-callback type (heap corruption?)")
+	}
+
+	gofunc()
+}
+
 func (this *QQuickWindow) AfterFrameEnd() {
 	C.qtrhi_QQuickWindow_afterFrameEnd(this.h)
 }

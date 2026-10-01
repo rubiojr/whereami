@@ -31,7 +31,7 @@ func main() {
 	animate := flag.Bool("animate", true, "replay a deterministic pan/zoom/bearing trace")
 	screenshot := flag.String("screenshot", "", "save a PNG before exiting")
 	foreground := flag.Bool("foreground", false, "keep the benchmark window on top and request activation")
-	diagnostics := flag.Bool("diagnostics", false, "report timer delivery and window state around pacing gaps")
+	diagnostics := flag.Bool("diagnostics", false, "report timer delivery, swapchain waits and window state around pacing gaps")
 	uploadBytes := flag.Uint64("upload-bytes", 32<<20, "maximum geometry/index/RGBA bytes per upload batch (resources are indivisible)")
 	uploadResources := flag.Int("upload-resources", 4, "maximum resources per upload batch")
 	releaseResources := flag.Int("release-resources", 8, "maximum resources per retirement batch; zero uses -upload-resources")
@@ -128,6 +128,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	var mu sync.Mutex
 	var samples frameSamples
 	var pacing pacingSamples
+	var waits swapchainWaits
 	var status streamStatus
 	stream := &viewerStream{worker: worker,
 		observe: func(stats vecmaprhi.Stats) { mu.Lock(); defer mu.Unlock(); samples.add(stats) },
@@ -146,6 +147,10 @@ func display(document scene.Document, options benchmarkOptions) error {
 		return err
 	}
 	window := item.Window()
+	var connections []*rhi.SignalConnection
+	if options.diagnostics {
+		connections = connectSwapchainWaits(window, &mu, &waits)
+	}
 	start := time.Now()
 	timer := qt.NewQTimer()
 	var screenshotError error
@@ -162,7 +167,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 			swaps := engine.RootObjects()[0].Property("swapCount")
 			state.Swaps = swaps.ToInt()
 			mu.Lock()
-			pacing.add(time.Now(), samples.lastFrame, samples.latest.Frames, state)
+			pacing.add(time.Now(), samples.lastFrame, samples.latest.Frames, state, waits.takeLongest())
 			mu.Unlock()
 		}
 		elapsed := time.Since(start)
@@ -191,6 +196,9 @@ func display(document scene.Document, options benchmarkOptions) error {
 	timer.Start(8)
 	qt.QApplication_Exec()
 	timer.Delete()
+	for _, connection := range connections {
+		connection.Disconnect()
+	}
 	mu.Lock()
 	finalStatus := status // teardown invalidates native readiness
 	mu.Unlock()
@@ -201,6 +209,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t tile_compilers=%d\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.compilers)
 	if options.diagnostics {
 		pacing.report()
+		waits.report()
 	}
 	if finalStatus.Current != nil {
 		document = *finalStatus.Current
