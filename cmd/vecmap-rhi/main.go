@@ -56,12 +56,13 @@ func main() {
 	flag.BoolVar(&live.residentDashes, "resident-dashes", true, "keep butt-capped dashed lines resident and dash them in the fragment shader")
 	flag.BoolVar(&live.compactVertices, "compact-vertices", true, "pack fills and extruded lines without the vertex attributes they leave at zero")
 	flag.IntVar(&live.coarser, "coarser-tiles", 0, "draw live tiles from this many zoom levels below the camera zoom (0-2); 1 draws a tile 512 units wide as MapLibre does")
+	mapLibreStyle := flag.String("maplibre-style", "", "replay the live trace in QtLocation's MapLibre Native map with this offline style from maplibre-offline, instead of vecmap (needs QSG_RHI_BACKEND=opengl)")
 	gcPercent := flag.Int("gc-percent", 50, "garbage collector target percentage; lower keeps less garbage between collections; zero keeps the runtime's setting")
 	flag.Parse()
 	if *gcPercent > 0 {
 		debug.SetGCPercent(*gcPercent)
 	}
-	if err := run(*path, benchmarkOptions{liveOptions: live, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
+	if err := run(*path, benchmarkOptions{liveOptions: live, mapLibreStyle: *mapLibreStyle, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -77,9 +78,16 @@ type benchmarkOptions struct {
 	feed                    *sceneFeed
 	liveOptions             liveOptions
 	live                    *liveSource
+	mapLibreStyle           string
 }
 
 func run(path string, options benchmarkOptions) error {
+	if options.mapLibreStyle != "" {
+		if path != "" || options.reload != 0 || options.liveOptions.enabled {
+			return fmt.Errorf("-maplibre-style cannot be combined with -scene, -reload or -live")
+		}
+		return displayMapLibre(options)
+	}
 	if options.liveOptions.enabled {
 		if path != "" || options.reload != 0 {
 			return fmt.Errorf("-live cannot be combined with -scene or -reload")
@@ -154,6 +162,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	start := time.Now()
 	timer := qt.NewQTimer()
 	var screenshotError error
+	var settledAfter time.Duration
 	timer.OnTimeout(func() {
 		mu.Lock()
 		currentStatus := status
@@ -180,6 +189,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 		target = update.target
 		if done, err := options.finish(elapsed, currentStatus, target); done {
 			screenshotError = err
+			settledAfter = max(0, elapsed-options.duration)
 			if err == nil && screenshot != "" {
 				image := item.Window().GrabWindow()
 				if image.IsNull() || !image.Save(screenshot) {
@@ -202,6 +212,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	finalStatus := status // teardown invalidates native readiness
 	mu.Unlock()
+	costs, costsErr := readProcessCosts() // before teardown closes DRM clients
 	engine.Delete()
 	mu.Lock()
 	defer mu.Unlock()
@@ -237,8 +248,14 @@ func display(document scene.Document, options benchmarkOptions) error {
 	}
 	fmt.Printf("upload_budget_bytes=%d upload_budget_resources=%d release_budget_resources=%d planner_ready=%t native_generation=%d batch_failures=%d\n", options.budget.Bytes, options.budget.Resources, options.budget.Releases, finalStatus.Ready, finalStatus.Generation, finalStatus.BatchFailures)
 	fmt.Printf("backend=%s device=%s\n", latest.Backend, latest.Device)
+	if options.duration > 0 {
+		fmt.Printf("settled_after=%s\n", settledAfter)
+	}
 	fmt.Printf("frames=%d mesh_uploads=%d texture_uploads=%d uploaded_bytes=%d live_meshes=%d live_textures=%d\n", latest.Frames, latest.MeshUploads, latest.TextureUploads, latest.UploadedBytes, latest.LiveMeshes, latest.LiveTextures)
 	fmt.Printf("completion_drains=%d completion_drain_cpu=%s\n", latest.CompletionDrains, latest.CompletionDrainTime)
+	if costsErr == nil {
+		costs.report()
+	}
 	for name, values := range map[string][]time.Duration{"prepare_cpu": samples.prepare, "submit_cpu": samples.submit, "gpu_previous_frame": samples.gpu, "render_callback_interval": samples.cadence} {
 		if len(values) > 0 {
 			slices.Sort(values)

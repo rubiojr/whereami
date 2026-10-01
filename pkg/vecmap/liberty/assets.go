@@ -5,6 +5,7 @@ package liberty
 import (
 	_ "embed"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/sprite"
@@ -58,6 +59,12 @@ func (a *assets) loadSprites() error {
 		}
 	})
 	return a.spriteErr
+}
+
+// Files returns copies of the pinned style, sprite index and sprite atlas, so
+// another renderer can load exactly the assets vecmap compiles.
+func Files() (styleData, spriteIndex, spriteAtlas []byte) {
+	return slices.Clone(styleJSON), slices.Clone(spriteJSON), slices.Clone(spritePNG)
 }
 
 // SpriteEntry returns a value snapshot of pinned sprite metrics. False means

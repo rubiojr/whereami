@@ -45,6 +45,17 @@ func TestPinnedAssets(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestFilesAreCopies(t *testing.T) {
+	styleData, index, atlas := Files()
+	assert.Equal(t, styleJSON, styleData)
+	assert.Equal(t, spriteJSON, index)
+	assert.Equal(t, spritePNG, atlas)
+	styleData[0], index[0], atlas[0] = 0, 0, 0
+	assert.NotEqual(t, styleJSON[0], styleData[0])
+	assert.NotEqual(t, spriteJSON[0], index[0])
+	assert.NotEqual(t, spritePNG[0], atlas[0])
+}
+
 func TestAssetFailuresAreCached(t *testing.T) {
 	a := assets{styleData: []byte("{"), indexData: []byte("{")}
 	layers, err := a.compiledLayers()

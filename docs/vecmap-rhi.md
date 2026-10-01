@@ -371,6 +371,142 @@ p99 on Vulkan. Callback jitter isn't presentation jitter. A frame reaches the
 display about 21 ms, a refresh and a quarter, after its commit on both backends.
 These are viewer-only numbers, not a MapLibre comparison.
 
+### Matched MapLibre Native comparison
+
+The viewer replays its live trace in MapLibre Native as well, so both renderers
+are measured with the same window, 8 ms GUI timer, `traceCamera` trace,
+`-diagnostics` pacing, screenshot code and `wayland-present`, from the same
+offline tiles, style, sprites and glyphs.
+
+MapLibre is the application's legacy fallback: the QtLocation geoservice plugin
+from **maplibre-native-qt v3.0.0** (`d929c783`, maplibre-native `0a4e5a44`). Build
+it against the distribution Qt 6.11.2 with three build-time workarounds and no
+source changes:
+
+```sh
+git clone --branch v3.0.0 --depth 1 --recurse-submodules --shallow-submodules \
+  https://github.com/maplibre/maplibre-native-qt.git
+# Qt 6.10+ finds private module targets only on request (fixed upstream after v3.0.0).
+echo 'find_package(Qt6 COMPONENTS LocationPrivate REQUIRED)' > qt610-private.cmake
+cmake -S maplibre-native-qt -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PROJECT_maplibre-native-qt_INCLUDE=$PWD/qt610-private.cmake \
+  -DMLN_WITH_WERROR=OFF -DCMAKE_CXX_FLAGS='-include cstdint' \
+  -DCMAKE_INSTALL_PREFIX=$PWD/install   # GCC 16: new -Wsfinae-incomplete, stricter libstdc++ includes
+ninja -C build install
+```
+
+Run MapLibre with `QT_PLUGIN_PATH=install/plugins`,
+`LD_LIBRARY_PATH=install/lib64` and `QSG_RHI_BACKEND=opengl`: the plugin renders
+through OpenGL, and the viewer refuses another backend.
+
+#### Offline data
+
+`cmd/maplibre-offline` writes `style.json` from the pinned Liberty style
+(`liberty.Files`), pointing its tiles at the viewer's `-cache-dir` through
+`file://`, plus the pinned sprite atlas and the supplied glyphs. It also copies
+the pinned z9/250/193 tile to its XYZ path, since vecmap reads it under its pinned
+name. Glyph ranges other than 0-255 are written empty, giving MapLibre vecmap's
+coverage: MapLibre requests Cyrillic, Greek, Arabic and Tifinagh ranges for the
+prefetched z4/z5 tiles, and a failed range leaves its tiles loading forever, so
+the map never settles. The natural-earth raster stops at zoom 7 and is unused.
+
+With `-record ADDR` it also writes `style-record.json` and serves its tiles from
+the cache, fetching misses through the producer's own `HTTPLoader`. Capture a
+corpus by replaying the trace with network access in both renderers, then
+replay with `-cache-only`:
+
+```sh
+go run ./cmd/maplibre-offline -cache-dir CORPUS -glyph-dir GLYPHS -out ASSETS -record 127.0.0.1:8765 &
+bin/vecmap-rhi -maplibre-style ASSETS/style-record.json -duration 8s
+bin/vecmap-rhi -live -cache-dir CORPUS -glyph-dir GLYPHS -coarser-tiles 0 -duration 8s   # and 1, per backend
+bin/vecmap-rhi -live -cache-only -cache-dir CORPUS -glyph-dir GLYPHS -duration 8s       # must report failed=0
+```
+
+OpenFreeMap rebuilt the `20260823_080002_pt` snapshot on 2026-09-13: every tile
+checked since then, not only the pinned one, differs from earlier caches. The
+2026-10-01 corpus holds today's bytes for 82 tiles (z4–z10, 11.5 MB) plus the
+pinned z9 tile, so neighbouring tiles come from a different build than the
+pinned one, as in the 2026-09-28 corpus. Never mix it with older caches.
+
+#### Matching the view
+
+QtLocation's `zoomLevel` and vecmap's camera both use 256-pixel world units, and
+the plugin passes `zoomLevel − 1` to MapLibre's 512-pixel zoom. Screenshots at the
+end of the trace (bearing −5.4°, zoom 10.198, panned 16.5 px) put every label at
+the same pixels, so center, zoom, bearing and pan agree.
+
+The work doesn't: at camera zoom 10 MapLibre evaluates the style at zoom 9 and
+draws z9 tiles 512 pixels wide, which is vecmap's `-coarser-tiles 1`. vecmap's
+default draws z10 tiles at style zoom 10, with more detail (124 labels against
+83 at the end of the trace). Compare MapLibre with Coarser 1 for matched work and
+with Coarser 0 for the look vecmap ships. MapLibre's label selection differs
+slightly from vecmap's at Coarser 1, with similar density.
+
+`settled_after` is how long after the trace ended the final view was complete.
+vecmap: the current scene is the final target and fully uploaded. MapLibre:
+QtLocation's map renders only while MapLibre has work, so it's the last frame
+before a second without one; that includes MapLibre's 300 ms symbol fade-in,
+which vecmap doesn't have. Pacing records skip MapLibre's idle wait. Both modes
+print `process` (CPU time and peak RSS from `getrusage`) and `drm` (GPU engine
+time and GPU memory of the viewer's own DRM clients, from `/proc/self/fdinfo`).
+
+#### Results
+
+Measured on 2026-10-01: headless mutter 50.4 with a 1920×1080@60 virtual monitor,
+Radeon 8060S (Strix Halo), Mesa 26.2.3, Qt 6.11.2, 800×600 at scale 1, threaded
+loop unless noted, 8 s trace, five runs per row, load average 0.38–0.78.
+Vulkan used the checked-finish Qt with `MESA_VK_WSI_PRESENT_MODE=mailbox` (below).
+Ranges are min–max over runs. ¹ A copy of `style.json` with
+`"transition": {"duration": 0, "delay": 0}`, which turns off symbol fades.
+
+| Row | Settle after trace | CPU | Peak RSS | GPU time | GPU memory (VRAM) | Interval p99 | Labels |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MapLibre, threaded | 810–878 ms | 1.20–1.31 s | 220–225 MiB | 187–205 ms | 86–90 MiB | 16.84–17.57 ms | – |
+| MapLibre, basic loop | 815–848 ms | 1.15–1.24 s | 220–224 MiB | 180–203 ms | 90–92 MiB | 16.82–17.12 ms | – |
+| MapLibre, no fade (3 runs)¹ | 517–535 ms | 1.16–1.35 s | 221–222 MiB | 183–192 ms | 90 MiB | 16.87–16.88 ms | – |
+| vecmap Coarser 1, OpenGL | 81–83 ms | 7.03–7.47 s | 483–507 MiB | 173–206 ms | 104–118 MiB | 17.02–17.64 ms | 83 |
+| vecmap Coarser 1, Vulkan | 77–80 ms | 6.84–7.07 s | 433–470 MiB | 211–249 ms | 141 MiB | 17.03–17.59 ms | 83 |
+| vecmap Coarser 0, OpenGL | 320–363 ms | 8.36–8.57 s | 600–626 MiB | 207–223 ms | 153–168 MiB | 17.03–17.30 ms | 124 |
+| vecmap Coarser 0, Vulkan | 332–403 ms | 8.29–8.51 s | 566–584 MiB | 249–267 ms | 141 MiB | 17.02–17.54 ms | 124 |
+
+- Presentation is not where they differ. Every row showed a frame at each refresh,
+  with no late, missed or discarded frames, interval p50 16.66–16.67 ms and commit
+  to display p50 16.5 ms. The virtual monitor's timestamps come from mutter's
+  frame clock (`vsync=0 hw_clock=0`), so they show that frames were ready in time
+  but not real scanout. Pacing and swapchain gaps were zero in every run.
+- GPU time is similar: about 0.37 ms a frame for MapLibre, 0.39 ms for vecmap on
+  OpenGL and 0.47 ms on Vulkan at Coarser 1.
+- vecmap settles sooner: 80 ms against 520 ms for MapLibre without fades, and
+  still sooner at Coarser 0 with more detail.
+- vecmap costs far more CPU and memory: 5–6× MapLibre's CPU time and about twice
+  its RSS at matched work. At Coarser 1 it makes 67 tile loads and 291–295 tile
+  preparations, about 4.4 per load; preparation (2.2–2.3 s), building (1.2–1.3 s)
+  and selection (0.7–0.8 s) run on one compiler goroutine. MapLibre requests 10
+  distinct tiles (six z9, two z8, and z5/z4 prefetch parents), 18 requests in a
+  run. Why vecmap prepares a tile several times along the trace isn't broken
+  down yet.
+- In the basic loop the GUI thread blocks in the buffer swap, so the 8 ms trace
+  timer fires every 33 ms: MapLibre still renders at 60 Hz but its camera moves
+  at 30 Hz. In the threaded loop the plugin warns "Threaded rendering is not
+  optimal" and, while the map isn't fully loaded, also refreshes from a 250 ms
+  timer; neither showed up as late frames.
+
+#### Vulkan FIFO stalls in live mode on native Wayland
+
+In live mode on Vulkan under headless mutter, the default FIFO present mode (and
+IMMEDIATE) stalls after 16–157 frames. Qt's Wayland plugin holds update requests
+until the frame callback it requested before presenting arrives. The callback
+never comes, the render thread idles in
+`QSGRenderThread::processEventsAndWaitForMore`, and after 100 ms Qt reports
+"Didn't receive frame callback in time, window should now be inexposed"
+(`exposed=false` in the viewer's counters). With
+`QT_WAYLAND_FRAME_CALLBACK_TIMEOUT=0` the window stays exposed but still stops
+rendering. OpenGL live replays and an 8 s Vulkan fixture replay didn't stall.
+mutter advertises `wp_fifo_v1` and `wp_commit_timing_v1`, which Mesa's WSI uses
+for FIFO. `MESA_VK_WSI_PRESENT_MODE=mailbox` avoids it and matches how Qt
+throttles OpenGL on Wayland: frame callbacks with swap interval 0. Not yet
+reproduced on a desktop session.
+
 ## Optional indexed meshes
 
 Use `vecmap-fixture -indexed` to capture a compact representation. This is an
@@ -4469,6 +4605,8 @@ are open. This prototype adds explicit opt-in build/test targets.
 - Validate multiple simultaneous maps and GPU resource sharing where safe.
 - Compare identical data, style, label density, resolution, and antialiasing with
   MapLibre Native across dense/rural/overzoom/HiDPI traces and tile-arrival bursts.
+  The Madrid trace is done, under headless mutter ("Matched MapLibre Native
+  comparison"); the other traces and a real display remain.
 - Measure full GUI/render/GPU/presentation costs and memory stability. Meeting
   the display refresh rate on this one retained fixture is only an initial gate.
 

@@ -16,10 +16,6 @@ import (
 func createBenchmarkWindow(document scene.Document, item *rhi.QQuickItem, options benchmarkOptions) (*qml.QQmlApplicationEngine, error) {
 	engine := qml.NewQQmlApplicationEngine()
 	engine.RootContext().SetContextProperty("mapItem", item.QObject)
-	swapDiagnostics := ""
-	if options.diagnostics {
-		swapDiagnostics = "property int swapCount:0\nonFrameSwapped: swapCount += 1"
-	}
 	engine.LoadData([]byte(fmt.Sprintf(`import QtQuick
 import QtQuick.Window
 Window {id:window; visible:false; width:%d; height:%d; color:"#f8f4f0"; title:"vecmap RHI — retained scene prototype"
@@ -29,12 +25,18 @@ Window {id:window; visible:false; width:%d; height:%d; color:"#f8f4f0"; title:"v
   Binding {target:mapItem;property:"width";value:host.width}
   Binding {target:mapItem;property:"height";value:host.height}
  }
-}`, document.Width, document.Height, swapDiagnostics)))
+}`, document.Width, document.Height, swapDiagnostics(options))))
 	if len(engine.RootObjects()) == 0 {
 		engine.Delete()
 		return nil, fmt.Errorf("load QML window")
 	}
-	window := item.Window()
+	showBenchmarkWindow(engine.RootObjects()[0], item.Window(), options)
+	return engine, nil
+}
+
+// showBenchmarkWindow configures and shows a loaded window the same way for
+// every renderer the viewer measures.
+func showBenchmarkWindow(root *qt.QObject, window *rhi.QQuickWindow, options benchmarkOptions) {
 	graphics := rhi.NewQQuickGraphicsConfiguration()
 	graphics.SetTimestamps(true)
 	window.SetGraphicsConfiguration(graphics)
@@ -43,13 +45,20 @@ Window {id:window; visible:false; width:%d; height:%d; color:"#f8f4f0"; title:"v
 		window.SetFlag(qt.WindowStaysOnTopHint)
 	}
 	visible := qt.NewQVariant8(true)
-	engine.RootObjects()[0].SetProperty("visible", visible)
+	root.SetProperty("visible", visible)
 	visible.Delete()
 	if options.foreground {
 		window.Raise()
 		window.RequestActivate()
 	}
-	return engine, nil
+}
+
+// swapDiagnostics counts frameSwapped in the QML window for -diagnostics.
+func swapDiagnostics(options benchmarkOptions) string {
+	if options.diagnostics {
+		return "property int swapCount:0\nonFrameSwapped: swapCount += 1"
+	}
+	return ""
 }
 
 // connectSwapchainWaits times swapchain calls from render-thread signals.
