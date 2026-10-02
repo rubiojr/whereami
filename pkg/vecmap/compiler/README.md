@@ -271,6 +271,10 @@ lower them. Methods latch errors; Finish returns nil scene and metadata on failu
 - `SymbolLayer(first, count, symbolAt, atlas, lookup)` records the original candidate
   index (`first + local index`), layer and icon/text part. It preserves icons, then
   all halos, then all fills. Candidate ranges are bounded by 10,000.
+- `ReserveSymbols(count, symbolAt)`, called once with every symbol of the fragment,
+  makes exact room for the icon and text quads the symbol layers will pack, halo
+  passes included, as `Reserve` does for primitives. Labels otherwise arrive one
+  at a time and grow the symbol mesh by doubling.
 - Each primitive/candidate pass starts a draw boundary. Identical materials never
   merge different candidates or layers. Geometry and texture packing are reused;
   this adds metadata, not a second tessellator or image conversion.

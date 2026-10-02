@@ -34,7 +34,10 @@ per layer instead of a map and several slices per feature: 62 Madrid tiles took
 1.9 ms per forced GC cycle against 6.9 ms as `[]Feature`. `At` fills a caller's
 `Feature` without allocating per feature: geometry borrows the set's storage,
 capped so appends never write into it, and its containers are reused by the next
-`At`. A duplicate property key reads as its last value, as in a map. `Features`
+`At`. `Feature.Reset` drops every reference into a set but keeps those containers,
+so a pooled `Feature` can serve many sets without keeping the last one alive; the
+compiler shares one per tile across layers, because merged road features can have
+thousands of parts. A duplicate property key reads as its last value, as in a map. `Features`
 is the interface compiler and placement read; `FeatureSlice` adapts `[]Feature`.
 
 `Tile`, `FeatureSet`, `Feature`, `Properties` and `Polygon` are reusable source data.

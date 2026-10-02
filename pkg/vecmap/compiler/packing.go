@@ -49,6 +49,8 @@ type SceneBuilder struct {
 	// stablePlan the plan its draws come from; see FragmentBuilder.Borrow.
 	borrowed   *scene.Mesh
 	stablePlan *StablePlan
+	// labelVertices holds one label's transformed vertices until they are packed.
+	labelVertices []scene.Vertex
 }
 
 // NewSceneBuilder selects the output topology. Zero maximumElements selects the
@@ -507,10 +509,11 @@ func (b *SceneBuilder) IndexedText(anchor geometry.Point, vertices []geometry.Te
 	target, id := b.target()
 	first := target.full.Count()
 	sin, cos := math.Sincos(angle)
-	packed := make([]scene.Vertex, len(vertices))
-	for i, vertex := range vertices {
-		packed[i] = geometry.TransformTextVertex(anchor, vertex, offset, sin, cos)
+	packed := b.labelVertices[:0]
+	for _, vertex := range vertices {
+		packed = append(packed, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
 	}
+	b.labelVertices = packed
 	b.err = target.full.Append(packed, indices)
 	b.draw(target, id, scene.FullLayout, first, material, [4]float32{})
 }

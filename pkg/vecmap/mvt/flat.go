@@ -41,6 +41,16 @@ type featureScratch struct {
 	holes      [][]geometry.Point
 }
 
+// Reset empties f but keeps At's containers, dropping every reference into a
+// source, so a pooled Feature doesn't keep its last source alive.
+func (f *Feature) Reset() {
+	scratch := f.scratch
+	clear(scratch.lines[:cap(scratch.lines)])
+	clear(scratch.polygons[:cap(scratch.polygons)])
+	clear(scratch.holes[:cap(scratch.holes)])
+	*f = Feature{scratch: featureScratch{lines: scratch.lines[:0], polygons: scratch.polygons[:0], holes: scratch.holes[:0]}}
+}
+
 // FeatureSet stores one source layer's decoded features in a few flat arrays:
 // geometry, ring boundaries and triangulation as values, and properties as
 // tag pairs into the layer's key and value tables. Retaining it costs the

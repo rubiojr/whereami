@@ -161,6 +161,14 @@ func (b *FragmentBuilder) StablePlan(compiled *StablePlan) *StablePlan {
 	return plan
 }
 
+// ReserveSymbols makes room for the icon and text quads that SymbolLayer packs
+// for these symbols, as Reserve does for primitives; labels otherwise arrive one
+// at a time and grow the mesh by doubling. Call once with every symbol of the
+// fragment, after Split, ResidentSymbols and CompactVertices.
+func (b *FragmentBuilder) ReserveSymbols(count int, symbolAt func(int) RenderSymbol) {
+	b.packing.reserveSymbols(count, symbolAt)
+}
+
 // SymbolLayer preserves icons/all halos/all fills ordering. first is the global
 // candidate index corresponding to symbolAt(0). Counts and first+count are bounded
 // by placement.MaxSymbols. Acceptance and complete atlas coverage remain caller

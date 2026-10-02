@@ -108,10 +108,21 @@ func (s lineSinks) route(paint linePaint) (lineRoute, geometry.DashPattern) {
 	return bakedRoute, geometry.DashPattern{}
 }
 
-// lineScratch is tessellation storage reused by every line batch of a tile.
+// lineScratch is storage reused by every layer of a tile: line tessellation, and
+// the decoded feature that FeatureSet.At fills. A merged road feature can have
+// thousands of parts, so starting that feature over at each layer allocates.
 type lineScratch struct {
 	extruded geometry.ExtrudedMesh
 	dashed   geometry.DashedMesh
+	feature  mvt.Feature
+}
+
+// feature returns the tile's reusable feature, or a fresh one without scratch.
+func (s lineSinks) feature() *mvt.Feature {
+	if s.scratch == nil {
+		return new(mvt.Feature)
+	}
+	return &s.scratch.feature
 }
 
 // PatternSink consumes an owned mesh, logical sprite name, tile-unit scale and
@@ -183,9 +194,9 @@ func compileFill(features mvt.Features, layer style.CompiledLayer, options Layer
 	if layer.Kind == "fill-extrusion" {
 		colorProperty = "fill-extrusion-color"
 	}
-	var feature mvt.Feature
+	feature := outlines.feature()
 	for i := range featureCount(features) {
-		features.At(i, &feature)
+		features.At(i, feature)
 		if feature.GeometryType != mvt.PolygonType {
 			continue
 		}
@@ -298,9 +309,9 @@ func compileLine(features mvt.Features, layer style.CompiledLayer, options Layer
 	}
 	batches := make([]lineBatch, 0, 4)
 	indexes := make(map[string]int)
-	var feature mvt.Feature
+	feature := sinks.feature()
 	for i := range featureCount(features) {
-		features.At(i, &feature)
+		features.At(i, feature)
 		evaluation := style.Context{Zoom: options.Zoom, GeometryType: feature.GeometryType, Properties: feature.Properties}
 		if !layer.Matches(evaluation) {
 			continue

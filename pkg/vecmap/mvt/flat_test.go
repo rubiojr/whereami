@@ -98,3 +98,40 @@ func TestFeatureSetAtKeepsOtherFeaturesIntact(t *testing.T) {
 	assert.Zero(t, (*FeatureSet)(nil).Len())
 	assert.NotZero(t, tile.Layers["roads"].RetainedBytes())
 }
+
+// Reset drops every reference into the source but keeps At's containers.
+func TestFeatureResetDropsTheSource(t *testing.T) {
+	holed := []uint32{9, 0, 0, 26, 200, 0, 0, 200, 199, 0, 15, 9, 50, 149, 26, 0, 100, 100, 0, 0, 99, 15}
+	tile, err := DecodeTile(tileMessage(layerMessage("mixed",
+		featureMessage(LineStringType, []uint32{9, 0, 0, 10, 32, 64, 9, 2, 2, 10, 8, 8}),
+		featureMessage(PolygonType, holed),
+	)), true)
+	require.NoError(t, err)
+	set := tile.Layers["mixed"]
+	var feature Feature
+	read := func() {
+		for i := range set.Len() {
+			set.At(i, &feature)
+		}
+	}
+	read()
+	require.Len(t, feature.Polygons, 1)
+	require.Len(t, feature.Polygons[0].Holes, 1)
+	feature.Reset()
+	scratch := feature.scratch
+	assert.Equal(t, Feature{scratch: scratch}, feature)
+	assert.Zero(t, scratch.properties)
+	require.Positive(t, cap(scratch.lines))
+	require.Positive(t, cap(scratch.polygons))
+	require.Positive(t, cap(scratch.holes))
+	for _, line := range scratch.lines[:cap(scratch.lines)] {
+		assert.Nil(t, line)
+	}
+	for _, polygon := range scratch.polygons[:cap(scratch.polygons)] {
+		assert.Zero(t, polygon)
+	}
+	for _, hole := range scratch.holes[:cap(scratch.holes)] {
+		assert.Nil(t, hole)
+	}
+	assert.Zero(t, testing.AllocsPerRun(10, func() { read(); feature.Reset() }), "later reads reuse the containers")
+}

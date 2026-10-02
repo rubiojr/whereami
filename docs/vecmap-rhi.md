@@ -728,7 +728,53 @@ settlement was 49–99 ms at Coarser 1 and 288–355 ms at Coarser 0 in both mod
 GC CPU fell about a fifth. Peak RSS falls because less garbage is in flight, not
 because anything is retained less: a plan is about 32 bytes per stable batch.
 Producer selection took 10–20% longer in total with borrowing; it wasn't
-investigated. The viewer turns it on.
+investigated, but its largest share turned out to be a sort (below). The viewer
+turns it on.
+
+##### Selection sort, text reservation and feature scratch
+
+One profiled Coarser 1 OpenGL run at 0c7e961 (3.84 s process CPU, 3.54 s
+sampled): preparation 0.87 s (decoding 0.49 s, most of it Earcut; compiling
+layers 0.38 s), build 0.66 s, selection 0.52 s, GC mark workers 0.39 s and Qt's
+calls into Go 0.25 s. Go allocated 4.3 GB. Three of those costs had a plain
+cause:
+
+- `placement.SelectSymbols` sorted its 128-byte references in place with
+  `sort.SliceStable`, which moves elements through reflection: 0.23 s of
+  selection. It now orders small ranks (order, sort key, input index): a
+  counting sort by layer order, then a comparison sort only within layers whose
+  sort keys vary. Tiles already hand references over in descending layer order,
+  which a comparison sort gains little from; a rank pdqsort alone saved only 0.07
+  s. The caller's slice is no longer reordered. `tiles.Set.compose` sorts draws
+  with the generic stable sort.
+- `SceneBuilder.IndexedText` transformed each label into a fresh slice and
+  appended it to a symbol mesh that nothing had reserved, so every build grew it
+  by doubling: 0.75 GB per trace. `FragmentBuilder.ReserveSymbols` sizes it once
+  per build, and one buffer holds each label's transformed vertices.
+- Fill and line compilers declared a new `mvt.Feature` per layer, so
+  `FeatureSet.At` grew its containers again for every layer, and OpenFreeMap
+  merges a road class into features with thousands of parts: 0.35 GB per trace.
+  A tile's pooled compiler scratch now holds one Feature for all its layers;
+  `Feature.Reset` drops its references into the decoded set before the pool
+  keeps it.
+
+Five interleaved runs each of 0c7e961, the sort alone, and both:
+
+| Row | CPU before → sort → both | Selection wall before → sort | Allocated before → both | GC CPU before → both |
+| --- | ---: | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 3.80–4.05 → 3.72–3.89 → 3.57–3.69 s | 467–486 → 344–373 ms | 4.4 → 3.3 GB | 0.60–0.67 → 0.49–0.54 s |
+| Coarser 1, Vulkan | 3.64–3.85 → 3.63–3.73 → 3.28–3.51 s | 464–504 → 343–397 ms | 4.3 → 3.3 GB | 0.57–0.66 → 0.48–0.52 s |
+| Coarser 0, OpenGL | 5.26–5.83 → 5.28–5.52 → 4.95–5.22 s | 827–915 → 580–639 ms | 6.3 → 4.3 GB | 0.82–0.88 → 0.62–0.65 s |
+| Coarser 0, Vulkan | 5.08–5.40 → 4.96–5.25 → 4.54–4.78 s | 823–907 → 582–654 ms | 6.3 → 4.3 GB | 0.82–0.89 → 0.59–0.65 s |
+
+Selection is a quarter to 30% faster; on its own that is mostly within the
+spread of process CPU. Allocating a quarter to a third less cuts GC and build
+time, and together the two take 7–11% of process CPU. Peak RSS didn't move
+(Coarser 1 OpenGL 432–514 → 484–493 MiB, Coarser 0 OpenGL 538–548 → 525–555
+MiB): less garbage, but not a lower peak. Final frames are byte-identical, every
+run had zero late frames, labels and settlement didn't change. Since ev17 began,
+Coarser 1 OpenGL went from 6.16–6.36 s to 3.57–3.69 s, against MapLibre's
+1.20–1.31 s.
 
 #### Vulkan FIFO stalls in live mode on native Wayland
 
@@ -1481,8 +1527,9 @@ empty ranges are checked before integer conversion, preventing extreme offscreen
 coordinates from overflowing cell indexes on 386. Validation/sorting are bounded
 separately by reference count; caller-side projection is outside the grid budget.
 
-Collision errors return no partial acceptance map. The input scratch slice may
-already be sorted; the parent reports a warning and skips acceptance for that job.
+Collision errors return no partial acceptance map; the parent reports a warning and
+skips acceptance for that job. (The selector sorted its input in place until ev17;
+it now sorts ranks and leaves the slice as passed.)
 This is a new bounded failure policy for extreme jobs, distinct from the preceding
 streaming candidate compiler's partial-output policy. The production renderer and
 scheduler remain in place.

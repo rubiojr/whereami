@@ -241,3 +241,46 @@ func TestResidentSymbolRejections(t *testing.T) {
 		}
 	}
 }
+
+// ReserveSymbols makes exactly the room that packing the symbols takes, halos
+// and icons included, and packing still produces the same fragment.
+func TestReserveSymbolsFitsEveryPass(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		for _, resident := range []bool{false, true} {
+			plain := residentSymbol(indexed, resident, 12, 1)
+			noHalo := residentSymbol(indexed, resident, 14, 1)
+			noHalo.Symbol.HaloWidth = 0
+			textOnly := residentSymbol(indexed, resident, 16, 1)
+			textOnly.Symbol.IconName = ""
+			rejected := residentSymbol(indexed, resident, 12, 1)
+			rejected.Accepted = placement.Accepted{}
+			items := []RenderSymbol{plain, noHalo, textOnly, rejected, {Accepted: placement.Accepted{Text: true}}}
+			at := func(i int) RenderSymbol { return items[i] }
+
+			b := NewFragmentBuilder(indexed, 0, 0)
+			if resident {
+				b.ResidentSymbols()
+			}
+			atlas := b.GlyphAtlas(&glyph.Atlas{Width: 1, Height: 1, Pixels: []byte{90}})
+			b.ReserveSymbols(len(items), at)
+			target := &b.packing.mesh
+			if resident {
+				target = &b.packing.symbols
+			}
+			vertices, indices := cap(target.full.Vertices), cap(target.full.Indices)
+			require.Positive(t, vertices)
+			b.SymbolLayer(0, len(items), at, atlas, symbolSprite)
+			assert.Len(t, target.full.Vertices, vertices, "indexed %t resident %t", indexed, resident)
+			assert.Equal(t, vertices, cap(target.full.Vertices))
+			assert.Len(t, target.full.Indices, indices)
+			got, gotSources, err := b.Finish()
+			require.NoError(t, err)
+			want, wantSources := packSymbols(t, indexed, resident, items...)
+			assert.Equal(t, want, got)
+			assert.Equal(t, wantSources, gotSources)
+		}
+	}
+	b := NewFragmentBuilder(true, 0, 0)
+	b.ReserveSymbols(1, nil)
+	assert.Zero(t, cap(b.packing.mesh.full.Vertices), "no accessor reserves nothing")
+}

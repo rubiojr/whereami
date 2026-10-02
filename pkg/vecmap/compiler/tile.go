@@ -86,7 +86,10 @@ func CompileTilePlanned[F mvt.Features](layers []style.CompiledLayer, sources ma
 		return ErrOptions
 	}
 	scratch := lineScratches.Get().(*lineScratch)
-	defer lineScratches.Put(scratch)
+	defer func() {
+		scratch.feature.Reset()
+		lineScratches.Put(scratch)
+	}()
 	assembly := tileAssembly{remaining: limit, limit: limit, emit: emit, lines: scratch, plan: planner}
 	for _, layer := range layers {
 		if !layer.VisibleAt(options.Zoom) || layer.Hidden() {
@@ -107,8 +110,8 @@ type tileAssembly struct {
 	plan      *StablePlanner
 }
 
-// lineScratches keeps tessellation storage across the tiles a compiler
-// prepares. It holds only scratch vertices and indices, never emitted data.
+// lineScratches keeps tessellation and feature storage across the tiles a
+// compiler prepares. It holds no emitted data and, after Reset, no source.
 var lineScratches = sync.Pool{New: func() any { return new(lineScratch) }}
 
 func (a *tileAssembly) layer(layer style.CompiledLayer, features mvt.Features, options LayerOptions, symbols func(style.CompiledLayer) error) error {

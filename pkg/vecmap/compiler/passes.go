@@ -113,6 +113,45 @@ func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, e
 	return labels
 }
 
+// reserveSymbols makes room for the quads symbolLayer packs for these symbols,
+// counting a halo pass where text has one. A missing sprite only leaves room
+// unused until Finish.
+func (b *SceneBuilder) reserveSymbols(count int, symbolAt func(int) RenderSymbol) {
+	if b.err != nil || b.closed || symbolAt == nil {
+		return
+	}
+	vertices, indices := 0, 0
+	for index := range count {
+		item := symbolAt(index)
+		if item.Accepted.Icon && item.Symbol.IconName != "" {
+			// One indexed quad; an expanded builder packs its two triangles.
+			if b.indexed {
+				vertices, indices = vertices+4, indices+6
+			} else {
+				vertices += 6
+			}
+		}
+		if !item.Accepted.Text || item.Layout == nil {
+			continue
+		}
+		passes := 1
+		if item.Symbol.HaloWidth > 0 && item.Symbol.HaloColor.Alpha != 0 {
+			passes = 2
+		}
+		if b.indexed {
+			vertices += passes * len(item.Layout.Vertices)
+			indices += passes * len(item.Layout.Indices)
+		} else {
+			vertices += passes * len(item.Layout.Expanded) / 4
+		}
+	}
+	class := b.class
+	b.class = symbolClass
+	target, _ := b.target()
+	b.class = class
+	target.full.Reserve(vertices, indices)
+}
+
 func (b *SceneBuilder) symbolPass(kind scene.Kind, item RenderSymbol, atlas uint64, lookup SpriteLookup) bool {
 	b.class = symbolClass
 	defer func() { b.class = stableClass }()

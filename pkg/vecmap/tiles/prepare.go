@@ -358,6 +358,7 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 		atlasID = packing.GlyphAtlas(atlas)
 	}
 	packing.Reserve(p.primitives)
+	packing.ReserveSymbols(len(p.symbols), func(i int) compiler.RenderSymbol { return p.renderSymbol(i, renderable) })
 	p.pack(packing, renderable, atlasID, assets.Sprite)
 	packed, sources, err := packing.Finish()
 	if errors.Is(err, compiler.ErrStableMismatch) && p.base != nil {
@@ -404,11 +405,13 @@ func (p *Prepared) pack(b *compiler.FragmentBuilder, layouts map[int]*glyph.Prep
 		}
 		first := sort.Search(len(p.symbols), func(i int) bool { return p.symbols[i].Order >= order })
 		end := sort.Search(len(p.symbols), func(i int) bool { return p.symbols[i].Order > order })
-		b.SymbolLayer(first, end-first, func(offset int) compiler.RenderSymbol {
-			i := first + offset
-			return compiler.RenderSymbol{Symbol: p.symbols[i], Accepted: placement.Accepted{Text: true, Icon: true}, Layout: layouts[i]}
-		}, atlas, lookup)
+		b.SymbolLayer(first, end-first, func(offset int) compiler.RenderSymbol { return p.renderSymbol(first+offset, layouts) }, atlas, lookup)
 	}
+}
+
+// renderSymbol packs every candidate: placement accepts them later.
+func (p *Prepared) renderSymbol(i int, layouts map[int]*glyph.PreparedLayout) compiler.RenderSymbol {
+	return compiler.RenderSymbol{Symbol: p.symbols[i], Accepted: placement.Accepted{Text: true, Icon: true}, Layout: layouts[i]}
 }
 
 func (p *Prepared) metrics(layouts map[int]*glyph.PreparedLayout, assets Assets) []Symbol {
