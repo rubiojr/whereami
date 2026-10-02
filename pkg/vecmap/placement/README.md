@@ -160,11 +160,17 @@ logical-pixel `Box`, presence, visibility, overlap and optional flags. Keys shou
 be unique/stable. The caller supplies projected parts, normally through
 `ProjectSymbol`, and owns glyph/sprite readiness.
 
-Selection uses the existing stable sort: descending layer order, then ascending
-sort key. Ties retain input order. Vecmap retains its original tile/wrap/reverse-
-candidate collection order and 100,000-reference collection cap. The shared
-selector consumes that scratch slice directly and returns an owned acceptance
-map; parent aliases share the map without conversion.
+Selection order is descending layer order, then ascending sort key. Ties retain
+input order. Vecmap retains its original tile/wrap/reverse-candidate collection
+order and 100,000-reference collection cap. The selector reads that slice without
+reordering it and returns an owned acceptance map; parent aliases share the map
+without conversion. It orders compact ranks (order, key, index) rather than the
+references: a counting sort by layer order, which keeps input order within a
+layer, and a comparison sort only within layers whose sort keys vary. Orders
+spread wider than the reference count plus 256 take one comparison sort instead.
+Tiles already collect references in descending layer order, which a comparison
+sort gains little from: on 12 such tiles of 330 references, selection takes
+0.45 ms against 1.2 ms with the earlier reflection-based stable sort.
 
 The 64-pixel grid, clipped/floored inclusive cell ranges and strict rectangle
 intersections are preserved. Touching edges do not collide. Overlap-enabled parts

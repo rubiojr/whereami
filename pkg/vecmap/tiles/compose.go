@@ -1,10 +1,10 @@
 package tiles
 
 import (
+	"cmp"
 	"maps"
 	"math"
 	"slices"
-	"sort"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/placement"
 	"github.com/rubiojr/whereami/pkg/vecmap/retained"
@@ -188,7 +188,7 @@ func (s *Set) compose(spaces []scene.TileSpace, accepted map[SymbolKey]placement
 		}
 	}
 	// Stable sorting preserves tile/wrap/source-draw order within each layer.
-	sort.SliceStable(draws, func(i, j int) bool { return draws[i].metadata.Layer < draws[j].metadata.Layer })
+	slices.SortStableFunc(draws, func(a, b drawRange) int { return cmp.Compare(a.metadata.Layer, b.metadata.Layer) })
 	order := make([]retained.Range, len(draws))
 	for i, draw := range draws {
 		order[i] = draw.selection

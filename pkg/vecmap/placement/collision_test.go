@@ -30,18 +30,32 @@ func TestSelectSymbolsStablePriorityAndOwnership(t *testing.T) {
 	for _, ref := range refs {
 		order = append(order, ref.Key)
 	}
-	assert.Equal(t, []int{3, 4, 5, 2, 1}, order)
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, order, "references keep their order")
 	clear(refs)
 	assert.Equal(t, map[int]Accepted{3: {Text: true}, 5: {Text: true}}, accepted)
 }
 
+// Narrow orders take the counting sort, widely spread ones the comparison sort.
 func TestCollisionGridMatchesBruteForceTextSelection(t *testing.T) {
+	for name, order := range map[string]func(*rand.Rand) int{
+		"layers":  func(random *rand.Rand) int { return random.IntN(3) },
+		"spread":  func(random *rand.Rand) int { return random.IntN(3) * 1_000_000_000 },
+		"extreme": func(random *rand.Rand) int { return []int{math.MinInt, 0, math.MaxInt}[random.IntN(3)] },
+	} {
+		t.Run(name, func(t *testing.T) { requireBruteForceSelection(t, order) })
+	}
+	accepted, err := SelectSymbols([]CollisionReference[int]{}, CollisionOptions{Width: 200, Height: 200})
+	require.NoError(t, err)
+	assert.Empty(t, accepted)
+}
+
+func requireBruteForceSelection(t *testing.T, order func(*rand.Rand) int) {
 	random := rand.New(rand.NewPCG(1, 2))
 	refs := make([]CollisionReference[int], 300)
 	for index := range refs {
 		left, top := float64(random.IntN(220)-20), float64(random.IntN(220)-20)
 		box := Box{Left: left, Top: top, Right: left + float64(random.IntN(40)+1), Bottom: top + float64(random.IntN(40)+1)}
-		refs[index] = CollisionReference[int]{Key: index, Order: random.IntN(3), SortKey: float64(random.IntN(3)),
+		refs[index] = CollisionReference[int]{Key: index, Order: order(random), SortKey: float64(random.IntN(3)),
 			Text: CollisionPart{Box: box, Present: true, Visible: box.Right >= 0 && box.Bottom >= 0 && box.Left <= 200 && box.Top <= 200}}
 	}
 	ordered := slices.Clone(refs)
@@ -211,4 +225,37 @@ func FuzzCollisionSelection(f *testing.F) {
 			require.True(t, decision.Text || decision.Icon)
 		}
 	})
+}
+
+// BenchmarkSelectSymbols selects among 12 tiles of 330 references, each tile in
+// descending layer order as tiles collect them; a quarter of the layers have
+// varying sort keys.
+func BenchmarkSelectSymbols(b *testing.B) {
+	random := rand.New(rand.NewPCG(3, 4))
+	var refs []CollisionReference[int]
+	for range 12 {
+		orders := make([]int, 330)
+		for i := range orders {
+			orders[i] = 60 + random.IntN(25)
+		}
+		slices.Sort(orders)
+		slices.Reverse(orders)
+		for _, order := range orders {
+			key := 0.0
+			if order%4 == 0 {
+				key = float64(random.IntN(10))
+			}
+			x, y := random.Float64()*1200, random.Float64()*800
+			refs = append(refs, CollisionReference[int]{Key: len(refs), Order: order, SortKey: key,
+				Text: CollisionPart{Box: Box{Left: x, Top: y, Right: x + 60, Bottom: y + 14}, Present: true, Visible: true}})
+		}
+	}
+	// Callers collect references in traversal order for every selection.
+	scratch := make([]CollisionReference[int], len(refs))
+	for b.Loop() {
+		copy(scratch, refs)
+		if _, err := SelectSymbols(scratch, CollisionOptions{Width: 1280, Height: 860}); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
