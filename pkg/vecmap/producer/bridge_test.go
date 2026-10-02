@@ -52,7 +52,17 @@ func TestBridgeCoalescingRetirementAndReset(t *testing.T) {
 			break
 		}
 	}
-	require.True(t, b.Ready(rev))
+	// The first document becoming Current changes the producer's continuity
+	// cover, so it may select once more after Settled; the bridge drops that
+	// identical snapshot.
+	require.Eventually(t, func() bool {
+		s := p.Status()
+		return s.Revision == rev && s.Pending == 0 && s.Failed == 0 && b.Ready(rev)
+	}, 5*time.Second, time.Millisecond)
+	for range 1000 {
+		b.progressed()
+		require.True(t, b.Ready(rev), "a wakeup that finds no document leaves Ready alone")
+	}
 	progress := b.Stats()
 	assert.Equal(t, uint64(1), progress.CurrentChanges)
 	assert.Equal(t, 1, progress.FirstCurrentTiles)

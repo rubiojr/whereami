@@ -460,10 +460,13 @@ synchronization protocol. It joins Bridge only after native
 window/item use has stopped. Bridge.Close stops the mailbox owner, joins its Worker
 and Producer, then releases remaining leases. It is not a native destruction API.
 
-`Bridge.Ready(revision)` also accounts for in-transfer/pending documents. For a final
-capture, require producer Pending/Failed to be zero and the render consumer to have
-selected the bridge target. Timed live traces freeze their camera and allow a bounded
-settlement tail; a timeout reports an error and never acknowledges GPU work.
+`Bridge.Ready(revision)` also accounts for in-transfer/pending documents; a wakeup that
+finds no new document leaves it unchanged. A settled packet doesn't imply Ready: the
+target becoming Current changes the producer's continuity cover, and it may select
+once more. For a final capture, require producer Pending/Failed to be zero and the
+render consumer to have selected the bridge target. Timed live traces freeze their
+camera and allow a bounded settlement tail; a timeout reports an error and never
+acknowledges GPU work.
 
 `Bridge.Stats` reports received/coalesced/same-snapshot documents, exposed/superseded
 targets, successful upload/release batches and settlements. Overtaken upload bytes

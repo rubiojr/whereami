@@ -299,10 +299,7 @@ func (b *Bridge) run() {
 		case <-b.producer.Changed():
 		case <-b.protocol:
 		}
-		b.mu.Lock()
-		b.receiving = true
-		b.mu.Unlock()
-		if lease, ok := b.producer.Next(); ok {
+		if lease := b.take(); lease != nil {
 			b.receive(lease)
 		}
 		b.mu.Lock()
@@ -310,6 +307,16 @@ func (b *Bridge) run() {
 		b.promotePending()
 		b.mu.Unlock()
 	}
+}
+
+// take hands the producer's output to the bridge. Ready stays false only while a
+// taken lease is not recorded yet, not on every wakeup that finds nothing.
+func (b *Bridge) take() *Lease {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	lease, _ := b.producer.Next()
+	b.receiving = lease != nil
+	return lease
 }
 
 func (b *Bridge) receive(lease *Lease) {
