@@ -82,9 +82,17 @@ type RenderSymbol struct {
 // fill labels, and is meaningful only if Finish succeeds. Errors latch on the
 // builder; callers still use Finish for atomic scene publication.
 func (b *SceneBuilder) SymbolLayer(count int, symbolAt func(int) RenderSymbol, atlas uint64, lookup SpriteLookup) int {
-	return b.symbolLayer(count, symbolAt, func(_ int, kind scene.Kind, item RenderSymbol) bool {
-		return b.symbolPass(kind, item, atlas, lookup)
+	return b.symbolLayer(count, symbolAt, func(index int, kind scene.Kind, item RenderSymbol) bool {
+		return b.symbolPass(index, kind, item, atlas, lookup)
 	})
+}
+
+// textRange is where a label's text quads were packed. A text fill has the
+// halo's geometry, so it draws the halo's quads with its own material instead
+// of packing a copy.
+type textRange struct {
+	mesh         uint64
+	first, count int
 }
 
 func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, emit func(int, scene.Kind, RenderSymbol) bool) int {
@@ -98,6 +106,12 @@ func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, e
 	if count > placement.MaxSymbols {
 		b.err = geometry.ErrGeometryLimit
 		return 0
+	}
+	if cap(b.halos) < count {
+		b.halos = make([]textRange, count)
+	} else {
+		b.halos = b.halos[:count]
+		clear(b.halos)
 	}
 	labels := 0
 	for _, kind := range [...]scene.Kind{scene.Image, scene.SDFHalo, scene.SDFFill} {
@@ -113,9 +127,9 @@ func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, e
 	return labels
 }
 
-// reserveSymbols makes room for the quads symbolLayer packs for these symbols,
-// counting a halo pass where text has one. A missing sprite only leaves room
-// unused until Finish.
+// reserveSymbols makes room for the quads symbolLayer packs for these symbols:
+// one copy of each text, which a halo and its fill share. A missing sprite only
+// leaves room unused until Finish.
 func (b *SceneBuilder) reserveSymbols(count int, symbolAt func(int) RenderSymbol) {
 	if b.err != nil || b.closed || symbolAt == nil {
 		return
@@ -134,15 +148,11 @@ func (b *SceneBuilder) reserveSymbols(count int, symbolAt func(int) RenderSymbol
 		if !item.Accepted.Text || item.Layout == nil {
 			continue
 		}
-		passes := 1
-		if item.Symbol.HaloWidth > 0 && item.Symbol.HaloColor.Alpha != 0 {
-			passes = 2
-		}
 		if b.indexed {
-			vertices += passes * len(item.Layout.Vertices)
-			indices += passes * len(item.Layout.Indices)
+			vertices += len(item.Layout.Vertices)
+			indices += len(item.Layout.Indices)
 		} else {
-			vertices += passes * len(item.Layout.Expanded) / 4
+			vertices += len(item.Layout.Expanded) / 4
 		}
 	}
 	class := b.class
@@ -152,7 +162,7 @@ func (b *SceneBuilder) reserveSymbols(count int, symbolAt func(int) RenderSymbol
 	target.full.Reserve(vertices, indices)
 }
 
-func (b *SceneBuilder) symbolPass(kind scene.Kind, item RenderSymbol, atlas uint64, lookup SpriteLookup) bool {
+func (b *SceneBuilder) symbolPass(index int, kind scene.Kind, item RenderSymbol, atlas uint64, lookup SpriteLookup) bool {
 	b.class = symbolClass
 	defer func() { b.class = stableClass }()
 	if kind == scene.Image {
@@ -160,7 +170,7 @@ func (b *SceneBuilder) symbolPass(kind scene.Kind, item RenderSymbol, atlas uint
 			b.icon(item.Symbol, lookup)
 		}
 	} else if item.Accepted.Text && item.Layout != nil {
-		return b.text(item.Symbol, item.Layout, atlas, kind) && kind == scene.SDFFill
+		return b.text(index, item.Symbol, item.Layout, atlas, kind) && kind == scene.SDFFill
 	}
 	return false
 }
@@ -205,7 +215,7 @@ func (b *SceneBuilder) icon(candidate placement.Symbol, lookup SpriteLookup) {
 		placement.RenderedSymbolAngle(candidate.IconLineAngle, candidate.IconRotate, candidate.IconViewportAligned), material)
 }
 
-func (b *SceneBuilder) text(candidate placement.Symbol, layout *glyph.PreparedLayout, atlas uint64, kind scene.Kind) bool {
+func (b *SceneBuilder) text(index int, candidate placement.Symbol, layout *glyph.PreparedLayout, atlas uint64, kind scene.Kind) bool {
 	color := candidate.TextColor
 	if kind == scene.SDFHalo {
 		if candidate.HaloWidth <= 0 || candidate.HaloColor.Alpha == 0 {
@@ -226,10 +236,19 @@ func (b *SceneBuilder) text(candidate placement.Symbol, layout *glyph.PreparedLa
 		offset = geometry.Point{X: candidate.TextOffset.X * glyph.EmSize, Y: candidate.TextOffset.Y * glyph.EmSize}
 		material.OffsetScale = scale
 	}
+	if halo := b.halos[index]; kind == scene.SDFFill && halo.count > 0 {
+		b.appendDraw(scene.Draw{Mesh: halo.mesh, First: uint32(halo.first), Count: uint32(halo.count), Material: material, Layout: scene.FullLayout})
+		return true
+	}
+	target, id := b.target()
+	first := target.full.Count()
 	if b.indexed {
 		b.IndexedText(candidate.Anchor, layout.Vertices, layout.Indices, offset, angle, material)
 	} else {
 		b.ExpandedText(candidate.Anchor, layout.Expanded, offset, angle, material)
+	}
+	if kind == scene.SDFHalo && b.err == nil {
+		b.halos[index] = textRange{mesh: id, first: first, count: target.count(scene.FullLayout) - first}
 	}
 	return true
 }

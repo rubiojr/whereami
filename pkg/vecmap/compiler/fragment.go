@@ -191,7 +191,7 @@ func (b *FragmentBuilder) SymbolLayer(first, count int, symbolAt func(int) Rende
 			source.Part = IconDraw
 		}
 		start := b.begin()
-		label := b.packing.symbolPass(kind, item, atlas, lookup)
+		label := b.packing.symbolPass(index, kind, item, atlas, lookup)
 		b.capture(start, source)
 		return label && len(b.packing.result.Draws) > start
 	})

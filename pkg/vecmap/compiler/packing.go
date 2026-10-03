@@ -51,6 +51,8 @@ type SceneBuilder struct {
 	stablePlan *StablePlan
 	// labelVertices holds one label's transformed vertices until they are packed.
 	labelVertices []scene.Vertex
+	// halos are where symbolLayer packed each candidate's halo, by index.
+	halos []textRange
 }
 
 // NewSceneBuilder selects the output topology. Zero maximumElements selects the

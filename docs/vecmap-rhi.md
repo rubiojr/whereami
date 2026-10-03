@@ -4938,6 +4938,31 @@ one, and its uploads for the complete cover from 194 MB to 155 MB.
   producer; the full pkg/vecmap suite, the tagged adapter and viewer suites on
   Vulkan and OpenGL and tagged staticcheck pass.
 
+### Shared halo quads (nfzk)
+
+Peak RSS follows the live heap (see "What holds the live heap"), and fragment
+meshes are most of it. On the 82 corpus tiles at the trace's Coarser 1 zoom
+(z+1.25) fragments held 325 MB: extruded-line vertices 127 MB (four float32),
+stable-mesh indices 84 MB, symbol vertices 39 MB (six float32), dashed-line
+vertices 14 MB and fill positions 8 MB.
+
+**Halo and fill share their quads.** A haloed label was packed twice, once for
+the halo pass and once for the fill, with identical vertices: halos were 48% of
+the symbol mesh's index elements. The fill now draws the halo's range with its
+own material, and text without a halo packs its quads in the fill pass. The
+symbol mesh falls from 48.9 to 25.3 MB on the corpus. Five interleaved runs each
+of e9a9243 and this change:
+
+| Row | Peak live before → after | Peak RSS before → after | Build wall before → after |
+| --- | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 178–228 → 171–209 MiB | 439–509 → 426–511 MiB | 608–624 → 528–586 ms |
+| Coarser 1, Vulkan | 171–237 → 158–223 MiB | 385–476 → 366–456 MiB | 595–630 → 560–594 ms |
+| Coarser 0, OpenGL | 245–268 → 233–253 MiB | 536–551 → 503–540 MiB | 885–951 → 852–909 ms |
+| Coarser 0, Vulkan | 240–260 → 224–250 MiB | 485–515 → 464–498 MiB | 875–995 → 829–916 ms |
+
+Final frames are byte-identical, every run had zero late frames and the same
+labels; process CPU stayed within its spread.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

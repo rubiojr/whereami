@@ -284,3 +284,48 @@ func TestReserveSymbolsFitsEveryPass(t *testing.T) {
 	b.ReserveSymbols(1, nil)
 	assert.Zero(t, cap(b.packing.mesh.full.Vertices), "no accessor reserves nothing")
 }
+
+// A text fill draws the quads its halo packed, so each text is packed once;
+// text without a halo packs its quads for the fill. Fills draw the same
+// geometry as fills packed on their own.
+func TestTextFillSharesItsHaloQuads(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		for _, resident := range []bool{false, true} {
+			haloed := residentSymbol(indexed, resident, 12, 1)
+			haloed.Symbol.IconName = ""
+			plain, other := haloed, haloed
+			plain.Symbol.Anchor.X, plain.Symbol.HaloWidth = 40, 0
+			other.Symbol.Anchor.X = 70
+			got, sources := packSymbols(t, indexed, resident, haloed, plain, other)
+			require.Len(t, got.Draws, 5, "two halos, three fills")
+			halos, fills := got.Draws[:2], got.Draws[2:]
+			assert.Equal(t, []int{0, 2, 0, 1, 2}, []int{sources[0].Candidate, sources[1].Candidate, sources[2].Candidate, sources[3].Candidate, sources[4].Candidate})
+			for i, pair := range [][2]scene.Draw{{halos[0], fills[0]}, {halos[1], fills[2]}} {
+				assert.Equal(t, pair[0].First, pair[1].First, "pair %d", i)
+				assert.Equal(t, pair[0].Count, pair[1].Count)
+			}
+			assert.Equal(t, 3*6, elementCount(got.Meshes[0]), "each text is packed once")
+
+			// Without halos each fill packs its own quads; they draw the same.
+			alone := []RenderSymbol{haloed, plain, other}
+			for i := range alone {
+				alone[i].Symbol.HaloWidth = 0
+			}
+			want, _ := packSymbols(t, indexed, resident, alone...)
+			drawn, wantDrawn := expand(t, got), expand(t, want)
+			require.Len(t, wantDrawn, 3)
+			for i := range wantDrawn {
+				wantDrawn[i].material.HaloWidth = fills[i].Material.HaloWidth
+				assert.Equal(t, wantDrawn[i].vertices, drawn[2+i].vertices, "fill %d", i)
+				assert.Equal(t, wantDrawn[i].material, drawn[2+i].material)
+			}
+		}
+	}
+}
+
+func elementCount(mesh scene.Mesh) int {
+	if mesh.Indices != nil {
+		return len(mesh.Indices)
+	}
+	return len(mesh.Vertices)
+}

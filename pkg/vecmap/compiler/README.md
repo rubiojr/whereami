@@ -231,7 +231,10 @@ tile-local, and caller transforms provide map positioning.
 `SceneBuilder.SymbolLayer(count, symbolAt, atlasID, lookup)` emits one layer's
 accepted icons first, then every eligible text halo, then every accepted text fill.
 This preserves the original pass ordering and prevents later halos covering prior
-fills. The indexed accessor returns `RenderSymbol`, combining shared evaluated
+fills. A fill has its halo's geometry, so it draws the quads the halo pass packed
+with its own material instead of packing a copy; text without a halo packs its
+quads in the fill pass. Each text is packed once (about half of a basemap's symbol
+mesh used to be halo copies). The indexed accessor returns `RenderSymbol`, combining shared evaluated
 `placement.Symbol`, collision acceptance and an optional prepared glyph layout.
 It must return the same immutable sequence on each of three traversals. No
 candidate slice is converted or retained. Negative counts or missing accessors
@@ -272,8 +275,8 @@ lower them. Methods latch errors; Finish returns nil scene and metadata on failu
   index (`first + local index`), layer and icon/text part. It preserves icons, then
   all halos, then all fills. Candidate ranges are bounded by 10,000.
 - `ReserveSymbols(count, symbolAt)`, called once with every symbol of the fragment,
-  makes exact room for the icon and text quads the symbol layers will pack, halo
-  passes included, as `Reserve` does for primitives. Labels otherwise arrive one
+  makes exact room for the icon and text quads the symbol layers will pack, one
+  copy per text, as `Reserve` does for primitives. Labels otherwise arrive one
   at a time and grow the symbol mesh by doubling.
 - Each primitive/candidate pass starts a draw boundary. Identical materials never
   merge different candidates or layers. Geometry and texture packing are reused;
