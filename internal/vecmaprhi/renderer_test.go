@@ -35,8 +35,9 @@ func TestRenderer(t *testing.T) {
 	testDashedLines(t, false)
 	testDashedLines(t, true)
 	for _, packed := range []bool{false, true} {
-		testVertexSections(t, false, packed)
-		testVertexSections(t, true, packed)
+		testVertexSections(t, false, packed, false)
+		testVertexSections(t, true, packed, false)
+		testVertexSections(t, true, packed, true)
 	}
 }
 

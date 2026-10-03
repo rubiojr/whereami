@@ -91,7 +91,9 @@ func (r *Renderer) allocateResources(s *scene.Scene, mesh func(scene.Mesh) (gpuM
 // residency; a future planner adapter must acknowledge only after submission.
 func (r *Renderer) recordResources(stage *resourceStage, updates *rhi.QRhiResourceUpdateBatch) {
 	for _, m := range stage.meshes {
-		if m.gpu.indices != nil {
+		if m.gpu.indices != nil && m.source.ShortIndices != nil {
+			updates.UploadStaticBuffer3(m.gpu.indices, unsafe.Pointer(unsafe.SliceData(m.source.ShortIndices)))
+		} else if m.gpu.indices != nil {
 			updates.UploadStaticBuffer3(m.gpu.indices, unsafe.Pointer(unsafe.SliceData(m.source.Indices)))
 		}
 		// Sections are packed in the order of their layouts.

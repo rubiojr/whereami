@@ -4,6 +4,7 @@ package vecmaprhi
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
@@ -17,8 +18,9 @@ import (
 // sections, float or packed. Draws alternate between the sections. Float
 // sections must draw the identical picture; packed ones round line directions
 // to 1/4096, which may move a few edge pixels. The sectioned mesh is one upload
-// of fewer bytes.
-func testVertexSections(t *testing.T, indexed, packed bool) {
+// of fewer bytes. With short, the sectioned mesh draws from uint16 indices
+// with vertex bases beyond their reach.
+func testVertexSections(t *testing.T, indexed, packed, short bool) {
 	t.Helper()
 	const scale, width = 2.0, 4.0
 	paths := [][]geometry.Point{{{X: 12, Y: 12}, {X: 40, Y: 14}, {X: 44, Y: 36}}}
@@ -144,6 +146,13 @@ func testVertexSections(t *testing.T, indexed, packed bool) {
 		require.NotEmpty(t, sections.Positions)
 	}
 
+	if short {
+		sections, sectionDraws = shorten(sections, sectionDraws, 70_000)
+		compact = &scene.Scene{Meshes: []scene.Mesh{sections}, Draws: sectionDraws}
+		require.NoError(t, compact.Validate())
+		require.NotEmpty(t, sections.ShortIndices)
+	}
+
 	sin, cos := math.Sincos(12 * math.Pi / 180)
 	transform := scene.Affine{M11: float32(scale * cos), M12: float32(-scale * sin), DX: 20, M21: float32(scale * sin), M22: float32(scale * cos), DY: 4}
 	grab, stats, done := sceneGrabber(t, plain, transform)
@@ -170,7 +179,7 @@ func testVertexSections(t *testing.T, indexed, packed bool) {
 			}
 		}
 	}
-	t.Logf("indexed=%t packed=%t: %d of %d drawn pixels differ", indexed, packed, different, drawn)
+	t.Logf("indexed=%t packed=%t short=%t: %d of %d drawn pixels differ", indexed, packed, short, different, drawn)
 	if packed {
 		assert.LessOrEqual(t, different, drawn/200, "quantized directions move at most a few edge pixels")
 	} else {
@@ -179,4 +188,40 @@ func testVertexSections(t *testing.T, indexed, packed bool) {
 	assert.Greater(t, colors[[3]int{0, 1, 0}], 300, "fills are drawn")
 	assert.Greater(t, colors[[3]int{0, 0, 1}], 300)
 	assert.Greater(t, colors[[3]int{1, 0, 0}], 300, "lines are drawn")
+}
+
+// shorten moves an indexed mesh's indices to ShortIndices after pad unused
+// copies of each section's first vertex, so that every base lies beyond the
+// reach of a uint16 index. Each draw is split in two halves that count from
+// their own lowest vertex, so consecutive draws of a section differ only in
+// their base.
+func shorten(mesh scene.Mesh, draws []scene.Draw, pad int) (scene.Mesh, []scene.Draw) {
+	mesh.Vertices, mesh.Offsets, mesh.Positions = padded(mesh.Vertices, pad), padded(mesh.Offsets, pad), padded(mesh.Positions, pad)
+	mesh.PackedPositions, mesh.PackedOffsets, mesh.PackedDashed = padded(mesh.PackedPositions, pad), padded(mesh.PackedOffsets, pad), padded(mesh.PackedDashed, pad)
+	mesh.ShortIndices = make([]uint16, len(mesh.Indices))
+	var split []scene.Draw
+	for _, draw := range draws {
+		half := draw.Count / 6 * 3
+		for _, part := range []scene.Draw{{First: draw.First, Count: half}, {First: draw.First + half, Count: draw.Count - half}} {
+			if part.Count == 0 {
+				continue
+			}
+			indices := mesh.Indices[part.First : part.First+part.Count]
+			lowest := slices.Min(indices)
+			for j, index := range indices {
+				mesh.ShortIndices[int(part.First)+j] = uint16(index - lowest)
+			}
+			draw.First, draw.Count, draw.Base = part.First, part.Count, uint32(pad)+lowest
+			split = append(split, draw)
+		}
+	}
+	mesh.Indices = nil
+	return mesh, split
+}
+
+func padded[T any](values []T, pad int) []T {
+	if len(values) == 0 {
+		return values
+	}
+	return append(slices.Repeat(values[:1], pad), values...)
 }

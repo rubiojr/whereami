@@ -190,7 +190,7 @@ func measure(value *scene.Scene, limit Limits) (Limits, error) {
 				return Limits{}, ErrLimit
 			}
 		}
-		if uint64(len(mesh.Indices)) > limit.Bytes/4 {
+		if uint64(len(mesh.Indices)) > limit.Bytes/4 || uint64(len(mesh.ShortIndices)) > limit.Bytes/2 {
 			return Limits{}, ErrLimit
 		}
 		u.Bytes += mesh.BufferBytes()

@@ -89,10 +89,11 @@ func (b *SceneBuilder) SymbolLayer(count int, symbolAt func(int) RenderSymbol, a
 
 // textRange is where a label's text quads were packed. A text fill has the
 // halo's geometry, so it draws the halo's quads with its own material instead
-// of packing a copy.
+// of packing a copy. A label's quads are one append, so they lie in one
+// segment with ShortIndices.
 type textRange struct {
-	mesh         uint64
-	first, count int
+	mesh               uint64
+	first, count, base int
 }
 
 func (b *SceneBuilder) symbolLayer(count int, symbolAt func(int) RenderSymbol, emit func(int, scene.Kind, RenderSymbol) bool) int {
@@ -237,7 +238,7 @@ func (b *SceneBuilder) text(index int, candidate placement.Symbol, layout *glyph
 		material.OffsetScale = scale
 	}
 	if halo := b.halos[index]; kind == scene.SDFFill && halo.count > 0 {
-		b.appendDraw(scene.Draw{Mesh: halo.mesh, First: uint32(halo.first), Count: uint32(halo.count), Material: material, Layout: scene.FullLayout})
+		b.appendDraw(scene.Draw{Mesh: halo.mesh, First: uint32(halo.first), Count: uint32(halo.count), Material: material, Layout: scene.FullLayout, Base: uint32(halo.base)})
 		return true
 	}
 	target, id := b.target()
@@ -249,6 +250,9 @@ func (b *SceneBuilder) text(index int, candidate placement.Symbol, layout *glyph
 	}
 	if kind == scene.SDFHalo && b.err == nil {
 		b.halos[index] = textRange{mesh: id, first: first, count: target.count(scene.FullLayout) - first}
+		if segments := target.full.Segments; len(segments) > 0 {
+			b.halos[index].base = segments[len(segments)-1].Base
+		}
 	}
 	return true
 }

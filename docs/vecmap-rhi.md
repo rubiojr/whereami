@@ -5013,6 +5013,36 @@ worth watching. Against e9a9243, shared halos and packing together lower Coarser
 460–488 MiB. The viewer packs by default; `tiles.PrepareOptions` stays off, so
 other consumers opt in once their backend reads the packed layouts.
 
+**Short indices.** `tiles.PrepareOptions.ShortIndices` (viewer `-short-indices`,
+default on; library default off) stores uint16 indices in `scene.Mesh.ShortIndices`. A section can hold more than
+65,536 vertices (the largest on the corpus held 591,703), so indices count from
+`scene.Draw.Base`, a vertex of the draw's section, and the renderer binds the
+vertex buffer that many vertices into the section: no base-vertex feature is
+needed. The builder keeps segments of at most 65,536 vertices; geometry that
+doesn't fit after the last segment starts a new one, and geometry larger than a
+segment is split between triangles, copying the vertices both sides use. A
+primitive spanning segments makes several draws, so a stable plan now records a
+list of draws per run. On the corpus, splits copied 70 of 10.3 million vertices
+and added 27 of 42,050 draws; index bytes halve (88.9 → 44.4 MB) and fragments
+fall from 226.9 to 182.4 MB. The integration test draws every section through
+short indices whose bases lie beyond 65,535, with consecutive draws differing
+only in their base, and gets the same pixels on OpenGL and Vulkan.
+
+Five interleaved runs each, one binary with packed vertices, without and with
+`-short-indices`:
+
+| Row | Peak live off → on | Peak RSS off → on | VRAM off → on | GC CPU off → on | CPU off → on |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 146–186 → 124–154 MiB | 400–443 → 373–402 MiB | 90–98 → 82–92 MiB | 515–556 → 587–619 ms | 3.17–3.59 → 3.28–3.64 s |
+| Coarser 1, Vulkan | 180–187 → 136–163 MiB | 393–402 → 362–378 MiB | – | 520–560 → 596–633 ms | 3.07–3.37 → 3.14–3.50 s |
+| Coarser 0, OpenGL | 205–214 → 174–192 MiB | 467–479 → 426–447 MiB | 127–147 → 129–133 MiB | 672–690 → 722–803 ms | 4.40–4.92 → 4.48–5.14 s |
+| Coarser 0, Vulkan | 203–213 → 181–191 MiB | 425–443 → 390–403 MiB | – | 645–735 → 673–795 ms | 4.25–4.65 → 4.10–4.88 s |
+
+Final frames are byte-identical on all four rows, every run had zero late frames
+and the same labels, and the longest hold is unchanged. Peak RSS falls 25–40 MiB.
+As with packing, GC CPU rises about 10% because the heap goal follows the smaller
+live heap; allocation is the same and process CPU stays within its spread.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

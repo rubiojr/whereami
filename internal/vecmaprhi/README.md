@@ -48,6 +48,13 @@ it the adapter refuses packed meshes when staging them. The integration test
 draws the same geometry from packed sections, on both backends without a
 differing pixel.
 
+A mesh with `ShortIndices` gets a uint16 index buffer. A draw binds the vertex
+buffer at its section plus `Draw.Base` vertices, so its indices count from
+there; the binding changes when the mesh, section or base does. No base-vertex
+feature is needed. The integration test draws every section from uint16 indices
+whose bases lie beyond 65,535, splitting each draw so consecutive draws differ
+only in their base, and requires the same pixels.
+
 ## Dashed materials
 
 For `scene.Dashed` the second component of `parameters` is `Material.DashUnit` and

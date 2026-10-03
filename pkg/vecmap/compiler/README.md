@@ -279,6 +279,13 @@ lower them. Methods latch errors; Finish returns nil scene and metadata on failu
   `PackedDashedLayout` (1/32 tile unit positions, 1/4096 offsets, float32 dash
   distance): half the vertex bytes. A primitive with a coordinate outside the
   int16 range keeps float vertices, compact if `CompactVertices` is set.
+- `ShortIndices()` packs uint16 indices (`scene.Mesh.ShortIndices`) in segments of
+  at most 65,536 vertices of a section. Geometry that doesn't fit after the last
+  segment's vertices starts a new segment; geometry larger than a segment is split
+  between triangles, and each segment gets a copy of the vertices it uses. Draws
+  carry their segment's first vertex in `scene.Draw.Base`, so a primitive spanning
+  segments makes several draws, and a stable plan records all of them. A text
+  fill reuses its halo's segment. It needs an indexed builder.
 - `ReserveSymbols(count, symbolAt)`, called once with every symbol of the fragment,
   makes exact room for the icon and text quads the symbol layers will pack, one
   copy per text, as `Reserve` does for primitives. Labels otherwise arrive one

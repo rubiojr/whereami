@@ -77,6 +77,12 @@ type PrepareOptions struct {
 	// directions within 1/8192; geometry outside the packed range keeps float
 	// vertices. The backend must implement the packed layouts.
 	PackedVertices bool
+	// ShortIndices packs uint16 indices, half the bytes of uint32, in segments
+	// of at most 65,536 vertices that draws name in scene.Draw.Base
+	// (compiler.SceneBuilder.ShortIndices). Triangles are unchanged, so the
+	// rendered output is too. It needs Indexed. The backend must implement
+	// scene.Mesh.ShortIndices and Draw.Base.
+	ShortIndices bool
 }
 
 // Prepared owns reusable primitives and evaluated candidates, not source features
@@ -275,7 +281,7 @@ func prepareSource(source *Source, layers []style.CompiledLayer, options Prepare
 }
 
 func (o PrepareOptions) validate(layers []style.CompiledLayer) error {
-	if !validTile(o.Tile) || math.IsNaN(o.Zoom) || o.Zoom < 0 || o.Zoom > 20 || o.Coarser < 0 || o.Coarser > view.MaxCoarser {
+	if !validTile(o.Tile) || math.IsNaN(o.Zoom) || o.Zoom < 0 || o.Zoom > 20 || o.Coarser < 0 || o.Coarser > view.MaxCoarser || o.ShortIndices && !o.Indexed {
 		return ErrInput
 	}
 	if len(layers) > MaxStyleLayers {
@@ -358,6 +364,9 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	}
 	if p.options.PackedVertices {
 		packing.PackedVertices()
+	}
+	if p.options.ShortIndices {
+		packing.ShortIndices()
 	}
 	if p.base != nil {
 		packing.Borrow(p.base.mesh, p.base.origin.plan)

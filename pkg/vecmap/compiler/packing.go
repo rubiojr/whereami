@@ -3,6 +3,7 @@ package compiler
 import (
 	"errors"
 	"math"
+	"sort"
 
 	"github.com/rubiojr/whereami/pkg/vecmap/geometry"
 	"github.com/rubiojr/whereami/pkg/vecmap/glyph"
@@ -37,6 +38,7 @@ type SceneBuilder struct {
 	resident  bool
 	compact   bool
 	packed    bool
+	short     bool
 	class     meshClass
 	result    scene.Scene
 	textures  map[string]uint64
@@ -81,6 +83,8 @@ type sections struct {
 	packedPositions geometry.Builder[scene.PackedPositionVertex]
 	packedOffsets   geometry.Builder[scene.PackedOffsetVertex]
 	packedDashed    geometry.Builder[scene.PackedDashedVertex]
+	// short reports that the sections store uint16 indices in segments.
+	short bool
 }
 
 func newSections(indexed bool, maximumElements int) sections {
@@ -106,6 +110,34 @@ func (s *sections) vertices() int {
 		len(s.packedPositions.Vertices) + len(s.packedOffsets.Vertices) + len(s.packedDashed.Vertices)
 }
 
+// topology is the index side of the section of a layout.
+func (s *sections) topology(layout scene.Layout) *geometry.Topology {
+	switch layout {
+	case scene.OffsetLayout:
+		return &s.offsets.Topology
+	case scene.PositionLayout:
+		return &s.positions.Topology
+	case scene.PackedPositionLayout:
+		return &s.packedPositions.Topology
+	case scene.PackedOffsetLayout:
+		return &s.packedOffsets.Topology
+	case scene.PackedDashedLayout:
+		return &s.packedDashed.Topology
+	}
+	return &s.full.Topology
+}
+
+// shortIndices makes every section store uint16 indices in segments.
+func (s *sections) shortIndices() {
+	s.short = true
+	s.full.ShortIndices()
+	s.offsets.ShortIndices()
+	s.positions.ShortIndices()
+	s.packedPositions.ShortIndices()
+	s.packedOffsets.ShortIndices()
+	s.packedDashed.ShortIndices()
+}
+
 // count is the number of draw elements in the section of a layout.
 func (s *sections) count(layout scene.Layout) int {
 	switch layout {
@@ -121,23 +153,6 @@ func (s *sections) count(layout scene.Layout) int {
 		return s.packedDashed.Count()
 	}
 	return s.full.Count()
-}
-
-// indices are the indices of the section of a layout.
-func (s *sections) indices(layout scene.Layout) []uint32 {
-	switch layout {
-	case scene.OffsetLayout:
-		return s.offsets.Indices
-	case scene.PositionLayout:
-		return s.positions.Indices
-	case scene.PackedPositionLayout:
-		return s.packedPositions.Indices
-	case scene.PackedOffsetLayout:
-		return s.packedOffsets.Indices
-	case scene.PackedDashedLayout:
-		return s.packedDashed.Indices
-	}
-	return s.full.Indices
 }
 
 // reserve makes room in the section of a layout.
@@ -169,17 +184,23 @@ func (s *sections) mesh(id uint64) (scene.Mesh, [scene.LayoutCount]uint32) {
 	s.packedDashed.Compact()
 	mesh := scene.Mesh{ID: id, Revision: 1, Vertices: s.full.Vertices, Offsets: s.offsets.Vertices, Positions: s.positions.Vertices,
 		PackedPositions: s.packedPositions.Vertices, PackedOffsets: s.packedOffsets.Vertices, PackedDashed: s.packedDashed.Vertices,
-		Indices: s.full.Indices}
+		Indices: s.full.Indices, ShortIndices: s.full.Short}
 	var first [scene.LayoutCount]uint32
 	total := 0
 	for layout := range scene.LayoutCount {
 		first[layout] = uint32(total)
-		total += len(s.indices(layout))
+		topology := s.topology(layout)
+		total += len(topology.Indices) + len(topology.Short)
 	}
-	if total > len(s.full.Indices) {
+	if s.short && total > len(s.full.Short) {
+		mesh.ShortIndices = make([]uint16, 0, total)
+		for layout := range scene.LayoutCount {
+			mesh.ShortIndices = append(mesh.ShortIndices, s.topology(layout).Short...)
+		}
+	} else if !s.short && total > len(s.full.Indices) {
 		mesh.Indices = make([]uint32, 0, total)
 		for layout := range scene.LayoutCount {
-			mesh.Indices = append(mesh.Indices, s.indices(layout)...)
+			mesh.Indices = append(mesh.Indices, s.topology(layout).Indices...)
 		}
 	}
 	// The scene a builder returns keeps the builder alive. Let go of the
@@ -257,6 +278,28 @@ func (b *SceneBuilder) PackedVertices() {
 	}
 }
 
+// ShortIndices packs indices as uint16, half the bytes of uint32. A section
+// longer than 65,536 vertices is drawn in segments: each draw names the vertex
+// its indices count from in scene.Draw.Base, and geometry that spans segments
+// is drawn in several draws. Geometry larger than a segment has the vertices
+// its triangles share across a split copied. Triangles, their order and
+// materials are unchanged, so the rendered output is too. Needs an indexed
+// builder. The backend must implement scene.Mesh.ShortIndices and Draw.Base.
+// Call before packing.
+func (b *SceneBuilder) ShortIndices() {
+	if !b.unused() {
+		return
+	}
+	if !b.indexed {
+		b.err = ErrPackingInput
+		return
+	}
+	b.short = true
+	b.mesh.shortIndices()
+	b.dynamic.shortIndices()
+	b.symbols.shortIndices()
+}
+
 func (b *SceneBuilder) unused() bool {
 	if !b.ready() {
 		return false
@@ -282,7 +325,7 @@ func (b *SceneBuilder) borrowedCounts() (elements, vertices int) {
 		vertices += b.borrowed.Len(layout)
 	}
 	if b.indexed {
-		return len(b.borrowed.Indices), vertices
+		return b.borrowed.IndexCount(), vertices
 	}
 	return vertices, vertices
 }
@@ -684,14 +727,30 @@ func (b *SceneBuilder) IndexedText(anchor geometry.Point, vertices []geometry.Te
 	b.draw(target, id, scene.FullLayout, first, material, [4]float32{})
 }
 
-// draw records a range of one section. Its First counts from the start of that
-// section until Finish places the sections' indices in one buffer.
+// draw records a range of one section, one draw per segment it spans with
+// ShortIndices. Its First counts from the start of that section until Finish
+// places the sections' indices in one buffer.
 func (b *SceneBuilder) draw(target *sections, id uint64, layout scene.Layout, first int, material scene.Material, clip [4]float32) {
-	count := target.count(layout) - first
-	if b.err != nil || count == 0 {
+	end := target.count(layout)
+	if b.err != nil || end == first {
 		return
 	}
-	b.appendDraw(scene.Draw{Mesh: id, First: uint32(first), Count: uint32(count), Material: material, Clip: clip, Layout: layout})
+	draw := scene.Draw{Mesh: id, First: uint32(first), Count: uint32(end - first), Material: material, Clip: clip, Layout: layout}
+	if !b.short {
+		b.appendDraw(draw)
+		return
+	}
+	segments := target.topology(layout).Segments
+	// The range starts in the last segment that starts at or before it.
+	next := sort.Search(len(segments), func(i int) bool { return segments[i].First > first })
+	for i := next - 1; i < len(segments) && segments[i].First < end && b.err == nil; i++ {
+		from, to := max(first, segments[i].First), end
+		if i+1 < len(segments) {
+			to = min(to, segments[i+1].First)
+		}
+		draw.First, draw.Count, draw.Base = uint32(from), uint32(to-from), uint32(segments[i].Base)
+		b.appendDraw(draw)
+	}
 }
 
 func (b *SceneBuilder) appendDraw(draw scene.Draw) {
@@ -782,5 +841,7 @@ func (b *SceneBuilder) borrowDraw(primitive Primitive, material scene.Material, 
 		}
 		material.MapAligned, material.OffsetScale = true, float32(primitive.HalfWidth)
 	}
-	b.appendDraw(scene.Draw{Mesh: StableMesh, First: run.first, Count: run.count, Material: material, Clip: clip, Layout: run.layout})
+	for _, draw := range b.stablePlan.draws[run.from:run.to] {
+		b.appendDraw(scene.Draw{Mesh: StableMesh, First: draw.first, Count: draw.count, Material: material, Clip: clip, Layout: run.layout, Base: draw.base})
+	}
 }

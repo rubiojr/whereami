@@ -99,6 +99,11 @@ storage and fill batching, builds indexed line quads/disks, and emits indexed
 glyph/icon quads. `Builder[T]` appends known topology without hashing or changing
 triangle order. It validates local indices and element limits before each append,
 rebases indices, and can also produce expanded output for legacy comparisons.
+After `ShortIndices()` an indexed builder stores uint16 indices in `Short`, in
+`Segments` of at most 65,536 vertices that each count from their `Base` vertex:
+an append that doesn't fit after the last segment's vertices starts a new one,
+and one larger than a segment is split between triangles, copying the vertices
+that triangles on both sides of a split share.
 
 Construction shares vertices within each polygon, segment, disk or quad. It does
 not deduplicate across features, style layers, or glyph halo/fill passes. Direct

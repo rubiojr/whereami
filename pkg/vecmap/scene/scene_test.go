@@ -320,3 +320,55 @@ func TestPackedSectionsPackAndRead(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, mesh, indexed, "IndexMesh leaves meshes with other sections alone")
 }
+
+func TestShortIndicesCountFromTheirDrawsBase(t *testing.T) {
+	positions := make([]PackedPositionVertex, 70_000)
+	mesh := Mesh{ID: 1, Vertices: []Vertex{{X: 1}, {X: 2}, {X: 3}}, PackedPositions: positions, ShortIndices: []uint16{0, 1, 2, 2, 1, 0}}
+	assert.True(t, mesh.Indexed())
+	assert.Equal(t, 6, mesh.IndexCount())
+	assert.Equal(t, uint32(2), mesh.Index(3))
+	assert.Equal(t, uint64(12), mesh.IndexBytes())
+	assert.Equal(t, mesh.VertexBytes()+12, mesh.BufferBytes())
+	require.NoError(t, mesh.Validate())
+
+	scene := Scene{Meshes: []Mesh{mesh}, Draws: []Draw{
+		{Mesh: 1, Count: 3},
+		{Mesh: 1, First: 3, Count: 3, Layout: PackedPositionLayout, Base: 69_997},
+	}}
+	require.NoError(t, scene.Validate())
+	for _, draw := range []Draw{
+		{Mesh: 1, Count: 3, Base: 1},                                    // index 2 is past the full section
+		{Mesh: 1, Count: 3, Layout: PackedPositionLayout, Base: 69_998}, // and past the packed one
+		{Mesh: 1, Count: 3, Layout: PackedPositionLayout, Base: 70_000},
+		{Mesh: 1, Count: 3, Layout: OffsetLayout},
+	} {
+		scene.Draws = []Draw{draw}
+		assert.Error(t, scene.Validate(), "%+v", draw)
+	}
+
+	both := mesh
+	both.Indices = []uint32{0, 1, 2}
+	assert.Error(t, both.Validate(), "a mesh has one index width")
+	unindexed := Scene{Meshes: []Mesh{{ID: 1, Vertices: []Vertex{{X: 1}, {X: 2}, {X: 3}, {X: 4}}}}, Draws: []Draw{{Mesh: 1, Count: 3, Base: 1}}}
+	assert.Error(t, unindexed.Validate(), "only indices count from a base")
+	long := Scene{Meshes: []Mesh{{ID: 1, PackedPositions: positions, Indices: []uint32{0, 1, 2}}}, Draws: []Draw{{Mesh: 1, Count: 3, Layout: PackedPositionLayout, Base: 69_997}}}
+	require.NoError(t, long.Validate(), "uint32 indices may count from a base too")
+	long.Draws[0].Base = 69_998
+	assert.Error(t, long.Validate())
+
+	draws := AppendDraw(nil, Draw{Mesh: 1, Count: 3})
+	draws = AppendDraw(draws, Draw{Mesh: 1, First: 3, Count: 3, Base: 3})
+	assert.Len(t, draws, 2, "draws counting from other vertices don't merge")
+	draws = AppendDraw(draws, Draw{Mesh: 1, First: 6, Count: 3, Base: 3})
+	assert.Equal(t, []Draw{{Mesh: 1, Count: 3}, {Mesh: 1, First: 3, Count: 6, Base: 3}}, draws)
+
+	encoded, err := json.Marshal(scene.Meshes[0])
+	require.NoError(t, err)
+	var decoded Mesh
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, mesh, decoded)
+	short := Mesh{ID: 1, Vertices: []Vertex{{X: 1}, {X: 2}, {X: 3}, {X: 1}, {X: 2}, {X: 3}}, ShortIndices: []uint16{0, 1, 2}}
+	indexed, err := IndexMesh(short)
+	require.NoError(t, err)
+	assert.Equal(t, short, indexed, "IndexMesh leaves indexed meshes alone")
+}

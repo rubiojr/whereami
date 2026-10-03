@@ -56,6 +56,14 @@ func (p *plannedBuild) stable() scene.Mesh {
 // planBuild compiles and packs a split fragment, borrowing base's StableMesh
 // when base is set.
 func planBuild(layers []style.CompiledLayer, sources map[string]mvt.FeatureSlice, zoom float64, indexed, compact bool, base *plannedBuild, lookup SpriteLookup) (*plannedBuild, error) {
+	return planBuildModes(layers, sources, zoom, planModes{indexed: indexed, compact: compact}, base, lookup)
+}
+
+// planModes are the packing modes of a planned build.
+type planModes struct{ indexed, compact, packed, short bool }
+
+func planBuildModes(layers []style.CompiledLayer, sources map[string]mvt.FeatureSlice, zoom float64, modes planModes, base *plannedBuild, lookup SpriteLookup) (*plannedBuild, error) {
+	indexed := modes.indexed
 	planner := NewStablePlanner(nil)
 	if base != nil {
 		planner = NewStablePlanner(base.plan)
@@ -67,8 +75,14 @@ func planBuild(layers []style.CompiledLayer, sources map[string]mvt.FeatureSlice
 	}
 	b := NewFragmentBuilder(indexed, 0, 0)
 	b.Split()
-	if compact {
+	if modes.compact {
 		b.CompactVertices()
+	}
+	if modes.packed {
+		b.PackedVertices()
+	}
+	if modes.short {
+		b.ShortIndices()
 	}
 	if base != nil {
 		b.Borrow(base.stable(), base.plan)

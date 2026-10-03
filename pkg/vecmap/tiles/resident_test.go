@@ -542,8 +542,8 @@ func drawnVertices(t *testing.T, f *Fragment) [][]scene.Vertex {
 		vertices := make([]scene.Vertex, 0, draw.Count)
 		for i := draw.First; i < draw.First+draw.Count; i++ {
 			index := int(i)
-			if len(mesh.Indices) > 0 {
-				index = int(mesh.Indices[i])
+			if mesh.Indexed() {
+				index = int(draw.Base) + int(mesh.Index(int(i)))
 			}
 			vertices = append(vertices, mesh.At(draw.Layout, index))
 		}
@@ -599,6 +599,39 @@ func TestPackedVerticesDrawTheSameTile(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Short indices draw the same vertices in half the index bytes.
+func TestShortIndicesDrawTheSameTile(t *testing.T) {
+	for _, resident := range []bool{false, true} {
+		for _, packed := range []bool{false, true} {
+			build := func(zoom float64, short bool) *Fragment {
+				p, err := Prepare(residentPBF(), residentStyle(t), PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: true,
+					ResidentGeometry: resident, ResidentSymbols: resident, ResidentDashes: resident, CompactVertices: true, PackedVertices: packed, ShortIndices: short})
+				require.NoError(t, err)
+				result, err := p.BuildOwned(prepareAssets(), 1<<20)
+				require.NoError(t, err)
+				return result.Fragment
+			}
+			long, short := build(3, false), build(3, true)
+			assert.Equal(t, drawnVertices(t, long), drawnVertices(t, short), "resident=%t packed=%t", resident, packed)
+			assert.Equal(t, long.Draws, short.Draws)
+			assert.Equal(t, long.Symbols, short.Symbols)
+			require.Len(t, short.Scene.Meshes, len(long.Scene.Meshes))
+			for i, mesh := range short.Scene.Meshes {
+				assert.Empty(t, mesh.Indices)
+				assert.Equal(t, long.Scene.Meshes[i].IndexBytes(), 2*mesh.IndexBytes())
+			}
+			assert.Less(t, short.RetainedBytes(), long.RetainedBytes())
+
+			if resident {
+				next := build(3.0625, true)
+				assert.Equal(t, fragmentMesh(short, compiler.StableMesh), fragmentMesh(next, compiler.StableMesh))
+			}
+		}
+	}
+	_, err := Prepare(residentPBF(), residentStyle(t), PrepareOptions{Tile: testTile, Zoom: 3, ShortIndices: true})
+	assert.ErrorIs(t, err, ErrInput, "short indices need indexed geometry")
 }
 
 func TestCompactVerticesDrawTheSameTile(t *testing.T) {

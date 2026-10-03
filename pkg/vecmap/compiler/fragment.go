@@ -37,9 +37,9 @@ type DrawSource struct {
 type FragmentBuilder struct {
 	packing SceneBuilder
 	sources []DrawSource
-	// runDraws is, per StablePlan run, the index of the draw its primitive
-	// made, or -1.
-	runDraws []int
+	// runDraws is, per StablePlan run, the draws its primitive made, from
+	// and to an index of the scene's draws; equal when it made none.
+	runDraws [][2]int
 }
 
 func NewFragmentBuilder(indexed bool, maximumElements, maximumDraws int) *FragmentBuilder {
@@ -69,6 +69,9 @@ func (b *FragmentBuilder) CompactVertices() { b.packing.CompactVertices() }
 // PackedVertices packs fills, patterns and lines in int16 sections as
 // SceneBuilder.PackedVertices.
 func (b *FragmentBuilder) PackedVertices() { b.packing.PackedVertices() }
+
+// ShortIndices packs uint16 indices in segments as SceneBuilder.ShortIndices.
+func (b *FragmentBuilder) ShortIndices() { b.packing.ShortIndices() }
 
 // Reserve makes room for the geometry of primitives before packing them, as
 // SceneBuilder.Reserve. A primitive that packs nothing (a missing sprite) only
@@ -118,11 +121,9 @@ func (b *FragmentBuilder) Primitive(tile view.TileID, primitive Primitive, looku
 	period := b.packing.primitive(tile, 0, primitive, lookup)
 	if run := primitive.StableRun; run > 0 && b.packing.err == nil {
 		for len(b.runDraws) < run {
-			b.runDraws = append(b.runDraws, -1)
+			b.runDraws = append(b.runDraws, [2]int{})
 		}
-		if len(b.packing.result.Draws) > start {
-			b.runDraws[run-1] = start
-		}
+		b.runDraws[run-1] = [2]int{start, len(b.packing.result.Draws)}
 	}
 	b.capture(start, DrawSource{Layer: primitive.Order, Part: BaseDraw, PatternPeriod: period})
 }
@@ -156,11 +157,14 @@ func (b *FragmentBuilder) StablePlan(compiled *StablePlan) *StablePlan {
 		return nil
 	}
 	plan := &StablePlan{runs: slices.Clone(compiled.runs)}
-	for i, draw := range b.runDraws {
-		if draw >= 0 && i < len(plan.runs) {
-			published := b.packing.result.Draws[draw]
+	for i, draws := range b.runDraws {
+		if draws[1] > draws[0] && i < len(plan.runs) {
 			run := &plan.runs[i]
-			run.drawn, run.first, run.count, run.layout = true, published.First, published.Count, published.Layout
+			run.drawn, run.layout, run.from = true, b.packing.result.Draws[draws[0]].Layout, int32(len(plan.draws))
+			for _, published := range b.packing.result.Draws[draws[0]:draws[1]] {
+				plan.draws = append(plan.draws, stableDraw{first: published.First, count: published.Count, base: published.Base})
+			}
+			run.to = int32(len(plan.draws))
 		}
 	}
 	return plan

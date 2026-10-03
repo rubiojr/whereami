@@ -37,6 +37,7 @@ const vertexLayouts = int(scene.LayoutCount)
 type gpuMesh struct {
 	buffer  *rhi.QRhiBuffer
 	indices *rhi.QRhiBuffer
+	format  rhi.QRhiCommandBuffer__IndexFormat
 	// sections is the byte at which each vertex section starts in buffer.
 	sections [vertexLayouts]uint32
 }
@@ -297,8 +298,12 @@ func (r *Renderer) createMesh(mesh scene.Mesh) (gpuMesh, error) {
 	}
 	// Create both buffers before queuing uploads, so failure cannot leave an
 	// update batch referencing a resource released by this function.
-	if len(mesh.Indices) > 0 {
-		gpu.indices = r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__IndexBuffer, uint32(len(mesh.Indices)*4))
+	if mesh.Indexed() {
+		gpu.format = rhi.QRhiCommandBuffer__IndexUInt32
+		if len(mesh.ShortIndices) > 0 {
+			gpu.format = rhi.QRhiCommandBuffer__IndexUInt16
+		}
+		gpu.indices = r.context.NewBuffer(rhi.QRhiBuffer__Immutable, rhi.QRhiBuffer__IndexBuffer, uint32(mesh.IndexBytes()))
 		if !gpu.indices.Create() {
 			gpu.release()
 			return gpuMesh{}, fmt.Errorf("create indices for mesh %d", mesh.ID)
@@ -479,8 +484,9 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 		cb.SetStencilRef(uint32(state.StencilValue()))
 	}
 	// Pipelines come in pairs, without and with the stencil test, one pair per
-	// vertex section. A new pipeline needs its vertex input set again.
-	bound, section := -1, scene.FullLayout
+	// vertex section. A new pipeline needs its vertex input set again, and so
+	// does a draw whose indices count from another vertex.
+	bound, section, base := -1, scene.FullLayout, uint32(0)
 	var current resourceKey
 	for index, draw := range r.frame.Scene.Draws {
 		keys := r.drawKeys[index]
@@ -489,17 +495,17 @@ func (r *Renderer) render(state *rhi.QSGRenderNode__RenderState) {
 			cb.SetGraphicsPipeline(r.pipelines[selected])
 			bound, current = selected, resourceKey{}
 		}
-		if current != keys.mesh || section != draw.Layout {
+		if current != keys.mesh || section != draw.Layout || base != draw.Base {
 			binding := struct {
 				First  *rhi.QRhiBuffer
 				Second uint32
-			}{mesh.buffer, mesh.sections[draw.Layout]}
+			}{mesh.buffer, mesh.sections[draw.Layout] + draw.Base*uint32(draw.Layout.Bytes())}
 			if mesh.indices != nil {
-				cb.SetVertexInput4(0, 1, binding, mesh.indices, 0, rhi.QRhiCommandBuffer__IndexUInt32)
+				cb.SetVertexInput4(0, 1, binding, mesh.indices, 0, mesh.format)
 			} else {
 				cb.SetVertexInput(0, 1, binding)
 			}
-			current, section = keys.mesh, draw.Layout
+			current, section, base = keys.mesh, draw.Layout, draw.Base
 		}
 		sampler := 0
 		if draw.Material.Kind == scene.Pattern {

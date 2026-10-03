@@ -171,6 +171,26 @@ type Mesh struct {
 	// otherwise they address the section of the draw. Neither representation
 	// reorders draws.
 	Indices []uint32 `json:",omitempty"`
+	// ShortIndices are uint16 indices in place of Indices, in half the bytes.
+	// Draw.First/Count address them as they do Indices; each draw's indices
+	// count from its Draw.Base, so a section longer than 65,536 vertices is
+	// drawn in segments. A mesh has at most one of Indices and ShortIndices.
+	ShortIndices []uint16 `json:",omitempty"`
+}
+
+// Indexed reports whether draws of the mesh address indices.
+func (m Mesh) Indexed() bool { return len(m.Indices) > 0 || len(m.ShortIndices) > 0 }
+
+// IndexCount is the number of indices, of either width.
+func (m Mesh) IndexCount() int { return len(m.Indices) + len(m.ShortIndices) }
+
+// Index is index i of the mesh, of either width, without a draw's Base. It
+// panics like a slice when i is out of range.
+func (m Mesh) Index(i int) uint32 {
+	if m.ShortIndices != nil {
+		return uint32(m.ShortIndices[i])
+	}
+	return m.Indices[i]
 }
 
 // Len is the number of vertices in the section of a layout.
@@ -239,12 +259,15 @@ func (m Mesh) SectionOffset(layout Layout) uint64 {
 // VertexBytes is the packed size of the vertex buffer.
 func (m Mesh) VertexBytes() uint64 { return m.SectionOffset(LayoutCount) }
 
+// IndexBytes is the size of the index buffer.
+func (m Mesh) IndexBytes() uint64 { return uint64(len(m.Indices))*4 + uint64(len(m.ShortIndices))*2 }
+
 // BufferBytes is the packed size of the vertex and optional index buffers.
-func (m Mesh) BufferBytes() uint64 { return m.VertexBytes() + uint64(len(m.Indices))*4 }
+func (m Mesh) BufferBytes() uint64 { return m.VertexBytes() + m.IndexBytes() }
 
 // Validate checks resource bounds and every vertex before GPU upload. Indices
-// are checked against the largest section here and against the section of each
-// draw by Scene.Validate.
+// are checked against the largest section here and against the section and
+// Base of each draw by Scene.Validate.
 func (m Mesh) Validate() error {
 	if err := m.validateSize(); err != nil {
 		return err
@@ -253,7 +276,8 @@ func (m Mesh) Validate() error {
 }
 
 func (m Mesh) validateSize() error {
-	if m.ID == 0 || m.largestSection() == 0 || m.VertexBytes() > 1<<31-1 || len(m.Indices) > (1<<31-1)/4 {
+	if m.ID == 0 || m.largestSection() == 0 || m.VertexBytes() > 1<<31-1 || len(m.Indices) > (1<<31-1)/4 ||
+		len(m.ShortIndices) > (1<<31-1)/2 || len(m.Indices) > 0 && len(m.ShortIndices) > 0 {
 		return fmt.Errorf("invalid mesh %d", m.ID)
 	}
 	return nil
@@ -280,6 +304,8 @@ func (m Mesh) validateContent() error {
 	if largestMagnitude >= nonFinite {
 		return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
 	}
+	// Short indices count from the Base of each draw, which Scene.Validate
+	// checks.
 	largest := m.largestSection()
 	for _, index := range m.Indices {
 		if uint64(index) >= uint64(largest) {
@@ -308,6 +334,9 @@ type Draw struct {
 	Clip [4]float32
 	// Layout is the vertex section of the mesh this draw reads.
 	Layout Layout `json:",omitempty"`
+	// Base is the vertex of the section that index zero reads, for an
+	// indexed mesh; see Mesh.ShortIndices. It is zero for an unindexed mesh.
+	Base uint32 `json:",omitempty"`
 }
 
 type Scene struct {
@@ -391,19 +420,28 @@ func (draw Draw) validate(meshes map[uint64]*Mesh, textures map[uint64]bool) err
 		return fmt.Errorf("invalid mesh range or transform")
 	}
 	section, elements := mesh.Len(draw.Layout), mesh.Len(draw.Layout)
-	if len(mesh.Indices) > 0 {
-		elements = len(mesh.Indices)
+	if mesh.Indexed() {
+		elements = mesh.IndexCount()
+	} else if draw.Base != 0 {
+		return fmt.Errorf("vertex base of an unindexed mesh")
 	}
 	if uint64(draw.First)+uint64(draw.Count) > uint64(elements) {
 		return fmt.Errorf("invalid mesh range or transform")
 	}
+	if uint64(draw.Base) >= uint64(section) && mesh.Indexed() {
+		return fmt.Errorf("index out of bounds of its vertex section")
+	}
 	// Mesh.Validate bounds indices by the largest section, which is the section
-	// of every draw of a mesh with one section.
-	if len(mesh.Indices) > 0 && section < mesh.largestSection() {
-		for _, index := range mesh.Indices[draw.First : draw.First+draw.Count] {
-			if uint64(index) >= uint64(section) {
-				return fmt.Errorf("index out of bounds of its vertex section")
-			}
+	// of every draw of a mesh with one section. Short indices reach at most
+	// 65,535 past their base.
+	switch {
+	case len(mesh.Indices) > 0 && (section < mesh.largestSection() || draw.Base != 0):
+		if !inSection(mesh.Indices[draw.First:draw.First+draw.Count], draw.Base, section) {
+			return fmt.Errorf("index out of bounds of its vertex section")
+		}
+	case len(mesh.ShortIndices) > 0 && uint64(draw.Base)+math.MaxUint16 >= uint64(section):
+		if !inSection(mesh.ShortIndices[draw.First:draw.First+draw.Count], draw.Base, section) {
+			return fmt.Errorf("index out of bounds of its vertex section")
 		}
 	}
 	if !textures[draw.Material.Texture] {
@@ -418,6 +456,16 @@ func (draw Draw) validate(meshes map[uint64]*Mesh, textures map[uint64]bool) err
 		return fmt.Errorf("invalid clip")
 	}
 	return draw.Material.validate()
+}
+
+// inSection reports whether indices counted from base lie in a section of
+// that many vertices.
+func inSection[T uint16 | uint32](indices []T, base uint32, section int) bool {
+	var largest T
+	for _, index := range indices {
+		largest = max(largest, index)
+	}
+	return uint64(base)+uint64(largest) < uint64(section)
 }
 
 func (m Material) validate() error {
@@ -471,7 +519,7 @@ func validColor(color [4]float32) bool {
 func AppendDraw(draws []Draw, draw Draw) []Draw {
 	if len(draws) > 0 {
 		last := &draws[len(draws)-1]
-		if last.Mesh == draw.Mesh && last.Layout == draw.Layout && last.Transform == draw.Transform && last.Material == draw.Material && last.Clip == draw.Clip && uint64(last.First)+uint64(last.Count) == uint64(draw.First) && uint64(last.Count)+uint64(draw.Count) <= math.MaxUint32 {
+		if last.Mesh == draw.Mesh && last.Layout == draw.Layout && last.Base == draw.Base && last.Transform == draw.Transform && last.Material == draw.Material && last.Clip == draw.Clip && uint64(last.First)+uint64(last.Count) == uint64(draw.First) && uint64(last.Count)+uint64(draw.Count) <= math.MaxUint32 {
 			last.Count += draw.Count
 			return draws
 		}

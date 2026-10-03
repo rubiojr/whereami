@@ -74,12 +74,13 @@ func remap(input *scene.Scene, old *fragment, nextID *uint64) (*fragment, int, e
 }
 
 // Payload equality is exact and validated input has no NaN, so float comparison
-// is total. Indices compare by length and content: an unindexed mesh never equals
-// an indexed one. Every vertex section must match.
+// is total. Indices compare by width, length and content: an unindexed mesh
+// never equals an indexed one. Every vertex section must match.
 func sameMesh(a, b *scene.Mesh) bool {
-	return sharedMesh(a, b) || len(a.Indices) == len(b.Indices) && slices.Equal(a.Vertices, b.Vertices) && slices.Equal(a.Offsets, b.Offsets) &&
-		slices.Equal(a.Positions, b.Positions) && slices.Equal(a.PackedPositions, b.PackedPositions) && slices.Equal(a.PackedOffsets, b.PackedOffsets) &&
-		slices.Equal(a.PackedDashed, b.PackedDashed) && slices.Equal(a.Indices, b.Indices)
+	return sharedMesh(a, b) || len(a.Indices) == len(b.Indices) && len(a.ShortIndices) == len(b.ShortIndices) && slices.Equal(a.Vertices, b.Vertices) &&
+		slices.Equal(a.Offsets, b.Offsets) && slices.Equal(a.Positions, b.Positions) && slices.Equal(a.PackedPositions, b.PackedPositions) &&
+		slices.Equal(a.PackedOffsets, b.PackedOffsets) && slices.Equal(a.PackedDashed, b.PackedDashed) && slices.Equal(a.Indices, b.Indices) &&
+		slices.Equal(a.ShortIndices, b.ShortIndices)
 }
 
 // sharedMesh reports whether two meshes are the same immutable buffers, as when
@@ -88,7 +89,8 @@ func sameMesh(a, b *scene.Mesh) bool {
 func sharedMesh(a, b *scene.Mesh) bool {
 	return sameBuffer(a.Vertices, b.Vertices) && sameBuffer(a.Offsets, b.Offsets) && sameBuffer(a.Positions, b.Positions) &&
 		sameBuffer(a.PackedPositions, b.PackedPositions) && sameBuffer(a.PackedOffsets, b.PackedOffsets) && sameBuffer(a.PackedDashed, b.PackedDashed) &&
-		sameBuffer(a.Indices, b.Indices) && (a.Indices == nil) == (b.Indices == nil)
+		sameBuffer(a.Indices, b.Indices) && (a.Indices == nil) == (b.Indices == nil) &&
+		sameBuffer(a.ShortIndices, b.ShortIndices) && (a.ShortIndices == nil) == (b.ShortIndices == nil)
 }
 
 func sameBuffer[T any](a, b []T) bool {

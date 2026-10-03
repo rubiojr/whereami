@@ -167,6 +167,15 @@ keeps float vertices. Stable-mesh reuse works the same. The backend must
 implement the packed layouts; the QRhi adapter does where the GPU has integer
 vertex attributes. The default is off.
 
+`PrepareOptions.ShortIndices` packs uint16 indices, half the index bytes, in
+segments of at most 65,536 vertices of a section: a draw names the vertex its
+indices count from in `scene.Draw.Base`, and a primitive that spans segments is
+drawn in several draws. Triangles are unchanged, so the output is the same. Over
+the 82-tile Madrid corpus at the trace's zoom it copied 70 of 10.3 million
+vertices and added 27 of 42,050 draws. It needs `Indexed`. The backend must
+implement `scene.Mesh.ShortIndices` and `Draw.Base`; the QRhi adapter does. The
+default is off.
+
 ### Preparation bounds
 
 - MVT bytes retain the decoder's **2 MiB** limit and feature/geometry/work limits.

@@ -37,8 +37,8 @@ func expand(t *testing.T, s *scene.Scene) []drawn {
 		d := drawn{mesh: draw.Mesh, material: draw.Material, clip: draw.Clip}
 		for i := draw.First; i < draw.First+draw.Count; i++ {
 			index := int(i)
-			if len(mesh.Indices) > 0 {
-				index = int(mesh.Indices[i])
+			if mesh.Indexed() {
+				index = int(draw.Base) + int(mesh.Index(int(i)))
 			}
 			d.vertices = append(d.vertices, mesh.At(draw.Layout, index))
 		}
@@ -89,6 +89,11 @@ func packCompact(t *testing.T, indexed, split, resident, compact, reserve bool) 
 
 func packModes(t *testing.T, indexed, split, resident, compact, packed, reserve bool) (*scene.Scene, []DrawSource) {
 	t.Helper()
+	return packShort(t, indexed, split, resident, compact, packed, reserve, false)
+}
+
+func packShort(t *testing.T, indexed, split, resident, compact, packed, reserve, short bool) (*scene.Scene, []DrawSource) {
+	t.Helper()
 	image := sprite.Image{Width: 8, Height: 6, PixelRatio: 3, Pixels: make([]byte, 8*6*4)}
 	lookup := func(string, style.Color, float64) (sprite.Image, bool) { return image, true }
 	b := NewFragmentBuilder(indexed, 0, 0)
@@ -103,6 +108,9 @@ func packModes(t *testing.T, indexed, split, resident, compact, packed, reserve 
 	}
 	if packed {
 		b.PackedVertices()
+	}
+	if short {
+		b.ShortIndices()
 	}
 	primitives := compactPrimitives(indexed)
 	if reserve {

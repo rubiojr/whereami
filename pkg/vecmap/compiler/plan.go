@@ -18,20 +18,27 @@ var ErrStableMismatch = errors.New("stable geometry differs from its plan")
 // backgrounds), in emission order. A run is identified by its layer, kind,
 // cap and join and the source features it holds, so equal plans mean equal
 // StableMesh bytes for the same decoded tile, layers and options. After a
-// build it also holds the draw each run produced. It is immutable once
+// build it also holds the draws each run produced. It is immutable once
 // published and holds no geometry.
 type StablePlan struct {
 	runs []stableRun
+	// draws are the ranges of drawn runs, in run order; see stableRun.
+	draws []stableDraw
 }
+
+// stableDraw is one draw's range of StableMesh.
+type stableDraw struct{ first, count, base uint32 }
 
 type stableRun struct {
 	hash     uint64
 	elements int  // draw elements of the batch's geometry
 	emitted  bool // the batch became a primitive: nonempty, visible paint, within budget
-	// Set by a build.
-	drawn        bool
-	first, count uint32
-	layout       scene.Layout
+	// Set by a build: the run's draws are StablePlan.draws[from:to], all of
+	// one layout. A run whose geometry spans segments of short indices has
+	// several.
+	drawn    bool
+	layout   scene.Layout
+	from, to int32
 }
 
 // RetainedBytes is the plan's storage.
@@ -39,7 +46,7 @@ func (p *StablePlan) RetainedBytes() uint64 {
 	if p == nil {
 		return 0
 	}
-	return uint64(unsafe.Sizeof(*p)) + uint64(cap(p.runs))*uint64(unsafe.Sizeof(stableRun{}))
+	return uint64(unsafe.Sizeof(*p)) + uint64(cap(p.runs))*uint64(unsafe.Sizeof(stableRun{})) + uint64(cap(p.draws))*uint64(unsafe.Sizeof(stableDraw{}))
 }
 
 // StablePlanner follows the stable batches of one CompileTilePlanned call. With

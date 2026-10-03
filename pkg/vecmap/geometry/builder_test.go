@@ -160,3 +160,112 @@ func TestBuilderCompactPublishesExactBuffers(t *testing.T) {
 	assert.Nil(t, empty.Vertices)
 	assert.Nil(t, empty.Indices)
 }
+
+// shortElements reads a ShortIndices builder's indices back as vertices.
+func shortElements[T any](b *Builder[T]) []T {
+	var elements []T
+	for i, segment := range b.Segments {
+		end := len(b.Short)
+		if i+1 < len(b.Segments) {
+			end = b.Segments[i+1].First
+		}
+		for _, index := range b.Short[segment.First:end] {
+			elements = append(elements, b.Vertices[segment.Base+int(index)])
+		}
+	}
+	return elements
+}
+
+// sequence is n vertices numbered from first.
+func sequence(first, n int) []int {
+	values := make([]int, n)
+	for i := range values {
+		values[i] = first + i
+	}
+	return values
+}
+
+func TestShortIndicesDrawTheSameTriangles(t *testing.T) {
+	short, long := NewBuilder[int](true, 1<<20), NewBuilder[int](true, 1<<20)
+	short.ShortIndices()
+	fan := func(n int) []uint32 { // triangles (0, i, i+1)
+		var indices []uint32
+		for i := 1; i+1 < n; i++ {
+			indices = append(indices, 0, uint32(i), uint32(i+1))
+		}
+		return indices
+	}
+	appends := []struct {
+		vertices []int
+		indices  []uint32
+	}{
+		{sequence(0, 3), nil},
+		{sequence(100, 40_000), fan(40_000)},
+		{sequence(200_000, 30_000), fan(30_000)}, // doesn't fit after the first: a new segment
+		{sequence(300_000, 4), []uint32{0, 1, 2, 0, 2, 3}},
+	}
+	for _, a := range appends {
+		require.NoError(t, short.Append(a.vertices, a.indices))
+		require.NoError(t, long.Append(a.vertices, a.indices))
+	}
+	want := make([]int, len(long.Indices))
+	for i, index := range long.Indices {
+		want[i] = long.Vertices[index]
+	}
+	assert.Equal(t, want, shortElements(&short))
+	assert.Equal(t, []Segment{{First: 0, Base: 0}, {First: 3 + 3*39_998, Base: 40_003}}, short.Segments)
+	assert.Equal(t, long.Vertices, short.Vertices, "geometry that fits in a segment is not copied")
+	assert.Equal(t, len(long.Indices), short.Count())
+	assert.Empty(t, short.Indices)
+}
+
+func TestShortIndicesSplitGeometryLargerThanASegment(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		b := NewBuilder[int](true, 1<<22)
+		b.ShortIndices()
+		require.NoError(t, b.Triangle(-1, -2, -3))
+		// A strip whose triangles share vertices with their neighbours.
+		n := 3*MaxSegmentVertices + 1000
+		vertices, indices := sequence(0, n), []uint32(nil)
+		var want []int
+		if indexed {
+			for i := 0; i+2 < n; i++ {
+				indices = append(indices, uint32(i), uint32(i+1), uint32(i+2))
+				want = append(want, i, i+1, i+2)
+			}
+		} else {
+			n -= n % 3
+			vertices, want = vertices[:n], vertices[:n]
+		}
+		require.NoError(t, b.Append(vertices, indices))
+		assert.Equal(t, append([]int{-1, -2, -3}, want...), shortElements(&b))
+		for i, segment := range b.Segments {
+			end := len(b.Vertices)
+			if i+1 < len(b.Segments) {
+				end = b.Segments[i+1].Base
+			}
+			assert.LessOrEqual(t, end-segment.Base, MaxSegmentVertices, "segment %d", i)
+		}
+		assert.Len(t, b.Segments, 5, "the triangle, then the split geometry in four segments")
+		if indexed {
+			assert.Equal(t, 3+n+3*2, len(b.Vertices), "each split copies the two vertices its neighbouring triangles share")
+		} else {
+			assert.Equal(t, 3+n, len(b.Vertices))
+		}
+	}
+}
+
+func TestShortIndicesReserveTheShortBuffer(t *testing.T) {
+	b := NewBuilder[int](true, 18)
+	b.ShortIndices()
+	b.Reserve(4, 6)
+	assert.Equal(t, 6, cap(b.Short))
+	assert.Zero(t, cap(b.Indices))
+	require.NoError(t, b.Quad(1, 2, 3, 4))
+	assert.Equal(t, []uint16{0, 1, 2, 0, 2, 3}, b.Short)
+	expanded := NewBuilder[int](false, 18)
+	expanded.ShortIndices()
+	require.NoError(t, expanded.Quad(1, 2, 3, 4))
+	assert.Equal(t, 6, expanded.Count())
+	assert.Empty(t, expanded.Short, "an expanded builder has no indices")
+}
