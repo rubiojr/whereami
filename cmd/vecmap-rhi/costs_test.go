@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -63,8 +64,11 @@ func TestParseStatusKiB(t *testing.T) {
 
 func TestMeasurementSplitsMemoryAndWritesProfiles(t *testing.T) {
 	dir := t.TempDir()
-	m, err := startMeasurement(filepath.Join(dir, "cpu.pprof"), filepath.Join(dir, "heap.pprof"))
+	m, err := startMeasurement(filepath.Join(dir, "cpu.pprof"), filepath.Join(dir, "heap.pprof"), filepath.Join(dir, "peak.pprof"))
 	require.NoError(t, err)
+	runtime.GC() // the live heap is known after a collection
+	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "peak.pprof")); return err == nil }, 5*time.Second, 10*time.Millisecond,
+		"the first live heap sample writes the peak profile")
 	costs, err := m.finish()
 	require.NoError(t, err)
 	require.NoError(t, m.close())
@@ -72,9 +76,11 @@ func TestMeasurementSplitsMemoryAndWritesProfiles(t *testing.T) {
 	assert.NotZero(t, costs.peak.goKiB)
 	assert.LessOrEqual(t, costs.peak.heapObjectKiB, costs.peak.goKiB)
 	assert.Positive(t, costs.peak.at, "when the peak was sampled")
+	assert.Positive(t, costs.live.liveKiB)
+	assert.Positive(t, costs.live.at)
 	assert.NotZero(t, costs.goRuntime.residentBytes)
 	assert.NotZero(t, costs.status["VmRSS"])
-	for _, name := range []string{"cpu.pprof", "heap.pprof"} {
+	for _, name := range []string{"cpu.pprof", "heap.pprof", "peak.pprof"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err)
 		assert.NotZero(t, info.Size(), name)

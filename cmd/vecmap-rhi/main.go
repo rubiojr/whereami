@@ -65,11 +65,12 @@ func main() {
 	gcPercent := flag.Int("gc-percent", 50, "garbage collector target percentage; lower keeps less garbage between collections; zero keeps the runtime's setting")
 	cpuProfile := flag.String("cpuprofile", "", "write a Go CPU profile of the run, up to when the costs are read, to this file")
 	memProfile := flag.String("memprofile", "", "write a Go heap profile to this file when the costs are read")
+	peakProfile := flag.String("memprofile-peak", "", "write a Go heap profile to this file at the run's largest live heap")
 	flag.Parse()
 	if *gcPercent > 0 {
 		debug.SetGCPercent(*gcPercent)
 	}
-	measure, err := startMeasurement(*cpuProfile, *memProfile)
+	measure, err := startMeasurement(*cpuProfile, *memProfile, *peakProfile)
 	if err == nil {
 		err = run(*path, benchmarkOptions{liveOptions: live, mapLibreStyle: *mapLibreStyle, duration: *duration, animate: *animate, screenshot: *screenshot, foreground: *foreground, diagnostics: *diagnostics, reload: *reload, budget: retained.Budget{Bytes: *uploadBytes, Resources: *uploadResources, Releases: *releaseResources}, measure: measure})
 		err = errors.Join(err, measure.close())

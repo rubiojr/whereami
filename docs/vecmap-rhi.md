@@ -823,6 +823,39 @@ Process CPU moved within its spread; preparation and allocation fell a few
 percent. Final frames are byte-identical, every run had zero late frames, and
 labels, settlement and peak RSS didn't change.
 
+##### What holds the live heap
+
+Go's resident memory follows its heap goal, the live heap times 1.5 at
+`-gc-percent 50`, so peak RSS is set by the largest live heap, not by garbage.
+The `memory` line now also prints `peak_live_kib` and `peak_live_at` (the
+runtime's live heap after each collection, sampled every 50 ms), and
+`-memprofile-peak` writes a heap profile whenever that peak grows 2%, so the
+last one shows what was live at the worst moment. Coarser 1 peaked at 233 MiB
+live 3.55 s into the trace (Go resident 358 MiB), Coarser 0 at 272 MiB.
+
+At the Coarser 1 peak about 137 MB were fragment meshes (mostly extruded-line
+vertices of four float32 values, 16 bytes each, and uint32 indices), 60 MB
+decoded sources, 8 MB raw responses and 10 MB metadata. The Store and leases
+share the fragments' buffers rather than copying them.
+
+The producer had kept every tile it loaded: nothing was evicted under the
+viewer's 384 MiB `-cpu-cache-bytes`. Three OpenGL runs per budget:
+
+| Budget | Coarser 1 CPU | Coarser 1 RSS | Coarser 1 peak live | Coarser 0 CPU | Coarser 0 RSS | Coarser 0 evictions |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 96 MiB | 5.62–5.74 s | 427–453 MiB | 174–185 MiB | does not settle | 463–470 MiB | 2 |
+| 128 MiB | 4.17–4.30 s | 434–453 MiB | 177–190 MiB | 6.53–6.60 s | 576–590 MiB | 40–44 |
+| 192 MiB | 3.48–3.54 s | 424–498 MiB | 167–223 MiB | 5.38–5.51 s | 562–586 MiB | 1–7 |
+| 256 MiB | 3.34–3.57 s | 417–488 MiB | 171–212 MiB | 4.80–5.05 s | 525–541 MiB | 0 |
+| 384 MiB | 3.40–3.51 s | 429–494 MiB | 169–215 MiB | 4.85–5.05 s | 527–538 MiB | 0 |
+
+A smaller budget doesn't lower RSS: the live peak is what the requested tiles
+need while their replacements build, and evicting tiles that come back costs
+preparation, allocation and, at Coarser 0, more garbage than it frees. Every
+run had zero late frames. The levers are smaller data per tile (vertex and
+index formats, decoded triangulation) and not keeping CPU copies of resident
+geometry, not the budget.
+
 #### Vulkan FIFO stalls in live mode on native Wayland
 
 In live mode on Vulkan under headless mutter, the default FIFO present mode (and

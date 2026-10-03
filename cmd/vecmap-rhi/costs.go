@@ -36,6 +36,7 @@ type processCosts struct {
 	goRuntime    goRuntime
 	status       map[string]uint64 // /proc/self/status sizes in KiB
 	peak         memorySample      // the sampled moment of highest RSS
+	live         memorySample      // the sampled moment of the largest live heap
 }
 
 // readProcessCosts must run before the window's graphics context is destroyed,
@@ -192,15 +193,16 @@ func parseStatusKiB(text string) map[string]uint64 {
 }
 
 // goRuntime is the Go runtime's share of the costs. gcCPU is the runtime's
-// own estimate; residentBytes is what it has mapped and not released.
+// own estimate; residentBytes is what it has mapped and not released, and
+// liveBytes the heap the last collection found reachable.
 type goRuntime struct {
-	gcCPU                          time.Duration
-	gcCycles, allocBytes           uint64
-	residentBytes, heapObjectBytes uint64
+	gcCPU                                     time.Duration
+	gcCycles, allocBytes                      uint64
+	residentBytes, heapObjectBytes, liveBytes uint64
 }
 
 var goRuntimeMetrics = []string{"/cpu/classes/gc/total:cpu-seconds", "/gc/cycles/total:gc-cycles", "/gc/heap/allocs:bytes",
-	"/memory/classes/total:bytes", "/memory/classes/heap/released:bytes", "/memory/classes/heap/objects:bytes"}
+	"/memory/classes/total:bytes", "/memory/classes/heap/released:bytes", "/memory/classes/heap/objects:bytes", "/gc/heap/live:bytes"}
 
 func readGoRuntime() goRuntime {
 	samples := make([]metrics.Sample, len(goRuntimeMetrics))
@@ -219,14 +221,14 @@ func readGoRuntime() goRuntime {
 		gcCPU = time.Duration(samples[0].Value.Float64() * float64(time.Second))
 	}
 	return goRuntime{gcCPU: gcCPU, gcCycles: value(1), allocBytes: value(2),
-		residentBytes: value(3) - value(4), heapObjectBytes: value(5)}
+		residentBytes: value(3) - value(4), heapObjectBytes: value(5), liveBytes: value(6)}
 }
 
 // memorySample is resident memory at one moment, split between the Go
 // runtime and everything else. at is when, from the start of the measurement.
 type memorySample struct {
-	rssKiB, goKiB, heapObjectKiB uint64
-	at                           time.Duration
+	rssKiB, goKiB, heapObjectKiB, liveKiB uint64
+	at                                    time.Duration
 }
 
 func readMemorySample() (memorySample, bool) {
@@ -240,7 +242,8 @@ func readMemorySample() (memorySample, bool) {
 		return memorySample{}, false
 	}
 	g := readGoRuntime()
-	return memorySample{rssKiB: pages * uint64(os.Getpagesize()) >> 10, goKiB: g.residentBytes >> 10, heapObjectKiB: g.heapObjectBytes >> 10}, true
+	return memorySample{rssKiB: pages * uint64(os.Getpagesize()) >> 10, goKiB: g.residentBytes >> 10, heapObjectKiB: g.heapObjectBytes >> 10,
+		liveKiB: g.liveBytes >> 10}, true
 }
 
 // measurement spans one run: it samples memory to split peak RSS and writes
@@ -250,13 +253,21 @@ type measurement struct {
 	heapPath   string
 	stop, done chan struct{}
 	started    time.Time
-	peak       memorySample // owned by sample until done closes
+	// Owned by sample until done closes: the samples of highest RSS and of
+	// the largest live heap, and the live heap peakPath's profile was written at.
+	peak, live memorySample
+	peakPath   string
+	written    uint64
 	finished   bool
 	err        error
 }
 
-func startMeasurement(cpuPath, heapPath string) (*measurement, error) {
-	m := &measurement{heapPath: heapPath, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
+// startMeasurement starts sampling memory and, with cpuPath, CPU profiling.
+// heapPath receives a heap profile when the costs are read, and peakPath one
+// each time the live heap grows 2% past the last one written, so it ends at
+// the largest live heap of the run.
+func startMeasurement(cpuPath, heapPath, peakPath string) (*measurement, error) {
+	m := &measurement{heapPath: heapPath, peakPath: peakPath, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
 	if cpuPath != "" {
 		file, err := os.Create(cpuPath)
 		if err != nil {
@@ -277,9 +288,18 @@ func (m *measurement) sample() {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if sample, ok := readMemorySample(); ok && sample.rssKiB > m.peak.rssKiB {
+		if sample, ok := readMemorySample(); ok {
 			sample.at = time.Since(m.started)
-			m.peak = sample
+			if sample.rssKiB > m.peak.rssKiB {
+				m.peak = sample
+			}
+			if sample.liveKiB > m.live.liveKiB {
+				m.live = sample
+				if m.peakPath != "" && sample.liveKiB > m.written+m.written/50 {
+					m.err = errors.Join(m.err, writeHeapProfile(m.peakPath))
+					m.written = sample.liveKiB
+				}
+			}
 		}
 		select {
 		case <-m.stop:
@@ -300,7 +320,7 @@ func (m *measurement) finish() (processCosts, error) {
 	m.finished = true
 	close(m.stop)
 	<-m.done
-	costs.peak = m.peak
+	costs.peak, costs.live = m.peak, m.live
 	if m.cpuProfile != nil {
 		pprof.StopCPUProfile()
 		m.err = m.cpuProfile.Close()
@@ -348,6 +368,7 @@ func (c processCosts) report() {
 	fmt.Printf("threads %s\n", strings.Join(threads, " "))
 	g := c.goRuntime
 	fmt.Printf("go gc_cpu=%s gc_cycles=%d alloc_bytes=%d resident_kib=%d heap_object_kib=%d\n", g.gcCPU.Round(time.Millisecond), g.gcCycles, g.allocBytes, g.residentBytes>>10, g.heapObjectBytes>>10)
-	fmt.Printf("memory rss_kib=%d rss_anon_kib=%d rss_file_kib=%d rss_shmem_kib=%d peak_sample_rss_kib=%d peak_sample_go_kib=%d peak_sample_go_heap_object_kib=%d peak_sample_at=%v\n",
-		c.status["VmRSS"], c.status["RssAnon"], c.status["RssFile"], c.status["RssShmem"], c.peak.rssKiB, c.peak.goKiB, c.peak.heapObjectKiB, c.peak.at.Round(time.Millisecond))
+	fmt.Printf("memory rss_kib=%d rss_anon_kib=%d rss_file_kib=%d rss_shmem_kib=%d peak_sample_rss_kib=%d peak_sample_go_kib=%d peak_sample_go_heap_object_kib=%d peak_sample_at=%v peak_live_kib=%d peak_live_at=%v\n",
+		c.status["VmRSS"], c.status["RssAnon"], c.status["RssFile"], c.status["RssShmem"], c.peak.rssKiB, c.peak.goKiB, c.peak.heapObjectKiB, c.peak.at.Round(time.Millisecond),
+		c.live.liveKiB, c.live.at.Round(time.Millisecond))
 }
