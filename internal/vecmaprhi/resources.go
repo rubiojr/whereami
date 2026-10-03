@@ -129,6 +129,8 @@ func sectionData(mesh *scene.Mesh, layout scene.Layout) unsafe.Pointer {
 		return unsafe.Pointer(unsafe.SliceData(mesh.PackedOffsets))
 	case scene.PackedDashedLayout:
 		return unsafe.Pointer(unsafe.SliceData(mesh.PackedDashed))
+	case scene.PackedSymbolLayout:
+		return unsafe.Pointer(unsafe.SliceData(mesh.PackedSymbols))
 	}
 	return unsafe.Pointer(unsafe.SliceData(mesh.Vertices))
 }

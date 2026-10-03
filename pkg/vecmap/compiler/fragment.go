@@ -70,6 +70,10 @@ func (b *FragmentBuilder) CompactVertices() { b.packing.CompactVertices() }
 // SceneBuilder.PackedVertices.
 func (b *FragmentBuilder) PackedVertices() { b.packing.PackedVertices() }
 
+// PackedSymbols packs icon and text quads in int16 and uint16 attributes as
+// SceneBuilder.PackedSymbols.
+func (b *FragmentBuilder) PackedSymbols() { b.packing.PackedSymbols() }
+
 // ShortIndices packs uint16 indices in segments as SceneBuilder.ShortIndices.
 func (b *FragmentBuilder) ShortIndices() { b.packing.ShortIndices() }
 

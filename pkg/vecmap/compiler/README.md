@@ -279,6 +279,11 @@ lower them. Methods latch errors; Finish returns nil scene and metadata on failu
   `PackedDashedLayout` (1/32 tile unit positions, 1/4096 offsets, float32 dash
   distance): half the vertex bytes. A primitive with a coordinate outside the
   int16 range keeps float vertices, compact if `CompactVertices` is set.
+- `PackedSymbols()` packs icon and text quads in `scene.PackedSymbolLayout`: int16
+  anchors in 1/64 tile unit, int16 pixel offsets in 1/32 pixel (as MapLibre
+  stores glyph offsets) and uint16 texture coordinates, 12 bytes per vertex
+  instead of 24. A label or icon whose anchor or offset lies outside the int16
+  range keeps every attribute; a fill draws its halo's section either way.
 - `ShortIndices()` packs uint16 indices (`scene.Mesh.ShortIndices`) in segments of
   at most 65,536 vertices of a section. Geometry that doesn't fit after the last
   segment's vertices starts a new segment; geometry larger than a segment is split

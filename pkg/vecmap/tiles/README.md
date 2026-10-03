@@ -167,6 +167,13 @@ keeps float vertices. Stable-mesh reuse works the same. The backend must
 implement the packed layouts; the QRhi adapter does where the GPU has integer
 vertex attributes. The default is off.
 
+`PrepareOptions.PackedSymbols` packs icon and text quads in
+`scene.PackedSymbolLayout`, half the vertex bytes: anchors within 1/128 tile unit
+(a pixel only at 128 pixels per unit, deep overzoom), pixel offsets within 1/64
+pixel and texture coordinates within 1/131070 of the atlas. A label outside the
+packed range keeps float vertices. The backend must implement the packed
+layouts; the QRhi adapter does. The default is off.
+
 `PrepareOptions.ShortIndices` packs uint16 indices, half the index bytes, in
 segments of at most 65,536 vertices of a section: a draw names the vertex its
 indices count from in `scene.Draw.Base`, and a primitive that spans segments is

@@ -33,27 +33,30 @@ type SceneBuilder struct {
 	dynamic sections
 	// symbols receives icon and text quads with resident symbols; see
 	// ResidentSymbols.
-	symbols   sections
-	split     bool
-	resident  bool
-	compact   bool
-	packed    bool
-	short     bool
-	class     meshClass
-	result    scene.Scene
-	textures  map[string]uint64
-	indexed   bool
-	limit     int
-	err       error
-	closed    bool
-	breakDraw bool
-	drawLimit int
+	symbols       sections
+	split         bool
+	resident      bool
+	compact       bool
+	packed        bool
+	packedSymbols bool
+	short         bool
+	class         meshClass
+	result        scene.Scene
+	textures      map[string]uint64
+	indexed       bool
+	limit         int
+	err           error
+	closed        bool
+	breakDraw     bool
+	drawLimit     int
 	// borrowed is a StableMesh from an earlier build, published as is, and
 	// stablePlan the plan its draws come from; see FragmentBuilder.Borrow.
 	borrowed   *scene.Mesh
 	stablePlan *StablePlan
-	// labelVertices holds one label's transformed vertices until they are packed.
+	// labelVertices holds one label's transformed vertices until they are
+	// packed, and packedLabel them quantized with PackedSymbols.
 	labelVertices []scene.Vertex
+	packedLabel   []scene.PackedSymbolVertex
 	// halos are where symbolLayer packed each candidate's halo, by index.
 	halos []textRange
 }
@@ -83,6 +86,7 @@ type sections struct {
 	packedPositions geometry.Builder[scene.PackedPositionVertex]
 	packedOffsets   geometry.Builder[scene.PackedOffsetVertex]
 	packedDashed    geometry.Builder[scene.PackedDashedVertex]
+	packedSymbols   geometry.Builder[scene.PackedSymbolVertex]
 	// short reports that the sections store uint16 indices in segments.
 	short bool
 }
@@ -93,7 +97,8 @@ func newSections(indexed bool, maximumElements int) sections {
 		positions:       geometry.NewBuilder[scene.PositionVertex](indexed, maximumElements),
 		packedPositions: geometry.NewBuilder[scene.PackedPositionVertex](indexed, maximumElements),
 		packedOffsets:   geometry.NewBuilder[scene.PackedOffsetVertex](indexed, maximumElements),
-		packedDashed:    geometry.NewBuilder[scene.PackedDashedVertex](indexed, maximumElements)}
+		packedDashed:    geometry.NewBuilder[scene.PackedDashedVertex](indexed, maximumElements),
+		packedSymbols:   geometry.NewBuilder[scene.PackedSymbolVertex](indexed, maximumElements)}
 }
 
 // Count is the number of draw elements in every section.
@@ -107,7 +112,7 @@ func (s *sections) Count() int {
 
 func (s *sections) vertices() int {
 	return len(s.full.Vertices) + len(s.offsets.Vertices) + len(s.positions.Vertices) +
-		len(s.packedPositions.Vertices) + len(s.packedOffsets.Vertices) + len(s.packedDashed.Vertices)
+		len(s.packedPositions.Vertices) + len(s.packedOffsets.Vertices) + len(s.packedDashed.Vertices) + len(s.packedSymbols.Vertices)
 }
 
 // topology is the index side of the section of a layout.
@@ -123,6 +128,8 @@ func (s *sections) topology(layout scene.Layout) *geometry.Topology {
 		return &s.packedOffsets.Topology
 	case scene.PackedDashedLayout:
 		return &s.packedDashed.Topology
+	case scene.PackedSymbolLayout:
+		return &s.packedSymbols.Topology
 	}
 	return &s.full.Topology
 }
@@ -136,6 +143,7 @@ func (s *sections) shortIndices() {
 	s.packedPositions.ShortIndices()
 	s.packedOffsets.ShortIndices()
 	s.packedDashed.ShortIndices()
+	s.packedSymbols.ShortIndices()
 }
 
 // count is the number of draw elements in the section of a layout.
@@ -151,6 +159,8 @@ func (s *sections) count(layout scene.Layout) int {
 		return s.packedOffsets.Count()
 	case scene.PackedDashedLayout:
 		return s.packedDashed.Count()
+	case scene.PackedSymbolLayout:
+		return s.packedSymbols.Count()
 	}
 	return s.full.Count()
 }
@@ -168,6 +178,8 @@ func (s *sections) reserve(layout scene.Layout, vertices, indices int) {
 		s.packedOffsets.Reserve(vertices, indices)
 	case scene.PackedDashedLayout:
 		s.packedDashed.Reserve(vertices, indices)
+	case scene.PackedSymbolLayout:
+		s.packedSymbols.Reserve(vertices, indices)
 	default:
 		s.full.Reserve(vertices, indices)
 	}
@@ -182,9 +194,10 @@ func (s *sections) mesh(id uint64) (scene.Mesh, [scene.LayoutCount]uint32) {
 	s.packedPositions.Compact()
 	s.packedOffsets.Compact()
 	s.packedDashed.Compact()
+	s.packedSymbols.Compact()
 	mesh := scene.Mesh{ID: id, Revision: 1, Vertices: s.full.Vertices, Offsets: s.offsets.Vertices, Positions: s.positions.Vertices,
 		PackedPositions: s.packedPositions.Vertices, PackedOffsets: s.packedOffsets.Vertices, PackedDashed: s.packedDashed.Vertices,
-		Indices: s.full.Indices, ShortIndices: s.full.Short}
+		PackedSymbols: s.packedSymbols.Vertices, Indices: s.full.Indices, ShortIndices: s.full.Short}
 	var first [scene.LayoutCount]uint32
 	total := 0
 	for layout := range scene.LayoutCount {
@@ -275,6 +288,17 @@ func (b *SceneBuilder) CompactVertices() {
 func (b *SceneBuilder) PackedVertices() {
 	if b.unused() {
 		b.packed = true
+	}
+}
+
+// PackedSymbols packs icon and text quads in scene.PackedSymbolLayout, half the
+// bytes of every attribute: anchors in 1/64 tile unit, pixel offsets in 1/32
+// pixel and texture coordinates in 1/65535. A label or icon whose anchor or
+// offset lies outside the packed range keeps every attribute. The backend must
+// implement the packed layouts. Call before packing.
+func (b *SceneBuilder) PackedSymbols() {
+	if b.unused() {
+		b.packedSymbols = true
 	}
 }
 
@@ -689,42 +713,75 @@ func appendGeometry[T any](target *geometry.Builder[T], indexed bool, mesh geome
 // ExpandedText consumes packed XYUV triangles for an expanded builder only.
 // Transform arithmetic preserves the original Sincos/TransformTextVertex order.
 func (b *SceneBuilder) ExpandedText(anchor geometry.Point, vertices []float32, offset geometry.Point, angle float64, material scene.Material) {
+	b.expandedText(anchor, vertices, offset, angle, material)
+}
+
+func (b *SceneBuilder) expandedText(anchor geometry.Point, vertices []float32, offset geometry.Point, angle float64, material scene.Material) (scene.Layout, int) {
 	if !b.ready() {
-		return
+		return scene.FullLayout, 0
 	}
 	if b.indexed || len(vertices)%4 != 0 {
 		b.err = ErrPackingInput
-		return
+		return scene.FullLayout, 0
 	}
 	if !b.check(len(vertices)/4, nil) {
-		return
+		return scene.FullLayout, 0
 	}
-	target, id := b.target()
-	first := target.full.Count()
 	sin, cos := math.Sincos(angle)
+	transformed := b.labelVertices[:0]
 	for i := 0; i < len(vertices); i += 4 {
 		vertex := geometry.TextVertex{X: vertices[i], Y: vertices[i+1], U: vertices[i+2], V: vertices[i+3]}
-		target.full.Vertices = append(target.full.Vertices, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
+		transformed = append(transformed, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
 	}
-	b.draw(target, id, scene.FullLayout, first, material, [4]float32{})
+	b.labelVertices = transformed
+	return b.label(nil, material)
 }
 
 // IndexedText accepts known topology in either output mode (including icon quads
 // in expanded scenes), reusing the original transformed scratch buffer and builder.
 func (b *SceneBuilder) IndexedText(anchor geometry.Point, vertices []geometry.TextVertex, indices []uint32, offset geometry.Point, angle float64, material scene.Material) {
+	b.indexedText(anchor, vertices, indices, offset, angle, material)
+}
+
+func (b *SceneBuilder) indexedText(anchor geometry.Point, vertices []geometry.TextVertex, indices []uint32, offset geometry.Point, angle float64, material scene.Material) (scene.Layout, int) {
 	if !b.check(len(vertices), indices) {
-		return
+		return scene.FullLayout, 0
 	}
-	target, id := b.target()
-	first := target.full.Count()
 	sin, cos := math.Sincos(angle)
-	packed := b.labelVertices[:0]
+	transformed := b.labelVertices[:0]
 	for _, vertex := range vertices {
-		packed = append(packed, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
+		transformed = append(transformed, geometry.TransformTextVertex(anchor, vertex, offset, sin, cos))
 	}
-	b.labelVertices = packed
-	b.err = target.full.Append(packed, indices)
+	b.labelVertices = transformed
+	return b.label(indices, material)
+}
+
+// label packs and draws one label's or icon's checked vertices, labelVertices,
+// in PackedSymbolLayout when PackedSymbols is set and they fit, and otherwise
+// with every attribute. It returns the section and where the draw starts in it.
+func (b *SceneBuilder) label(indices []uint32, material scene.Material) (scene.Layout, int) {
+	target, id := b.target()
+	if b.packedSymbols {
+		packed, fits := b.packedLabel[:0], true
+		for _, vertex := range b.labelVertices {
+			var p scene.PackedSymbolVertex
+			if p, fits = scene.PackSymbol(vertex); !fits {
+				break
+			}
+			packed = append(packed, p)
+		}
+		b.packedLabel = packed
+		if fits {
+			first := target.count(scene.PackedSymbolLayout)
+			b.err = target.packedSymbols.Append(packed, indices)
+			b.draw(target, id, scene.PackedSymbolLayout, first, material, [4]float32{})
+			return scene.PackedSymbolLayout, first
+		}
+	}
+	first := target.count(scene.FullLayout)
+	b.err = target.full.Append(b.labelVertices, indices)
 	b.draw(target, id, scene.FullLayout, first, material, [4]float32{})
+	return scene.FullLayout, first
 }
 
 // draw records a range of one section, one draw per segment it spans with

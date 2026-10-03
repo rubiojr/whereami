@@ -62,6 +62,7 @@ func main() {
 	flag.BoolVar(&live.compactVertices, "compact-vertices", true, "pack fills and extruded lines without the vertex attributes they leave at zero")
 	flag.BoolVar(&live.packedVertices, "packed-vertices", true, "pack fills and lines with int16 positions and directions, half the vertex bytes")
 	flag.BoolVar(&live.shortIndices, "short-indices", true, "pack uint16 indices in segments of 65,536 vertices, half the index bytes")
+	flag.BoolVar(&live.packedSymbols, "packed-symbols", true, "pack icons and text with int16 anchors and offsets and uint16 texture coordinates, half the vertex bytes")
 	flag.IntVar(&live.coarser, "coarser-tiles", 0, "draw live tiles from this many zoom levels below the camera zoom (0-2); 1 draws a tile 512 units wide as MapLibre does")
 	mapLibreStyle := flag.String("maplibre-style", "", "replay the live trace in QtLocation's MapLibre Native map with this offline style from maplibre-offline, instead of vecmap (needs QSG_RHI_BACKEND=opengl)")
 	gcPercent := flag.Int("gc-percent", 50, "garbage collector target percentage; lower keeps less garbage between collections; zero keeps the runtime's setting")
@@ -233,7 +234,7 @@ func display(document scene.Document, options benchmarkOptions) error {
 	mu.Lock()
 	defer mu.Unlock()
 	latest := samples.latest
-	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t packed_vertices=%t short_indices=%t tile_compilers=%d reuse_decoded=%t reuse_stable=%t defer_hidden_refresh=%t camera_select_interval=%s\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.packedVertices, options.liveOptions.shortIndices, options.liveOptions.compilers, options.liveOptions.reuseDecoded, options.liveOptions.reuseStable, options.liveOptions.deferHiddenRefresh, options.liveOptions.cameraSelectInterval)
+	fmt.Printf("platform=%s foreground=%t trace_geographic=%t resident_geometry=%t resident_symbols=%t resident_dashes=%t coarser_tiles=%d draw_margin=%g compact_vertices=%t packed_vertices=%t packed_symbols=%t short_indices=%t tile_compilers=%d reuse_decoded=%t reuse_stable=%t defer_hidden_refresh=%t camera_select_interval=%s\n", qt.QGuiApplication_PlatformName(), options.foreground, document.Camera != nil && len(document.TileSpaces) > 0, options.liveOptions.residentGeometry, options.liveOptions.residentSymbols, options.liveOptions.residentDashes, options.liveOptions.coarser, options.liveOptions.drawMargin, options.liveOptions.compactVertices, options.liveOptions.packedVertices, options.liveOptions.packedSymbols, options.liveOptions.shortIndices, options.liveOptions.compilers, options.liveOptions.reuseDecoded, options.liveOptions.reuseStable, options.liveOptions.deferHiddenRefresh, options.liveOptions.cameraSelectInterval)
 	if options.diagnostics {
 		pacing.report()
 		waits.report()

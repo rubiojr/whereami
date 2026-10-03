@@ -93,6 +93,7 @@ func (b *SceneBuilder) SymbolLayer(count int, symbolAt func(int) RenderSymbol, a
 // segment with ShortIndices.
 type textRange struct {
 	mesh               uint64
+	layout             scene.Layout
 	first, count, base int
 }
 
@@ -160,7 +161,11 @@ func (b *SceneBuilder) reserveSymbols(count int, symbolAt func(int) RenderSymbol
 	b.class = symbolClass
 	target, _ := b.target()
 	b.class = class
-	target.full.Reserve(vertices, indices)
+	if b.packedSymbols {
+		target.packedSymbols.Reserve(vertices, indices)
+	} else {
+		target.full.Reserve(vertices, indices)
+	}
 }
 
 func (b *SceneBuilder) symbolPass(index int, kind scene.Kind, item RenderSymbol, atlas uint64, lookup SpriteLookup) bool {
@@ -238,19 +243,20 @@ func (b *SceneBuilder) text(index int, candidate placement.Symbol, layout *glyph
 		material.OffsetScale = scale
 	}
 	if halo := b.halos[index]; kind == scene.SDFFill && halo.count > 0 {
-		b.appendDraw(scene.Draw{Mesh: halo.mesh, First: uint32(halo.first), Count: uint32(halo.count), Material: material, Layout: scene.FullLayout, Base: uint32(halo.base)})
+		b.appendDraw(scene.Draw{Mesh: halo.mesh, First: uint32(halo.first), Count: uint32(halo.count), Material: material, Layout: halo.layout, Base: uint32(halo.base)})
 		return true
 	}
-	target, id := b.target()
-	first := target.full.Count()
+	var section scene.Layout
+	var first int
 	if b.indexed {
-		b.IndexedText(candidate.Anchor, layout.Vertices, layout.Indices, offset, angle, material)
+		section, first = b.indexedText(candidate.Anchor, layout.Vertices, layout.Indices, offset, angle, material)
 	} else {
-		b.ExpandedText(candidate.Anchor, layout.Expanded, offset, angle, material)
+		section, first = b.expandedText(candidate.Anchor, layout.Expanded, offset, angle, material)
 	}
 	if kind == scene.SDFHalo && b.err == nil {
-		b.halos[index] = textRange{mesh: id, first: first, count: target.count(scene.FullLayout) - first}
-		if segments := target.full.Segments; len(segments) > 0 {
+		target, id := b.target()
+		b.halos[index] = textRange{mesh: id, layout: section, first: first, count: target.count(section) - first}
+		if segments := target.topology(section).Segments; len(segments) > 0 {
 			b.halos[index].base = segments[len(segments)-1].Base
 		}
 	}

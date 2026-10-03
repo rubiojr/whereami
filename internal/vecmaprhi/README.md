@@ -43,10 +43,18 @@ floats (`glVertexAttribPointer`) while Vulkan reads them as integers, so each
 int16 pair travels as one `SInt` attribute and `shaders/map_packed.vert` unpacks
 it with sign-extending shifts. That shader is compiled without `--qt6`: its GLSL
 120 and 100 es variants have no integer inputs (`make rhi-shaders`). Packed
-layouts take the other six pipelines, which need `QRhi::IntAttributes`; without
+layouts take the other pipelines, which need `QRhi::IntAttributes`; without
 it the adapter refuses packed meshes when staging them. The integration test
 draws the same geometry from packed sections, on both backends without a
 differing pixel.
+
+`PackedSymbols` (`scene.PackedSymbolLayout`) store icon and text quads as an
+int16 anchor in 1/64 tile unit, an int16 pixel offset in 1/32 pixel and a uint16
+texture coordinate, each pair in one `SInt` attribute. Its own vertex shader,
+`shaders/map_symbol.vert`, unpacks them, and its two pipelines bring the total
+to fourteen. The integration test draws two textured quads, one map-aligned,
+from full vertices and from packed ones through short indices with a vertex
+base; at an offset scale of 2.5 the rounding flips 5–6 of 1,330 edge pixels.
 
 A mesh with `ShortIndices` gets a uint16 index buffer. A draw binds the vertex
 buffer at its section plus `Draw.Base` vertices, so its indices count from

@@ -372,3 +372,33 @@ func TestShortIndicesCountFromTheirDrawsBase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, short, indexed, "IndexMesh leaves indexed meshes alone")
 }
+
+func TestPackedSymbolsPackAndRead(t *testing.T) {
+	assert.Equal(t, uintptr(12), unsafe.Sizeof(PackedSymbolVertex{}), "packed symbol ABI")
+	assert.Equal(t, 12, PackedSymbolLayout.Bytes())
+	assert.True(t, PackedSymbolLayout.Packed())
+	assert.True(t, PackedSymbolLayout.Valid())
+
+	v, ok := PackSymbol(Vertex{X: 10.015625, Y: -511.984375, OffsetX: 1023.96875, OffsetY: -0.53, U: 1, V: 0.25})
+	require.True(t, ok)
+	assert.Equal(t, PackedSymbolVertex{X: 641, Y: -32767, OffsetX: 32767, OffsetY: -17, U: 65535, V: 16384}, v)
+	for _, invalid := range []Vertex{{X: 512}, {OffsetY: -1024.1}, {U: -0.1}, {V: 1.01}, {X: float32(math.NaN())}, {U: float32(math.NaN())}} {
+		_, ok := PackSymbol(invalid)
+		assert.False(t, ok, "%+v", invalid)
+	}
+
+	mesh := Mesh{ID: 1, PackedSymbols: []PackedSymbolVertex{v, {}, {}}, ShortIndices: []uint16{0, 1, 2}}
+	assert.Equal(t, 3, mesh.Len(PackedSymbolLayout))
+	assert.Equal(t, uint64(36), mesh.VertexBytes())
+	got := mesh.At(PackedSymbolLayout, 0)
+	assert.Equal(t, [4]float32{10.015625, -511.984375, 1023.96875, -0.53125}, [4]float32{got.X, got.Y, got.OffsetX, got.OffsetY})
+	assert.Equal(t, float32(1), got.U)
+	assert.InDelta(t, 0.25, got.V, 1e-5)
+	scene := Scene{Meshes: []Mesh{mesh}, Draws: []Draw{{Mesh: 1, Count: 3, Layout: PackedSymbolLayout}}}
+	require.NoError(t, scene.Validate())
+	encoded, err := json.Marshal(mesh)
+	require.NoError(t, err)
+	var decoded Mesh
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, mesh, decoded)
+}

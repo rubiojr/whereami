@@ -92,6 +92,38 @@ type PackedDashedVertex struct {
 	U                      float32
 }
 
+// Packed symbols store anchors in int16 AnchorUnits per tile-local unit, pixel
+// offsets in int16 PixelUnits per pixel and texture coordinates in uint16
+// TexcoordUnits. Anchors within ±512 units are within 1/128 unit, a pixel at
+// 128 pixels per unit; offsets within ±1024 pixels are within 1/64 pixel, as
+// MapLibre stores glyph offsets, and texture coordinates within 1/131070 of
+// the texture.
+const (
+	AnchorUnits   = 64
+	PixelUnits    = 32
+	TexcoordUnits = math.MaxUint16
+)
+
+// PackedSymbolVertex is a Vertex with its anchor in AnchorUnits, its pixel
+// offset in PixelUnits and its texture coordinate in TexcoordUnits.
+type PackedSymbolVertex struct {
+	X, Y, OffsetX, OffsetY int16
+	U, V                   uint16
+}
+
+// PackSymbol quantizes a vertex to a PackedSymbolVertex, reporting false if
+// its anchor or offset lies outside the int16 range or its texture coordinate
+// outside [0,1].
+func PackSymbol(v Vertex) (PackedSymbolVertex, bool) {
+	x, y, anchor := pack(float64(v.X), float64(v.Y), AnchorUnits)
+	dx, dy, offset := pack(float64(v.OffsetX), float64(v.OffsetY), PixelUnits)
+	u, w := math.Round(float64(v.U)*TexcoordUnits), math.Round(float64(v.V)*TexcoordUnits)
+	if !anchor || !offset || !(u >= 0 && u <= TexcoordUnits && w >= 0 && w <= TexcoordUnits) {
+		return PackedSymbolVertex{}, false
+	}
+	return PackedSymbolVertex{X: x, Y: y, OffsetX: dx, OffsetY: dy, U: uint16(u), V: uint16(w)}, true
+}
+
 // PackPosition quantizes a position to PositionUnits, reporting false outside
 // the int16 range.
 func PackPosition(x, y float64) (int16, int16, bool) { return pack(x, y, PositionUnits) }
@@ -124,6 +156,8 @@ const (
 	PackedOffsetLayout
 	// PackedDashedLayout reads Mesh.PackedDashed.
 	PackedDashedLayout
+	// PackedSymbolLayout reads Mesh.PackedSymbols.
+	PackedSymbolLayout
 	// LayoutCount is the number of layouts.
 	LayoutCount
 )
@@ -147,13 +181,13 @@ func (l Layout) Bytes() int {
 		return 4
 	case PackedOffsetLayout:
 		return 8
-	case PackedDashedLayout:
+	case PackedDashedLayout, PackedSymbolLayout:
 		return 12
 	}
 	return 0
 }
 
-// Mesh holds up to six vertex sections, one per Layout. Vertices carries every
+// Mesh holds up to seven vertex sections, one per Layout. Vertices carries every
 // attribute. Offsets and Positions leave out attributes that are zero for all
 // of their vertices, which are most vertices of a basemap, and the packed
 // sections store them in half the bytes. A draw names its section in
@@ -167,6 +201,7 @@ type Mesh struct {
 	PackedPositions []PackedPositionVertex `json:",omitempty"`
 	PackedOffsets   []PackedOffsetVertex   `json:",omitempty"`
 	PackedDashed    []PackedDashedVertex   `json:",omitempty"`
+	PackedSymbols   []PackedSymbolVertex   `json:",omitempty"`
 	// Optional uint32 indices. Draw.First/Count address this array when set,
 	// otherwise they address the section of the draw. Neither representation
 	// reorders draws.
@@ -208,6 +243,8 @@ func (m Mesh) Len(layout Layout) int {
 		return len(m.PackedOffsets)
 	case PackedDashedLayout:
 		return len(m.PackedDashed)
+	case PackedSymbolLayout:
+		return len(m.PackedSymbols)
 	}
 	return 0
 }
@@ -242,6 +279,10 @@ func (m Mesh) At(layout Layout, index int) Vertex {
 		v := m.PackedDashed[index]
 		return Vertex{X: float32(v.X) / PositionUnits, Y: float32(v.Y) / PositionUnits,
 			OffsetX: float32(v.OffsetX) / OffsetUnits, OffsetY: float32(v.OffsetY) / OffsetUnits, U: v.U}
+	case PackedSymbolLayout:
+		v := m.PackedSymbols[index]
+		return Vertex{X: float32(v.X) / AnchorUnits, Y: float32(v.Y) / AnchorUnits, OffsetX: float32(v.OffsetX) / PixelUnits,
+			OffsetY: float32(v.OffsetY) / PixelUnits, U: float32(v.U) / TexcoordUnits, V: float32(v.V) / TexcoordUnits}
 	}
 	return m.Vertices[index]
 }

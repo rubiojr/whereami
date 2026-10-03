@@ -601,6 +601,56 @@ func TestPackedVerticesDrawTheSameTile(t *testing.T) {
 	}
 }
 
+// Packed symbols draw the tile's icons and text within half a packed step, in
+// fewer retained bytes; everything else is unchanged.
+func TestPackedSymbolsDrawTheSameTile(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		for _, resident := range []bool{false, true} {
+			build := func(zoom float64, packed bool) *Fragment {
+				p, err := Prepare(residentPBF(), residentStyle(t), PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: indexed,
+					ResidentGeometry: resident, ResidentSymbols: resident, ResidentDashes: resident, CompactVertices: true, PackedVertices: true, PackedSymbols: packed})
+				require.NoError(t, err)
+				result, err := p.BuildOwned(prepareAssets(), 1<<20)
+				require.NoError(t, err)
+				return result.Fragment
+			}
+			floats, packed := build(3, false), build(3, true)
+			want, got := drawnVertices(t, floats), drawnVertices(t, packed)
+			require.Len(t, got, len(want))
+			symbols := 0
+			for i, draw := range packed.Scene.Draws {
+				require.Len(t, got[i], len(want[i]))
+				if draw.Layout != scene.PackedSymbolLayout {
+					assert.Equal(t, want[i], got[i], "draw %d", i)
+					continue
+				}
+				symbols++
+				for k := range want[i] {
+					w, g := want[i][k], got[i][k]
+					assert.InDelta(t, w.X, g.X, 0.5/scene.AnchorUnits, "draw %d vertex %d", i, k)
+					assert.InDelta(t, w.Y, g.Y, 0.5/scene.AnchorUnits)
+					assert.InDelta(t, w.OffsetX, g.OffsetX, 0.5/scene.PixelUnits)
+					assert.InDelta(t, w.OffsetY, g.OffsetY, 0.5/scene.PixelUnits)
+					assert.InDelta(t, w.U, g.U, 0.5/scene.TexcoordUnits+1e-7)
+					assert.InDelta(t, w.V, g.V, 0.5/scene.TexcoordUnits+1e-7)
+				}
+			}
+			assert.NotZero(t, symbols, "indexed=%t resident=%t", indexed, resident)
+			assert.Equal(t, floats.Draws, packed.Draws)
+			assert.Equal(t, floats.Symbols, packed.Symbols)
+			assert.Equal(t, floats.Scene.Textures, packed.Scene.Textures)
+			assert.Less(t, packed.RetainedBytes(), floats.RetainedBytes())
+			for _, mesh := range packed.Scene.Meshes {
+				assert.Empty(t, mesh.Vertices, "every label packs")
+			}
+			if resident && indexed {
+				next := build(3.0625, true)
+				assert.Equal(t, fragmentMesh(packed, compiler.StableMesh), fragmentMesh(next, compiler.StableMesh))
+			}
+		}
+	}
+}
+
 // Short indices draw the same vertices in half the index bytes.
 func TestShortIndicesDrawTheSameTile(t *testing.T) {
 	for _, resident := range []bool{false, true} {

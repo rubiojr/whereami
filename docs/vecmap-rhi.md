@@ -5043,6 +5043,36 @@ and the same labels, and the longest hold is unchanged. Peak RSS falls 25–40 M
 As with packing, GC CPU rises about 10% because the heap goal follows the smaller
 live heap; allocation is the same and process CPU stays within its spread.
 
+**Packed symbols.** `tiles.PrepareOptions.PackedSymbols` (viewer
+`-packed-symbols`, default on; library default off) packs icon and text quads as
+`scene.PackedSymbolVertex`, 12 bytes instead of 24: an int16 anchor in 1/64 tile
+unit (within 1/128 unit, so a pixel only at 128 pixels per unit, deep overzoom),
+an int16 pixel offset in 1/32 pixel (MapLibre's step for glyph offsets; 1/16 pixel
+visibly moved edges in the renderer test) and uint16 texture coordinates. A label
+or icon outside the int16 range keeps every attribute, and a text fill draws from
+whichever section its halo was packed in. The layout has its own vertex shader,
+`shaders/map_symbol.vert`, and two pipelines. On the corpus the symbol mesh's
+vertices halve (20.2 → 10.1 MB) and fragments fall from 182.4 to 172.3 MB: 47%
+below the 325 MB this section started from.
+
+Five interleaved runs each, one binary with packed vertices and short indices,
+without and with `-packed-symbols`:
+
+| Row | Peak live off → on | Peak RSS off → on | Build wall off → on | CPU off → on |
+| --- | ---: | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 127–169 → 128–167 MiB | 357–415 → 353–414 MiB | 551–567 → 523–601 ms | 3.20–3.65 → 3.31–3.65 s |
+| Coarser 1, Vulkan | 147–170 → 137–165 MiB | 352–373 → 333–370 MiB | 531–558 → 566–593 ms | 3.38–3.47 → 3.31–3.55 s |
+| Coarser 0, OpenGL | 173–196 → 163–185 MiB | 428–452 → 414–431 MiB | 875–938 → 919–985 ms | 4.98–5.17 → 5.06–5.20 s |
+| Coarser 0, Vulkan | 176–198 → 170–188 MiB | 386–414 → 381–399 MiB | 844–920 → 852–991 ms | 4.60–4.92 → 4.49–4.95 s |
+
+A small gain, 5–15 MiB of RSS and mostly within the spread, for slightly slower
+builds. Every run had zero late frames and the same labels. The final frames are
+deterministic run to run, and packing changes 21,000–28,000 of their 480,000
+pixels: at Coarser 0 by at most 4 of 255 levels, text anti-aliasing from rounded
+texture coordinates. At Coarser 1 one road shield moved its top and bottom
+edges down one pixel row: its anchor rounded by about 0.03 pixel, enough to
+carry both hard edges across a pixel centre.
+
 ## Flatpak integration
 
 Build the adapter against the exact Qt SDK shipped with the application, and

@@ -26,6 +26,12 @@ var vertexShader []byte
 //go:embed shaders/map_packed.vert.qsb
 var packedVertexShader []byte
 
+// symbolVertexShader reads scene.PackedSymbolLayout, built as
+// packedVertexShader.
+//
+//go:embed shaders/map_symbol.vert.qsb
+var symbolVertexShader []byte
+
 //go:embed shaders/map.frag.qsb
 var fragmentShader []byte
 
@@ -374,21 +380,26 @@ func (r *Renderer) preparePipelines() error {
 	defer vertex.Delete()
 	packedVertex := rhi.QShader_FromSerialized(packedVertexShader)
 	defer packedVertex.Delete()
+	symbolVertex := rhi.QShader_FromSerialized(symbolVertexShader)
+	defer symbolVertex.Delete()
 	fragment := rhi.QShader_FromSerialized(fragmentShader)
 	defer fragment.Delete()
-	if !vertex.IsValid() || !packedVertex.IsValid() || !fragment.IsValid() {
+	if !vertex.IsValid() || !packedVertex.IsValid() || !symbolVertex.IsValid() || !fragment.IsValid() {
 		return fmt.Errorf("invalid map shaders")
 	}
 	vs := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Vertex, vertex)
 	defer vs.Delete()
 	packedVS := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Vertex, packedVertex)
 	defer packedVS.Delete()
+	symbolVS := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Vertex, symbolVertex)
+	defer symbolVS.Delete()
 	fs := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Fragment, fragment)
 	defer fs.Delete()
 	// One input layout per vertex section. A section without an attribute
 	// reads the position in its place, and the vertex shader ignores it.
 	// Float sections have three float pairs; packed ones an integer per int16
-	// pair (position, offset) and a float distance.
+	// pair (position, offset) and a float distance, or with symbols an integer
+	// per uint16 texture coordinate pair.
 	var layouts [vertexLayouts]*rhi.QRhiVertexInputLayout
 	for section := range layouts {
 		layout := scene.Layout(section)
@@ -400,7 +411,7 @@ func (r *Renderer) preparePipelines() error {
 			offset, format := i*8, rhi.QRhiVertexInputAttribute__Float2
 			if layout.Packed() {
 				offset, format = i*4, rhi.QRhiVertexInputAttribute__SInt
-				if i == 2 {
+				if i == 2 && layout != scene.PackedSymbolLayout {
 					format = rhi.QRhiVertexInputAttribute__Float
 				}
 			}
@@ -426,7 +437,9 @@ func (r *Renderer) preparePipelines() error {
 		pipeline.SetSampleCount(samples)
 		pipeline.SetFlags(rhi.QRhiGraphicsPipeline__UsesScissor | rhi.QRhiGraphicsPipeline__UsesStencilRef)
 		stage := vs
-		if scene.Layout(index / 2).Packed() {
+		if layout := scene.Layout(index / 2); layout == scene.PackedSymbolLayout {
+			stage = symbolVS
+		} else if layout.Packed() {
 			stage = packedVS
 		}
 		pipeline.SetShaderStages([]rhi.QRhiShaderStage{*stage, *fs})

@@ -77,6 +77,12 @@ type PrepareOptions struct {
 	// directions within 1/8192; geometry outside the packed range keeps float
 	// vertices. The backend must implement the packed layouts.
 	PackedVertices bool
+	// PackedSymbols packs icon and text quads with int16 anchors and pixel
+	// offsets and uint16 texture coordinates, half the bytes of float32
+	// (compiler.SceneBuilder.PackedSymbols). Anchors are within 1/128 tile
+	// unit, offsets within 1/64 pixel; a label outside the packed range keeps
+	// float vertices. The backend must implement the packed layouts.
+	PackedSymbols bool
 	// ShortIndices packs uint16 indices, half the bytes of uint32, in segments
 	// of at most 65,536 vertices that draws name in scene.Draw.Base
 	// (compiler.SceneBuilder.ShortIndices). Triangles are unchanged, so the
@@ -364,6 +370,9 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	}
 	if p.options.PackedVertices {
 		packing.PackedVertices()
+	}
+	if p.options.PackedSymbols {
+		packing.PackedSymbols()
 	}
 	if p.options.ShortIndices {
 		packing.ShortIndices()

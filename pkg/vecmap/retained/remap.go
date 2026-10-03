@@ -79,7 +79,8 @@ func remap(input *scene.Scene, old *fragment, nextID *uint64) (*fragment, int, e
 func sameMesh(a, b *scene.Mesh) bool {
 	return sharedMesh(a, b) || len(a.Indices) == len(b.Indices) && len(a.ShortIndices) == len(b.ShortIndices) && slices.Equal(a.Vertices, b.Vertices) &&
 		slices.Equal(a.Offsets, b.Offsets) && slices.Equal(a.Positions, b.Positions) && slices.Equal(a.PackedPositions, b.PackedPositions) &&
-		slices.Equal(a.PackedOffsets, b.PackedOffsets) && slices.Equal(a.PackedDashed, b.PackedDashed) && slices.Equal(a.Indices, b.Indices) &&
+		slices.Equal(a.PackedOffsets, b.PackedOffsets) && slices.Equal(a.PackedDashed, b.PackedDashed) && slices.Equal(a.PackedSymbols, b.PackedSymbols) &&
+		slices.Equal(a.Indices, b.Indices) &&
 		slices.Equal(a.ShortIndices, b.ShortIndices)
 }
 
@@ -89,6 +90,7 @@ func sameMesh(a, b *scene.Mesh) bool {
 func sharedMesh(a, b *scene.Mesh) bool {
 	return sameBuffer(a.Vertices, b.Vertices) && sameBuffer(a.Offsets, b.Offsets) && sameBuffer(a.Positions, b.Positions) &&
 		sameBuffer(a.PackedPositions, b.PackedPositions) && sameBuffer(a.PackedOffsets, b.PackedOffsets) && sameBuffer(a.PackedDashed, b.PackedDashed) &&
+		sameBuffer(a.PackedSymbols, b.PackedSymbols) &&
 		sameBuffer(a.Indices, b.Indices) && (a.Indices == nil) == (b.Indices == nil) &&
 		sameBuffer(a.ShortIndices, b.ShortIndices) && (a.ShortIndices == nil) == (b.ShortIndices == nil)
 }

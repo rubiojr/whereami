@@ -32,6 +32,7 @@ func TestRenderer(t *testing.T) {
 	testExtrudedLines(t, false)
 	testExtrudedLines(t, true)
 	testResidentSymbols(t)
+	testPackedSymbols(t)
 	testDashedLines(t, false)
 	testDashedLines(t, true)
 	for _, packed := range []bool{false, true} {
