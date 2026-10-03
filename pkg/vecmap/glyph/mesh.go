@@ -51,6 +51,8 @@ func BuildLayoutMesh(layout *TextLayout, atlas *Atlas, indexed bool) (LayoutMesh
 	}
 	if indexed {
 		mesh := geometry.NewBuilder[geometry.TextVertex](true, len(layout.Glyphs)*6)
+		// Room for every glyph's quad; glyphs without ink leave some unused.
+		mesh.Reserve(len(layout.Glyphs)*4, len(layout.Glyphs)*6)
 		if err := emitLayoutQuads(layout, atlas, func(quad [4]geometry.TextVertex) error {
 			return mesh.Quad(quad[0], quad[1], quad[2], quad[3])
 		}); err != nil {

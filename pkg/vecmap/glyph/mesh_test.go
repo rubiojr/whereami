@@ -28,6 +28,8 @@ func TestLayoutMeshExactTopologyUVsAndOwnership(t *testing.T) {
 	require.NoError(t, err)
 	indexed, err := BuildLayoutMesh(layout, atlas, true)
 	require.NoError(t, err)
+	assert.Equal(t, 4*len(layout.Glyphs), cap(indexed.Vertices), "room for every glyph's quad, reserved once")
+	assert.Equal(t, 6*len(layout.Glyphs), cap(indexed.Indices))
 	assert.Equal(t, []float32{
 		-4, -2, 0, 0, 6, -2, 10.0 / 256, 0, 6, 8, 10.0 / 256, 10.0 / 256,
 		-4, -2, 0, 0, 6, 8, 10.0 / 256, 10.0 / 256, -4, 8, 0, 10.0 / 256,

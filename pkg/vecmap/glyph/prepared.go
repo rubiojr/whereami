@@ -21,6 +21,7 @@ type PreparedLayout struct {
 // Empty input or nil atlas returns nil. Otherwise the map is capped at
 // MaxPreparedLayouts before allocation. Any mesh error returns nil output, but
 // earlier successful attachments remain: map iteration order is unspecified.
+// A layout shared by several keys is prepared once and returned for each.
 // Callers must provide unpublished layouts with exclusive access during the call.
 // An errored layout retains its prior mesh. This matches the original scene
 // preparation's mutation policy, not an atomic transaction on input values.
@@ -43,19 +44,27 @@ func prepareLayouts[K comparable](layouts map[K]*PreparedLayout, atlas *Atlas, i
 		return nil, geometry.ErrGeometryLimit
 	}
 	renderable := make(map[K]*PreparedLayout, len(layouts))
+	// Keys can share a layout, as identical text requests do; prepare it once.
+	ready := make(map[*PreparedLayout]bool, len(layouts))
 	for key, layout := range layouts {
-		if layout == nil || !FitsAtlas(&layout.TextLayout, atlas) {
+		if layout == nil {
 			continue
 		}
-		mesh, err := build(&layout.TextLayout, atlas, indexed)
-		if err != nil {
-			return nil, err
+		drawable, done := ready[layout]
+		if !done {
+			if drawable = FitsAtlas(&layout.TextLayout, atlas); drawable {
+				mesh, err := build(&layout.TextLayout, atlas, indexed)
+				if err != nil {
+					return nil, err
+				}
+				layout.LayoutMesh = mesh
+				drawable = len(mesh.Expanded) != 0 || len(mesh.Indices) != 0
+			}
+			ready[layout] = drawable
 		}
-		layout.LayoutMesh = mesh
-		if len(mesh.Expanded) == 0 && len(mesh.Indices) == 0 {
-			continue
+		if drawable {
+			renderable[key] = layout
 		}
-		renderable[key] = layout
 	}
 	if len(renderable) == 0 {
 		return nil, nil

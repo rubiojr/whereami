@@ -82,14 +82,17 @@ func DecodeFontRanges(ranges map[string][]byte, start uint32) (map[string]map[ui
 // whitespace processing; only CR/LF need no glyph. Font maps are immutable borrows.
 //
 // The result owns its map/layouts, preserving keys without a conversion slice.
-// Duplicate keys retain the last successful layout; a later skipped request does
-// not erase it. At most glyph.MaxPreparedLayouts requests may be yielded (including
+// Identical requests share one layout. Duplicate keys retain the last successful
+// layout; a later skipped request does not erase it. At most glyph.MaxPreparedLayouts requests may be yielded (including
 // empty/duplicate requests). Overflow stops iteration and returns nil outputs and
 // geometry.ErrGeometryLimit. Iterator code/work between yields is caller-owned.
 // Nil input produces empty owned results. Inputs and iterator are not retained.
 func PrepareTextLayouts[K comparable](requests iter.Seq2[K, TextRequest], fonts map[string]map[uint32]glyph.Glyph) (map[K]*glyph.PreparedLayout, []string, error) {
 	layouts := make(map[K]*glyph.PreparedLayout)
 	missing := make(map[string]struct{})
+	// Identical requests, such as a road name at each of its anchors, share one
+	// layout instead of laying the text out again.
+	laidOut := make(map[TextRequest]*glyph.PreparedLayout)
 	if requests != nil {
 		count := 0
 		for key, request := range requests {
@@ -100,12 +103,16 @@ func PrepareTextLayouts[K comparable](requests iter.Seq2[K, TextRequest], fonts 
 			if request.Text == "" {
 				continue
 			}
-			available := fonts[request.FontStack]
-			if !TextComplete(request.Text, available) {
-				missing[request.FontStack] = struct{}{}
-				continue
+			layout, done := laidOut[request]
+			if !done {
+				if available := fonts[request.FontStack]; TextComplete(request.Text, available) {
+					layout = request.Layout(available)
+				} else {
+					missing[request.FontStack] = struct{}{}
+				}
+				laidOut[request] = layout
 			}
-			if layout := request.Layout(available); layout != nil {
+			if layout != nil {
 				layouts[key] = layout
 			}
 		}

@@ -167,3 +167,23 @@ func TestPinnedFontRangeSetHeadless(t *testing.T) {
 		assert.Equal(t, want.Glyphs, fonts[font])
 	}
 }
+
+// Identical requests share one layout; any difference lays the text out again.
+func TestPrepareTextLayoutsSharesIdenticalRequests(t *testing.T) {
+	fonts := map[string]map[uint32]glyph.Glyph{"good": textFont()}
+	larger := textRequest("A", "good")
+	larger.Options.TextSize = 30
+	requests := []TextRequest{textRequest("A", "good"), textRequest("A A", "good"), textRequest("A", "good"), larger, textRequest("B", "good"), textRequest("B", "good")}
+	layouts, missing, err := PrepareTextLayouts(slices.All(requests), fonts)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"good"}, missing)
+	require.Len(t, layouts, 4)
+	assert.Same(t, layouts[0], layouts[2])
+	assert.NotSame(t, layouts[0], layouts[1])
+	assert.NotSame(t, layouts[0], layouts[3])
+	for i, request := range requests[:4] {
+		want, ok := glyph.LayoutText(request.Text, request.FontStack, fonts["good"], request.Options)
+		require.True(t, ok)
+		assert.Equal(t, want, layouts[i].TextLayout, i)
+	}
+}

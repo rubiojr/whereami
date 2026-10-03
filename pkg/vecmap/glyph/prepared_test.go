@@ -223,3 +223,23 @@ func TestPrepareUnitLayouts(t *testing.T) {
 	assert.False(t, layout.Unit)
 	assert.Equal(t, baked, layout.LayoutMesh)
 }
+
+// A layout shared by several keys is prepared once and returned for each.
+func TestPrepareLayoutsPreparesASharedLayoutOnce(t *testing.T) {
+	layout, atlas := preparedFixture(t)
+	other, _ := preparedFixture(t)
+	uncovered := &PreparedLayout{TextLayout: TextLayout{Glyphs: []PositionedGlyph{{Key: Key{FontStack: "missing", ID: 'B'}, Glyph: bitmapGlyph(2, 2, 80)}}, Scale: 1}}
+	input := map[int]*PreparedLayout{0: layout, 1: layout, 2: other, 3: uncovered, 4: uncovered}
+	builds := 0
+	result, err := prepareLayouts(input, atlas, true, func(l *TextLayout, a *Atlas, indexed bool) (LayoutMesh, error) {
+		builds++
+		return BuildLayoutMesh(l, a, indexed)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, builds)
+	require.Len(t, result, 3)
+	assert.Same(t, layout, result[0])
+	assert.Same(t, layout, result[1])
+	assert.Equal(t, other.LayoutMesh, layout.LayoutMesh)
+	assert.NotContains(t, result, 3)
+}

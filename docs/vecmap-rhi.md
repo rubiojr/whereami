@@ -795,6 +795,34 @@ MiB of about 480 MiB, and 116 MiB was file-backed libraries, so the RSS gap is G
 memory that stays resident, mostly fragments kept on the CPU (150 MB at their
 peak), not decoding garbage.
 
+##### Text layouts within a build
+
+A build lays out every text candidate (0.21 s of the profile: metric layout, glyph
+atlas and unit meshes). Line labels repeat their text at each anchor, but only 11%
+of a preparation's requests repeat on the corpus, so identical requests now share
+one layout and one mesh, and unit-mesh builders reserve room for every glyph
+instead of growing. On the corpus's text pipeline output is identical, time falls
+4–6% and allocation 26%. The rest is map hashing of glyph keys that carry the
+font-stack string.
+
+Reusing layouts across style zooms would save about 0.12 s per Coarser 1 trace,
+but each cached tile would keep about 540 KB of glyph positions, unit meshes and
+atlas (12% on top of its fragment), roughly 13–27 MB more RSS; that trade was
+declined.
+
+Five interleaved runs each of 9c264f2 and both steps above (Earcut and text):
+
+| Row | CPU before → after | Prepare wall before → after | Allocated before → after |
+| --- | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 3.59–3.77 → 3.53–3.78 s | 908–936 → 872–903 ms | 3.3 → 3.2 GB |
+| Coarser 1, Vulkan | 3.33–3.58 → 3.30–3.44 s | 861–923 → 871–896 ms | 3.3 → 3.1 GB |
+| Coarser 0, OpenGL | 4.92–5.06 → 4.80–5.01 s | 1044–1069 → 998–1079 ms | 4.4 → 4.2 GB |
+| Coarser 0, Vulkan | 4.54–4.98 → 4.58–4.72 s | 1008–1073 → 975–1035 ms | 4.3 → 4.1 GB |
+
+Process CPU moved within its spread; preparation and allocation fell a few
+percent. Final frames are byte-identical, every run had zero late frames, and
+labels, settlement and peak RSS didn't change.
+
 #### Vulkan FIFO stalls in live mode on native Wayland
 
 In live mode on Vulkan under headless mutter, the default FIFO present mode (and
