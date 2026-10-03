@@ -278,6 +278,7 @@ QRhiResourceUpdateBatch* qtrhi_QRhi_nextResourceUpdateBatch(QRhi* self);
 int qtrhi_QRhi_ubufAlignment(const QRhi* self);
 int qtrhi_QRhi_ubufAligned(const QRhi* self, int v);
 bool qtrhi_QRhi_isYUpInFramebuffer(const QRhi* self);
+bool qtrhi_QRhi_isFeatureSupported(const QRhi* self, int feature);
 bool qtrhi_QRhi_isDeviceLost(const QRhi* self);
 QRhiTexture* qtrhi_QRhi_newTexture3(QRhi* self, int format, QSize* pixelSize, int sampleCount);
 QRhiTexture* qtrhi_QRhi_newTexture4(QRhi* self, int format, QSize* pixelSize, int sampleCount, int flags);

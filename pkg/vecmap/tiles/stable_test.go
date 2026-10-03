@@ -76,8 +76,12 @@ func TestReuseStableMatchesFullBuild(t *testing.T) {
 	for _, indexed := range []bool{false, true} {
 		for _, compact := range []bool{false, true} {
 			for _, dashes := range []bool{false, true} {
-				borrowed := requireReuseMatchesFull(t, residentPBF(), residentStyle(t), residentOptions(indexed, compact, dashes), zooms, constantAssets(Assets{}))
-				assert.Equal(t, []bool{false, true, true, true, true, true, true}, borrowed, "indexed %t compact %t dashes %t", indexed, compact, dashes)
+				for _, packed := range []bool{false, true} {
+					options := residentOptions(indexed, compact, dashes)
+					options.PackedVertices = packed
+					borrowed := requireReuseMatchesFull(t, residentPBF(), residentStyle(t), options, zooms, constantAssets(Assets{}))
+					assert.Equal(t, []bool{false, true, true, true, true, true, true}, borrowed, "indexed %t compact %t dashes %t packed %t", indexed, compact, dashes, packed)
+				}
 			}
 		}
 	}
@@ -202,7 +206,9 @@ func TestReuseStableOnPinnedTile(t *testing.T) {
 		return Assets{Sprite: liberty.Sprite, SpriteEntry: liberty.SpriteEntry, FallbackEligible: glyph.LegacyFallbackEligible}
 	}
 	for _, coarser := range []int{0, 1} {
-		options := PrepareOptions{Tile: fixture.Tile(), Coarser: coarser, Indexed: true, ResidentGeometry: true, ResidentSymbols: true, ResidentDashes: true, CompactVertices: true}
+		// Coarser 1 also packs its vertices.
+		options := PrepareOptions{Tile: fixture.Tile(), Coarser: coarser, Indexed: true, ResidentGeometry: true, ResidentSymbols: true, ResidentDashes: true, CompactVertices: true,
+			PackedVertices: coarser == 1}
 		var zooms []float64
 		for k := range 16 {
 			zooms = append(zooms, 8.5+float64(k)/16)

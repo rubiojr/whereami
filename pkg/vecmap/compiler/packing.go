@@ -36,6 +36,7 @@ type SceneBuilder struct {
 	split     bool
 	resident  bool
 	compact   bool
+	packed    bool
 	class     meshClass
 	result    scene.Scene
 	textures  map[string]uint64
@@ -71,25 +72,38 @@ func NewSceneBuilder(indexed bool, maximumElements int) *SceneBuilder {
 	return b
 }
 
-// sections builds the vertex sections of one mesh. Only full is used unless the
-// builder packs compact vertices.
+// sections builds the vertex sections of one mesh, one per scene.Layout. Only
+// full is used unless the builder packs compact or packed vertices.
 type sections struct {
-	full      geometry.Builder[scene.Vertex]
-	offsets   geometry.Builder[scene.OffsetVertex]
-	positions geometry.Builder[scene.PositionVertex]
+	full            geometry.Builder[scene.Vertex]
+	offsets         geometry.Builder[scene.OffsetVertex]
+	positions       geometry.Builder[scene.PositionVertex]
+	packedPositions geometry.Builder[scene.PackedPositionVertex]
+	packedOffsets   geometry.Builder[scene.PackedOffsetVertex]
+	packedDashed    geometry.Builder[scene.PackedDashedVertex]
 }
 
 func newSections(indexed bool, maximumElements int) sections {
 	return sections{full: geometry.NewBuilder[scene.Vertex](indexed, maximumElements),
-		offsets:   geometry.NewBuilder[scene.OffsetVertex](indexed, maximumElements),
-		positions: geometry.NewBuilder[scene.PositionVertex](indexed, maximumElements)}
+		offsets:         geometry.NewBuilder[scene.OffsetVertex](indexed, maximumElements),
+		positions:       geometry.NewBuilder[scene.PositionVertex](indexed, maximumElements),
+		packedPositions: geometry.NewBuilder[scene.PackedPositionVertex](indexed, maximumElements),
+		packedOffsets:   geometry.NewBuilder[scene.PackedOffsetVertex](indexed, maximumElements),
+		packedDashed:    geometry.NewBuilder[scene.PackedDashedVertex](indexed, maximumElements)}
 }
 
 // Count is the number of draw elements in every section.
-func (s *sections) Count() int { return s.full.Count() + s.offsets.Count() + s.positions.Count() }
+func (s *sections) Count() int {
+	n := 0
+	for layout := range scene.LayoutCount {
+		n += s.count(layout)
+	}
+	return n
+}
 
 func (s *sections) vertices() int {
-	return len(s.full.Vertices) + len(s.offsets.Vertices) + len(s.positions.Vertices)
+	return len(s.full.Vertices) + len(s.offsets.Vertices) + len(s.positions.Vertices) +
+		len(s.packedPositions.Vertices) + len(s.packedOffsets.Vertices) + len(s.packedDashed.Vertices)
 }
 
 // count is the number of draw elements in the section of a layout.
@@ -99,23 +113,74 @@ func (s *sections) count(layout scene.Layout) int {
 		return s.offsets.Count()
 	case scene.PositionLayout:
 		return s.positions.Count()
+	case scene.PackedPositionLayout:
+		return s.packedPositions.Count()
+	case scene.PackedOffsetLayout:
+		return s.packedOffsets.Count()
+	case scene.PackedDashedLayout:
+		return s.packedDashed.Count()
 	}
 	return s.full.Count()
 }
 
+// indices are the indices of the section of a layout.
+func (s *sections) indices(layout scene.Layout) []uint32 {
+	switch layout {
+	case scene.OffsetLayout:
+		return s.offsets.Indices
+	case scene.PositionLayout:
+		return s.positions.Indices
+	case scene.PackedPositionLayout:
+		return s.packedPositions.Indices
+	case scene.PackedOffsetLayout:
+		return s.packedOffsets.Indices
+	case scene.PackedDashedLayout:
+		return s.packedDashed.Indices
+	}
+	return s.full.Indices
+}
+
+// reserve makes room in the section of a layout.
+func (s *sections) reserve(layout scene.Layout, vertices, indices int) {
+	switch layout {
+	case scene.OffsetLayout:
+		s.offsets.Reserve(vertices, indices)
+	case scene.PositionLayout:
+		s.positions.Reserve(vertices, indices)
+	case scene.PackedPositionLayout:
+		s.packedPositions.Reserve(vertices, indices)
+	case scene.PackedOffsetLayout:
+		s.packedOffsets.Reserve(vertices, indices)
+	case scene.PackedDashedLayout:
+		s.packedDashed.Reserve(vertices, indices)
+	default:
+		s.full.Reserve(vertices, indices)
+	}
+}
+
 // mesh publishes the sections with buffers of their exact length, and the
 // position of each section's indices in the shared index buffer.
-func (s *sections) mesh(id uint64) (scene.Mesh, [3]uint32) {
+func (s *sections) mesh(id uint64) (scene.Mesh, [scene.LayoutCount]uint32) {
 	s.full.Compact()
 	s.offsets.Compact()
 	s.positions.Compact()
-	mesh := scene.Mesh{ID: id, Revision: 1, Vertices: s.full.Vertices, Offsets: s.offsets.Vertices, Positions: s.positions.Vertices, Indices: s.full.Indices}
-	var first [3]uint32
-	first[scene.OffsetLayout] = uint32(len(s.full.Indices))
-	first[scene.PositionLayout] = first[scene.OffsetLayout] + uint32(len(s.offsets.Indices))
-	if len(s.offsets.Indices)+len(s.positions.Indices) > 0 {
-		mesh.Indices = make([]uint32, 0, len(s.full.Indices)+len(s.offsets.Indices)+len(s.positions.Indices))
-		mesh.Indices = append(append(append(mesh.Indices, s.full.Indices...), s.offsets.Indices...), s.positions.Indices...)
+	s.packedPositions.Compact()
+	s.packedOffsets.Compact()
+	s.packedDashed.Compact()
+	mesh := scene.Mesh{ID: id, Revision: 1, Vertices: s.full.Vertices, Offsets: s.offsets.Vertices, Positions: s.positions.Vertices,
+		PackedPositions: s.packedPositions.Vertices, PackedOffsets: s.packedOffsets.Vertices, PackedDashed: s.packedDashed.Vertices,
+		Indices: s.full.Indices}
+	var first [scene.LayoutCount]uint32
+	total := 0
+	for layout := range scene.LayoutCount {
+		first[layout] = uint32(total)
+		total += len(s.indices(layout))
+	}
+	if total > len(s.full.Indices) {
+		mesh.Indices = make([]uint32, 0, total)
+		for layout := range scene.LayoutCount {
+			mesh.Indices = append(mesh.Indices, s.indices(layout)...)
+		}
 	}
 	// The scene a builder returns keeps the builder alive. Let go of the
 	// sections' own index buffers, which the shared one has replaced.
@@ -179,6 +244,19 @@ func (b *SceneBuilder) CompactVertices() {
 	}
 }
 
+// PackedVertices packs fills, patterns, extruded and dashed lines in the
+// int16 sections of scene.PackedPositionLayout, PackedOffsetLayout and
+// PackedDashedLayout, half the bytes of float32. MVT positions are exact and
+// directions within 1/8192; a primitive with a coordinate outside the packed
+// range keeps float vertices, compact if CompactVertices is set. Icons and
+// text keep every attribute. The backend must implement the packed sections.
+// Call before packing.
+func (b *SceneBuilder) PackedVertices() {
+	if b.unused() {
+		b.packed = true
+	}
+}
+
 func (b *SceneBuilder) unused() bool {
 	if !b.ready() {
 		return false
@@ -200,7 +278,9 @@ func (b *SceneBuilder) borrowedCounts() (elements, vertices int) {
 	if b.borrowed == nil {
 		return 0, 0
 	}
-	vertices = len(b.borrowed.Vertices) + len(b.borrowed.Offsets) + len(b.borrowed.Positions)
+	for layout := range scene.LayoutCount {
+		vertices += b.borrowed.Len(layout)
+	}
 	if b.indexed {
 		return len(b.borrowed.Indices), vertices
 	}
@@ -232,19 +312,26 @@ func (b *SceneBuilder) Reserve(dynamic bool, layout scene.Layout, vertices, indi
 	if dynamic && b.split {
 		target = &b.dynamic
 	}
-	switch layout {
-	case scene.OffsetLayout:
-		target.offsets.Reserve(vertices, indices)
-	case scene.PositionLayout:
-		target.positions.Reserve(vertices, indices)
-	default:
-		target.full.Reserve(vertices, indices)
-	}
+	target.reserve(layout, vertices, indices)
 }
 
 // Layout is the vertex section that geometry with these attributes is packed
-// into: every attribute unless the builder packs compact vertices.
+// into: a packed section with PackedVertices, and otherwise every attribute
+// unless the builder packs compact vertices.
 func (b *SceneBuilder) Layout(directions, distances bool) scene.Layout {
+	switch {
+	case b.packed && distances:
+		return scene.PackedDashedLayout
+	case b.packed && directions:
+		return scene.PackedOffsetLayout
+	case b.packed:
+		return scene.PackedPositionLayout
+	}
+	return b.floatLayout(directions, distances)
+}
+
+// floatLayout is the section of geometry without PackedVertices.
+func (b *SceneBuilder) floatLayout(directions, distances bool) scene.Layout {
 	switch {
 	case !b.compact || distances:
 		return scene.FullLayout
@@ -439,6 +526,15 @@ func (b *SceneBuilder) geometry(mesh geometry.Mesh, directions []geometry.Point,
 		return
 	}
 	layout := b.Layout(directions != nil, distances != nil)
+	if layout.Packed() {
+		first := target.count(layout)
+		if b.packGeometry(target, layout, mesh, directions, distances) {
+			b.draw(target, id, layout, first, material, clip)
+			return
+		}
+		// A coordinate outside the packed range keeps float vertices.
+		layout = b.floatLayout(directions != nil, distances != nil)
+	}
 	first := target.count(layout)
 	switch layout {
 	case scene.OffsetLayout:
@@ -455,6 +551,74 @@ func (b *SceneBuilder) geometry(mesh geometry.Mesh, directions []geometry.Point,
 		b.err = appendGeometry(&target.full, b.indexed, mesh, vertex)
 	}
 	b.draw(target, id, layout, first, material, clip)
+}
+
+// packGeometry packs a checked mesh into a packed section, reporting false,
+// with nothing packed, if a position or direction lies outside its range.
+func (b *SceneBuilder) packGeometry(target *sections, layout scene.Layout, mesh geometry.Mesh, directions []geometry.Point, distances []float64) bool {
+	switch layout {
+	case scene.PackedPositionLayout:
+		vertices, ok := packVertices(mesh, nil, nil, func(x, y, _, _ int16, _ float32) scene.PackedPositionVertex {
+			return scene.PackedPositionVertex{X: x, Y: y}
+		})
+		if ok {
+			b.err = appendPacked(&target.packedPositions, b.indexed, mesh, vertices)
+		}
+		return ok
+	case scene.PackedOffsetLayout:
+		vertices, ok := packVertices(mesh, directions, nil, func(x, y, dx, dy int16, _ float32) scene.PackedOffsetVertex {
+			return scene.PackedOffsetVertex{X: x, Y: y, OffsetX: dx, OffsetY: dy}
+		})
+		if ok {
+			b.err = appendPacked(&target.packedOffsets, b.indexed, mesh, vertices)
+		}
+		return ok
+	}
+	vertices, ok := packVertices(mesh, directions, distances, func(x, y, dx, dy int16, u float32) scene.PackedDashedVertex {
+		return scene.PackedDashedVertex{X: x, Y: y, OffsetX: dx, OffsetY: dy, U: u}
+	})
+	if ok {
+		b.err = appendPacked(&target.packedDashed, b.indexed, mesh, vertices)
+	}
+	return ok
+}
+
+// packVertices quantizes a mesh's vertices, with directions and distances when
+// set, reporting false if any lies outside the packed range.
+func packVertices[T any](mesh geometry.Mesh, directions []geometry.Point, distances []float64, vertex func(x, y, dx, dy int16, u float32) T) ([]T, bool) {
+	packed := make([]T, len(mesh.Vertices))
+	for i, point := range mesh.Vertices {
+		x, y, ok := scene.PackPosition(point.X, point.Y)
+		var dx, dy int16
+		if ok && directions != nil {
+			dx, dy, ok = scene.PackOffset(directions[i].X, directions[i].Y)
+		}
+		if !ok {
+			return nil, false
+		}
+		var u float32
+		if distances != nil {
+			u = float32(distances[i])
+		}
+		packed[i] = vertex(x, y, dx, dy, u)
+	}
+	return packed, true
+}
+
+// appendPacked packs quantized vertices with the mesh's topology, as
+// appendGeometry does.
+func appendPacked[T any](target *geometry.Builder[T], indexed bool, mesh geometry.Mesh, vertices []T) error {
+	if indexed {
+		return target.Append(vertices, mesh.Indices)
+	}
+	if mesh.Indices != nil {
+		for _, index := range mesh.Indices {
+			target.Vertices = append(target.Vertices, vertices[index])
+		}
+		return nil
+	}
+	target.Vertices = append(target.Vertices, vertices...)
+	return nil
 }
 
 // appendGeometry packs a checked mesh. Expanded output writes directly into its

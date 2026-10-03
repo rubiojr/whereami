@@ -71,6 +71,12 @@ type PrepareOptions struct {
 	// The backend must implement scene.Draw.Layout. False preserves the
 	// existing output.
 	CompactVertices bool
+	// PackedVertices packs fills, patterns, extruded and dashed lines with
+	// int16 positions and directions, half the bytes of float32
+	// (compiler.SceneBuilder.PackedVertices). MVT positions are exact and
+	// directions within 1/8192; geometry outside the packed range keeps float
+	// vertices. The backend must implement the packed layouts.
+	PackedVertices bool
 }
 
 // Prepared owns reusable primitives and evaluated candidates, not source features
@@ -349,6 +355,9 @@ func (p *Prepared) build(assets Assets, maximumTextureBytes uint64) (*BuildResul
 	}
 	if p.options.CompactVertices {
 		packing.CompactVertices()
+	}
+	if p.options.PackedVertices {
+		packing.PackedVertices()
 	}
 	if p.base != nil {
 		packing.Borrow(p.base.mesh, p.base.origin.plan)

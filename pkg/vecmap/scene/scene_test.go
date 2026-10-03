@@ -112,13 +112,13 @@ func TestDashedMaterialValidatesAndSerializes(t *testing.T) {
 func TestVertexSectionsPackAndRead(t *testing.T) {
 	assert.Equal(t, uintptr(16), unsafe.Sizeof(OffsetVertex{}), "packed vertex ABI")
 	assert.Equal(t, uintptr(8), unsafe.Sizeof(PositionVertex{}), "packed vertex ABI")
-	assert.Equal(t, []int{24, 16, 8, 0}, []int{FullLayout.Bytes(), OffsetLayout.Bytes(), PositionLayout.Bytes(), Layout(3).Bytes()})
+	assert.Equal(t, []int{24, 16, 8, 0}, []int{FullLayout.Bytes(), OffsetLayout.Bytes(), PositionLayout.Bytes(), LayoutCount.Bytes()})
 	mesh := Mesh{ID: 1,
 		Vertices:  []Vertex{{X: 1, Y: 2, OffsetX: 3, OffsetY: 4, U: 5, V: 6}},
 		Offsets:   []OffsetVertex{{X: 7, Y: 8, OffsetX: 9, OffsetY: 10}, {X: 11}},
 		Positions: []PositionVertex{{X: 12, Y: 13}, {X: 14}, {X: 15}},
 		Indices:   []uint32{0, 0, 0}}
-	assert.Equal(t, []int{1, 2, 3, 0}, []int{mesh.Len(FullLayout), mesh.Len(OffsetLayout), mesh.Len(PositionLayout), mesh.Len(3)})
+	assert.Equal(t, []int{1, 2, 3, 0}, []int{mesh.Len(FullLayout), mesh.Len(OffsetLayout), mesh.Len(PositionLayout), mesh.Len(LayoutCount)})
 	assert.Equal(t, []uint64{0, 24, 56}, []uint64{mesh.SectionOffset(FullLayout), mesh.SectionOffset(OffsetLayout), mesh.SectionOffset(PositionLayout)})
 	assert.Equal(t, uint64(80), mesh.VertexBytes())
 	assert.Equal(t, uint64(92), mesh.BufferBytes())
@@ -258,4 +258,65 @@ func TestValidateExceptSkipsOnlyContentOfCheckedMeshes(t *testing.T) {
 		change(invalid)
 		assert.Error(t, invalid.ValidateExcept(first), name)
 	}
+}
+
+func TestPackedSectionsPackAndRead(t *testing.T) {
+	assert.Equal(t, []uintptr{4, 8, 12}, []uintptr{unsafe.Sizeof(PackedPositionVertex{}), unsafe.Sizeof(PackedOffsetVertex{}), unsafe.Sizeof(PackedDashedVertex{})}, "packed vertex ABI")
+	assert.Equal(t, []int{4, 8, 12}, []int{PackedPositionLayout.Bytes(), PackedOffsetLayout.Bytes(), PackedDashedLayout.Bytes()})
+	assert.Equal(t, []bool{false, false, false, true, true, true, false},
+		[]bool{FullLayout.Packed(), OffsetLayout.Packed(), PositionLayout.Packed(), PackedPositionLayout.Packed(), PackedOffsetLayout.Packed(), PackedDashedLayout.Packed(), LayoutCount.Packed()})
+	assert.True(t, PackedDashedLayout.Valid())
+	assert.False(t, LayoutCount.Valid())
+
+	x, y, ok := PackPosition(16.875, -10.0625)
+	require.True(t, ok)
+	assert.Equal(t, [2]int16{540, -322}, [2]int16{x, y}, "MVT coordinates are exact")
+	dx, dy, ok := PackOffset(0.70710678, -3.96)
+	require.True(t, ok)
+	assert.Equal(t, [2]int16{2896, -16220}, [2]int16{dx, dy})
+	for _, v := range [][2]float64{{1024, 0}, {0, -1024.1}, {math.NaN(), 0}, {math.Inf(1), 0}} {
+		_, _, ok := PackPosition(v[0], v[1])
+		assert.False(t, ok, "%v", v)
+	}
+	_, _, ok = PackPosition(1023.96875, -1024)
+	assert.True(t, ok, "the int16 range itself")
+	_, _, ok = PackOffset(8, 0)
+	assert.False(t, ok)
+
+	mesh := Mesh{ID: 1, Vertices: []Vertex{{X: 1}},
+		PackedPositions: []PackedPositionVertex{{X: 32, Y: -64}, {X: 1}},
+		PackedOffsets:   []PackedOffsetVertex{{X: 96, Y: 16, OffsetX: 4096, OffsetY: -2048}},
+		PackedDashed:    []PackedDashedVertex{{X: 8, OffsetY: 1, U: 12.5}, {}, {}},
+		Indices:         []uint32{0, 1, 2}}
+	assert.Equal(t, []int{1, 0, 0, 2, 1, 3}, []int{mesh.Len(FullLayout), mesh.Len(OffsetLayout), mesh.Len(PositionLayout),
+		mesh.Len(PackedPositionLayout), mesh.Len(PackedOffsetLayout), mesh.Len(PackedDashedLayout)})
+	assert.Equal(t, []uint64{0, 24, 24, 24, 32, 40}, []uint64{mesh.SectionOffset(FullLayout), mesh.SectionOffset(OffsetLayout), mesh.SectionOffset(PositionLayout),
+		mesh.SectionOffset(PackedPositionLayout), mesh.SectionOffset(PackedOffsetLayout), mesh.SectionOffset(PackedDashedLayout)})
+	assert.Equal(t, uint64(76), mesh.VertexBytes())
+	assert.Equal(t, Vertex{X: 1, Y: -2}, mesh.At(PackedPositionLayout, 0))
+	assert.Equal(t, Vertex{X: 3, Y: 0.5, OffsetX: 1, OffsetY: -0.5}, mesh.At(PackedOffsetLayout, 0))
+	assert.Equal(t, Vertex{X: 0.25, OffsetY: 1.0 / 4096, U: 12.5}, mesh.At(PackedDashedLayout, 0))
+	require.NoError(t, mesh.Validate())
+
+	scene := Scene{Meshes: []Mesh{mesh}, Textures: []Texture{}, Draws: []Draw{{Mesh: 1, Count: 3, Layout: PackedDashedLayout}}}
+	require.NoError(t, scene.Validate())
+	scene.Draws[0].Layout = PackedPositionLayout
+	assert.Error(t, scene.Validate(), "index 2 is past the packed positions")
+	scene.Draws[0].Layout = LayoutCount
+	assert.Error(t, scene.Validate())
+
+	invalid := mesh
+	invalid.PackedDashed = []PackedDashedVertex{{U: float32(math.NaN())}, {}, {}}
+	assert.Error(t, invalid.Validate(), "the distance must be finite")
+	invalid = Mesh{ID: 1, PackedOffsets: []PackedOffsetVertex{{}}}
+	require.NoError(t, invalid.Validate(), "a packed section alone is a mesh")
+
+	encoded, err := json.Marshal(mesh)
+	require.NoError(t, err)
+	var decoded Mesh
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, mesh, decoded)
+	indexed, err := IndexMesh(mesh)
+	require.NoError(t, err)
+	assert.Equal(t, mesh, indexed, "IndexMesh leaves meshes with other sections alone")
 }

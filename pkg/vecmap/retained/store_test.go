@@ -246,8 +246,12 @@ func TestVertexSectionsDecideWhetherAMeshIsReused(t *testing.T) {
 	sectioned := func() *scene.Scene {
 		return &scene.Scene{
 			Meshes: []scene.Mesh{{ID: 1, Vertices: []scene.Vertex{{}, {X: 1}, {Y: 1}}, Offsets: []scene.OffsetVertex{{}, {X: 1, OffsetX: 1}, {Y: 1}},
-				Positions: []scene.PositionVertex{{}, {X: 1}, {Y: 1}}, Indices: []uint32{0, 1, 2, 0, 1, 2, 0, 1, 2}}},
-			Draws: []scene.Draw{{Mesh: 1, Count: 3}, {Mesh: 1, First: 3, Count: 3, Layout: scene.OffsetLayout}, {Mesh: 1, First: 6, Count: 3, Layout: scene.PositionLayout}},
+				Positions: []scene.PositionVertex{{}, {X: 1}, {Y: 1}}, PackedPositions: []scene.PackedPositionVertex{{}, {X: 1}, {Y: 1}},
+				PackedOffsets: []scene.PackedOffsetVertex{{}, {X: 1, OffsetX: 1}, {Y: 1}}, PackedDashed: []scene.PackedDashedVertex{{}, {X: 1, U: 1}, {Y: 1}},
+				Indices: []uint32{0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2}}},
+			Draws: []scene.Draw{{Mesh: 1, Count: 3}, {Mesh: 1, First: 3, Count: 3, Layout: scene.OffsetLayout}, {Mesh: 1, First: 6, Count: 3, Layout: scene.PositionLayout},
+				{Mesh: 1, First: 9, Count: 3, Layout: scene.PackedPositionLayout}, {Mesh: 1, First: 12, Count: 3, Layout: scene.PackedOffsetLayout},
+				{Mesh: 1, First: 15, Count: 3, Layout: scene.PackedDashedLayout}},
 		}
 	}
 	s := newStore(t, Limits{})
@@ -276,6 +280,9 @@ func TestVertexSectionsDecideWhetherAMeshIsReused(t *testing.T) {
 	for _, change := range []func(*scene.Mesh){
 		func(m *scene.Mesh) { m.Offsets[1].OffsetX = 2 },
 		func(m *scene.Mesh) { m.Positions[2].Y = 3 },
+		func(m *scene.Mesh) { m.PackedPositions[2].Y = 3 },
+		func(m *scene.Mesh) { m.PackedOffsets[1].OffsetX = 2 },
+		func(m *scene.Mesh) { m.PackedDashed[1].U = 2 },
 	} {
 		changed := sectioned()
 		change(&changed.Meshes[0])
@@ -285,12 +292,13 @@ func TestVertexSectionsDecideWhetherAMeshIsReused(t *testing.T) {
 		assert.Equal(t, reused, s.ReusedVersions())
 	}
 
-	for _, limit := range []uint64{24*3 + 16*3 + 8*3 + 4*9 - 1, 16*3 - 1, 8*3 - 1} {
+	total := uint64(24*3 + 16*3 + 8*3 + 4*3 + 8*3 + 12*3 + 4*18)
+	for _, limit := range []uint64{total - 1, 16*3 - 1, 8*3 - 1, 4*3 - 1} {
 		small, err := New(Limits{Bytes: limit})
 		require.NoError(t, err)
 		assert.ErrorIs(t, small.Apply([]Change{{"a", sectioned()}}), ErrLimit, "limit %d", limit)
 	}
-	exact, err := New(Limits{Bytes: 24*3 + 16*3 + 8*3 + 4*9})
+	exact, err := New(Limits{Bytes: total})
 	require.NoError(t, err)
 	require.NoError(t, exact.Apply([]Change{{"a", sectioned()}}))
 }

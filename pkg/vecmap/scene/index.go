@@ -11,7 +11,7 @@ func IndexMesh(mesh Mesh) (Mesh, error) {
 	if err := mesh.Validate(); err != nil {
 		return Mesh{}, err
 	}
-	if len(mesh.Indices) > 0 || len(mesh.Vertices) < 6 || len(mesh.Offsets) > 0 || len(mesh.Positions) > 0 {
+	if len(mesh.Indices) > 0 || len(mesh.Vertices) < 6 || mesh.VertexBytes() != uint64(len(mesh.Vertices))*24 {
 		return mesh, nil
 	}
 	unique := make([]Vertex, 0, min(len(mesh.Vertices), 4096))

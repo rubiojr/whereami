@@ -4938,7 +4938,7 @@ one, and its uploads for the complete cover from 194 MB to 155 MB.
   producer; the full pkg/vecmap suite, the tagged adapter and viewer suites on
   Vulkan and OpenGL and tagged staticcheck pass.
 
-### Shared halo quads (nfzk)
+### Shared halo quads and packed vertices (nfzk)
 
 Peak RSS follows the live heap (see "What holds the live heap"), and fragment
 meshes are most of it. On the 82 corpus tiles at the trace's Coarser 1 zoom
@@ -4962,6 +4962,56 @@ of e9a9243 and this change:
 
 Final frames are byte-identical, every run had zero late frames and the same
 labels; process CPU stayed within its spread.
+
+**Packed vertices.** `tiles.PrepareOptions.PackedVertices` (viewer
+`-packed-vertices`, default on; library default off) packs fills and patterns as
+`scene.PackedPositionVertex` (two int16, 4 bytes), extruded lines as
+`PackedOffsetVertex` (8 bytes) and shader-dashed lines as `PackedDashedVertex`
+(12 bytes, the distance stays float32: paths are long and the dash period changes
+with zoom). Positions are in 1/32 tile unit and offsets in 1/4096, both powers of
+two so reading back is exact. Tile-local coordinates are always 256 units
+(Coarser only scales pixels per unit) and nothing clips polygons, so MVT geometry
+sits on the 1/16 grid and packs exactly within ±1024 units; baked line outlines
+round to 1/32 unit (0.06 px at Coarser 1) and extruded directions to 1/4096 of
+the half width. A primitive with a coordinate beyond the range keeps float
+vertices, so packing never fails. Stable-mesh reuse works unchanged.
+
+The QRhi adapter needs integer vertex inputs, and Qt 6.11.2's backends disagree
+on 16-bit integer formats: Vulkan maps `SShort2` to `R16G16_SINT`, the GL backend
+sends `GL_SHORT` through `glVertexAttribPointer` as floats (qrhigles2.cpp). Each
+int16 pair therefore travels as one `SInt` attribute that
+`shaders/map_packed.vert` unpacks with sign-extending shifts, compiled for GLSL
+150 and 300 es (qsb `--qt6` would add 120 and 100 es variants without integer
+inputs). The packed pipelines need `QRhi::IntAttributes` (now bound through
+`isFeatureSupported`); without it the adapter refuses packed meshes. On both
+OpenGL and Vulkan the integration test draws fills, an extruded line with round
+joins and a dashed line from packed sections with no differing pixel.
+
+On the corpus the stable mesh's vertex bytes halve (148.7 → 74.3 MB) and
+fragments fall from 301 to 227 MB; with shared halos, 30% below the 325 MB this
+section started from.
+
+Five interleaved runs each, one binary with shared halos, without and with
+`-packed-vertices`:
+
+| Row | Peak live off → on | Peak RSS off → on | VRAM off → on | GC CPU off → on | CPU off → on |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Coarser 1, OpenGL | 170–224 → 146–181 MiB | 454–502 → 389–454 MiB | 97–106 → 85–102 MiB | 480–513 → 524–550 ms | 3.40–3.60 → 3.38–3.49 s |
+| Coarser 1, Vulkan | 200–237 → 176–188 MiB | 437–465 → 393–400 MiB | – | 482–515 → 532–580 ms | 3.25–3.59 → 3.26–3.50 s |
+| Coarser 0, OpenGL | 225–247 → 199–218 MiB | 507–529 → 460–488 MiB | 143–168 → 135–147 MiB | 587–645 → 676–730 ms | 4.63–4.87 → 4.80–4.89 s |
+| Coarser 0, Vulkan | 230–250 → 206–221 MiB | 462–500 → 424–454 MiB | – | 647–670 → 670–721 ms | 4.48–4.77 → 4.38–4.78 s |
+
+(The Vulkan rows don't report VRAM.) Peak RSS falls 40–55 MiB and the live peak
+12–20%. GC CPU rises 8–12%: the heap goal follows the smaller live heap, so the
+same allocation is collected more often, and process CPU stays within its
+spread. Final frames differ in 4–11 of 480,000 pixels, at line edges where a
+direction rounded across a pixel boundary. Every run had zero late frames and
+the same labels; the longest hold of one drawable document at Coarser 0 was
+867–1250 ms against 783–1033 ms, within the spread seen in earlier series but
+worth watching. Against e9a9243, shared halos and packing together lower Coarser
+1 OpenGL peak RSS from 439–509 to 389–454 MiB and Coarser 0 from 536–551 to
+460–488 MiB. The viewer packs by default; `tiles.PrepareOptions` stays off, so
+other consumers opt in once their backend reads the packed layouts.
 
 ## Flatpak integration
 

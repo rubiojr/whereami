@@ -39,7 +39,7 @@ func ProcessLibraries(clangBin, outDir, _ string) {
 
 var rhiMethods = map[string]string{
 	"QShader":                    "isValid fromSerialized",
-	"QRhi":                       "newBuffer newTexture newSampler newGraphicsPipeline newShaderResourceBindings nextResourceUpdateBatch ubufAligned ubufAlignment backend backendName isYUpInFramebuffer driverInfo finish isRecordingFrame isDeviceLost",
+	"QRhi":                       "newBuffer newTexture newSampler newGraphicsPipeline newShaderResourceBindings nextResourceUpdateBatch ubufAligned ubufAlignment backend backendName isYUpInFramebuffer driverInfo finish isRecordingFrame isDeviceLost isFeatureSupported",
 	"QLibrary":                   "resolve",
 	"QRhiDriverInfo":             "",
 	"QRhiResource":               "deleteLater destroy setName",

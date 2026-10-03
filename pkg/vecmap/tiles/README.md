@@ -158,6 +158,15 @@ lose only attributes that are zero, so the output is the same and a dense tile
 uploads about a fifth less. Draws name their section in `scene.Draw.Layout`, which
 the backend must implement; the QRhi adapter does. The default is off.
 
+`PrepareOptions.PackedVertices` packs fills, patterns, extruded and dashed lines
+in the int16 sections of `scene.PackedPositionLayout`, `PackedOffsetLayout` and
+`PackedDashedLayout`: half the vertex bytes. Positions on the MVT grid (1/16 unit
+at extent 4096) are exact, baked line outlines are rounded to 1/32 unit and
+extruded directions to 1/4096; a primitive with a coordinate beyond ±1024 units
+keeps float vertices. Stable-mesh reuse works the same. The backend must
+implement the packed layouts; the QRhi adapter does where the GPU has integer
+vertex attributes. The default is off.
+
 ### Preparation bounds
 
 - MVT bytes retain the decoder's **2 MiB** limit and feature/geometry/work limits.

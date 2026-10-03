@@ -2366,6 +2366,10 @@ func (this *QRhi) IsYUpInFramebuffer() bool {
 	return (bool)(C.qtrhi_QRhi_isYUpInFramebuffer(this.h))
 }
 
+func (this *QRhi) IsFeatureSupported(feature QRhi__Feature) bool {
+	return (bool)(C.qtrhi_QRhi_isFeatureSupported(this.h, (C.int)(feature)))
+}
+
 func (this *QRhi) IsDeviceLost() bool {
 	return (bool)(C.qtrhi_QRhi_isDeviceLost(this.h))
 }

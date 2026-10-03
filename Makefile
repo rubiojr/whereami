@@ -92,6 +92,8 @@ rhi-bindings:
 rhi-shaders:
 	$(QSB) --qt6 -o internal/vecmaprhi/shaders/map.vert.qsb internal/vecmaprhi/shaders/map.vert
 	$(QSB) --qt6 -o internal/vecmaprhi/shaders/map.frag.qsb internal/vecmaprhi/shaders/map.frag
+	# Integer vertex inputs need GLSL 150 or 300 es; --qt6 also emits 120 and 100 es.
+	$(QSB) --glsl "300 es,150" --hlsl 50 --msl 12 -o internal/vecmaprhi/shaders/map_packed.vert.qsb internal/vecmaprhi/shaders/map_packed.vert
 
 rhi-build: rhi-shaders
 	@mkdir -p "$(BIN_DIR)"

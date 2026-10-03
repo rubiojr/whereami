@@ -3,6 +3,7 @@
 package vecmaprhi
 
 import (
+	"fmt"
 	"runtime"
 	"unsafe"
 
@@ -50,6 +51,10 @@ func (r *Renderer) allocateResources(s *scene.Scene, mesh func(scene.Mesh) (gpuM
 		if _, exists := r.meshes[resourceKey{source.ID, source.Revision}]; exists {
 			continue
 		}
+		if !r.packed && source.VertexBytes() != source.SectionOffset(scene.PackedPositionLayout) {
+			stage.discard()
+			return nil, fmt.Errorf("mesh %d has packed vertices, which need integer vertex attributes (QRhi::IntAttributes)", source.ID)
+		}
 		gpu, err := mesh(source)
 		if err != nil {
 			stage.discard()
@@ -90,14 +95,10 @@ func (r *Renderer) recordResources(stage *resourceStage, updates *rhi.QRhiResour
 			updates.UploadStaticBuffer3(m.gpu.indices, unsafe.Pointer(unsafe.SliceData(m.source.Indices)))
 		}
 		// Sections are packed in the order of their layouts.
-		if len(m.source.Vertices) > 0 {
-			updates.UploadStaticBuffer(m.gpu.buffer, m.gpu.sections[scene.FullLayout], uint32(len(m.source.Vertices)*24), unsafe.Pointer(unsafe.SliceData(m.source.Vertices)))
-		}
-		if len(m.source.Offsets) > 0 {
-			updates.UploadStaticBuffer(m.gpu.buffer, m.gpu.sections[scene.OffsetLayout], uint32(len(m.source.Offsets)*16), unsafe.Pointer(unsafe.SliceData(m.source.Offsets)))
-		}
-		if len(m.source.Positions) > 0 {
-			updates.UploadStaticBuffer(m.gpu.buffer, m.gpu.sections[scene.PositionLayout], uint32(len(m.source.Positions)*8), unsafe.Pointer(unsafe.SliceData(m.source.Positions)))
+		for layout := range scene.LayoutCount {
+			if n := m.source.Len(layout); n > 0 {
+				updates.UploadStaticBuffer(m.gpu.buffer, m.gpu.sections[layout], uint32(n*layout.Bytes()), sectionData(&m.source, layout))
+			}
 		}
 		r.meshes[resourceKey{m.source.ID, m.source.Revision}] = m.gpu
 		r.stats.MeshUploads++
@@ -111,6 +112,23 @@ func (r *Renderer) recordResources(stage *resourceStage, updates *rhi.QRhiResour
 	}
 	runtime.KeepAlive(stage)
 	stage.meshes, stage.textures = nil, nil
+}
+
+// sectionData is the first vertex of a layout's section.
+func sectionData(mesh *scene.Mesh, layout scene.Layout) unsafe.Pointer {
+	switch layout {
+	case scene.OffsetLayout:
+		return unsafe.Pointer(unsafe.SliceData(mesh.Offsets))
+	case scene.PositionLayout:
+		return unsafe.Pointer(unsafe.SliceData(mesh.Positions))
+	case scene.PackedPositionLayout:
+		return unsafe.Pointer(unsafe.SliceData(mesh.PackedPositions))
+	case scene.PackedOffsetLayout:
+		return unsafe.Pointer(unsafe.SliceData(mesh.PackedOffsets))
+	case scene.PackedDashedLayout:
+		return unsafe.Pointer(unsafe.SliceData(mesh.PackedDashed))
+	}
+	return unsafe.Pointer(unsafe.SliceData(mesh.Vertices))
 }
 
 func recordTexture(updates *rhi.QRhiResourceUpdateBatch, t stagedTexture) {

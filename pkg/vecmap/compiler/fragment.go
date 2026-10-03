@@ -66,12 +66,17 @@ func (b *FragmentBuilder) ResidentSymbols() { b.packing.ResidentSymbols() }
 // SceneBuilder.CompactVertices.
 func (b *FragmentBuilder) CompactVertices() { b.packing.CompactVertices() }
 
+// PackedVertices packs fills, patterns and lines in int16 sections as
+// SceneBuilder.PackedVertices.
+func (b *FragmentBuilder) PackedVertices() { b.packing.PackedVertices() }
+
 // Reserve makes room for the geometry of primitives before packing them, as
 // SceneBuilder.Reserve. A primitive that packs nothing (a missing sprite) only
-// leaves room unused until Finish. Call after Split and CompactVertices.
+// leaves room unused until Finish. Call after Split, CompactVertices and
+// PackedVertices.
 func (b *FragmentBuilder) Reserve(primitives []Primitive) {
 	// Vertices and indices by mesh (stable, dynamic) and layout.
-	var counts [2][3][2]int
+	var counts [2][scene.LayoutCount][2]int
 	for _, primitive := range primitives {
 		mesh := 0
 		if primitive.Dynamic && b.packing.split {

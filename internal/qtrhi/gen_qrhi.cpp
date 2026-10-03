@@ -770,6 +770,10 @@ bool qtrhi_QRhi_isYUpInFramebuffer(const QRhi* self) {
 	return self->isYUpInFramebuffer();
 }
 
+bool qtrhi_QRhi_isFeatureSupported(const QRhi* self, int feature) {
+	return self->isFeatureSupported(static_cast<QRhi::Feature>(feature));
+}
+
 bool qtrhi_QRhi_isDeviceLost(const QRhi* self) {
 	return self->isDeviceLost();
 }

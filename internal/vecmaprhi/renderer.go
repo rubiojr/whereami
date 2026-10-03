@@ -19,13 +19,20 @@ import (
 //go:embed shaders/map.vert.qsb
 var vertexShader []byte
 
+// packedVertexShader reads the packed layouts' integer attributes. It is built
+// without the GLSL 100 es and 120 variants of qsb --qt6, which have no integer
+// vertex inputs.
+//
+//go:embed shaders/map_packed.vert.qsb
+var packedVertexShader []byte
+
 //go:embed shaders/map.frag.qsb
 var fragmentShader []byte
 
 const uniformBytes = 176
 
 // vertexLayouts is the number of vertex sections a mesh can hold.
-const vertexLayouts = int(scene.PositionLayout) + 1
+const vertexLayouts = int(scene.LayoutCount)
 
 type gpuMesh struct {
 	buffer  *rhi.QRhiBuffer
@@ -66,19 +73,21 @@ type Stats struct {
 }
 
 type Renderer struct {
-	Node       *rhi.QSGRenderNode
-	window     *rhi.QQuickWindow
-	context    *rhi.QRhi
-	frame      scene.Frame
-	resident   *scene.Scene
-	meshes     map[resourceKey]gpuMesh
-	textures   map[resourceKey]gpuTexture
-	drawKeys   []drawResourceKeys
-	samplers   [2]*rhi.QRhiSampler
-	uniform    *rhi.QRhiBuffer
-	uniforms   []float32
-	stride     int
-	pipelines  [2 * vertexLayouts]*rhi.QRhiGraphicsPipeline
+	Node      *rhi.QSGRenderNode
+	window    *rhi.QQuickWindow
+	context   *rhi.QRhi
+	frame     scene.Frame
+	resident  *scene.Scene
+	meshes    map[resourceKey]gpuMesh
+	textures  map[resourceKey]gpuTexture
+	drawKeys  []drawResourceKeys
+	samplers  [2]*rhi.QRhiSampler
+	uniform   *rhi.QRhiBuffer
+	uniforms  []float32
+	stride    int
+	pipelines [2 * vertexLayouts]*rhi.QRhiGraphicsPipeline
+	// packed reports QRhi::IntAttributes, which the packed layouts need.
+	packed     bool
 	passFormat []uint32
 	samples    int
 	stats      Stats
@@ -209,6 +218,7 @@ func (r *Renderer) prepare() {
 func (r *Renderer) initialize(context *rhi.QRhi) error {
 	r.release()
 	r.context = context
+	r.packed = context.IsFeatureSupported(rhi.QRhi__IntAttributes)
 	r.stride = context.UbufAligned(uniformBytes)
 	r.meshes = make(map[resourceKey]gpuMesh)
 	r.textures = make(map[resourceKey]gpuTexture)
@@ -345,34 +355,54 @@ func (r *Renderer) preparePipelines() error {
 		r.passFormat = format
 		r.samples = samples
 	}
-	if !slices.Contains(r.pipelines[:], nil) {
+	// Without integer vertex attributes the packed pipelines stay unset, and
+	// allocateResources refuses packed meshes.
+	needed := func(index int) bool { return r.packed || !scene.Layout(index/2).Packed() }
+	missing := false
+	for index, p := range r.pipelines {
+		missing = missing || p == nil && needed(index)
+	}
+	if !missing {
 		return nil
 	}
 	vertex := rhi.QShader_FromSerialized(vertexShader)
 	defer vertex.Delete()
+	packedVertex := rhi.QShader_FromSerialized(packedVertexShader)
+	defer packedVertex.Delete()
 	fragment := rhi.QShader_FromSerialized(fragmentShader)
 	defer fragment.Delete()
-	if !vertex.IsValid() || !fragment.IsValid() {
+	if !vertex.IsValid() || !packedVertex.IsValid() || !fragment.IsValid() {
 		return fmt.Errorf("invalid map shaders")
 	}
 	vs := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Vertex, vertex)
 	defer vs.Delete()
+	packedVS := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Vertex, packedVertex)
+	defer packedVS.Delete()
 	fs := rhi.NewQRhiShaderStage2(rhi.QRhiShaderStage__Fragment, fragment)
 	defer fs.Delete()
 	// One input layout per vertex section. A section without an attribute
 	// reads the position in its place, and the vertex shader ignores it.
+	// Float sections have three float pairs; packed ones an integer per int16
+	// pair (position, offset) and a float distance.
 	var layouts [vertexLayouts]*rhi.QRhiVertexInputLayout
 	for section := range layouts {
-		stride := scene.Layout(section).Bytes()
+		layout := scene.Layout(section)
+		stride := layout.Bytes()
 		binding := rhi.NewQRhiVertexInputBinding2(uint32(stride))
 		defer binding.Delete()
 		attributes := make([]rhi.QRhiVertexInputAttribute, 3)
 		for i := range attributes {
-			offset := i * 8
+			offset, format := i*8, rhi.QRhiVertexInputAttribute__Float2
+			if layout.Packed() {
+				offset, format = i*4, rhi.QRhiVertexInputAttribute__SInt
+				if i == 2 {
+					format = rhi.QRhiVertexInputAttribute__Float
+				}
+			}
 			if offset >= stride {
 				offset = 0
 			}
-			attributes[i] = *rhi.NewQRhiVertexInputAttribute2(0, i, rhi.QRhiVertexInputAttribute__Float2, uint32(offset))
+			attributes[i] = *rhi.NewQRhiVertexInputAttribute2(0, i, format, uint32(offset))
 			defer attributes[i].Delete()
 		}
 		layouts[section] = rhi.NewQRhiVertexInputLayout()
@@ -384,13 +414,17 @@ func (r *Renderer) preparePipelines() error {
 	defer blend.Delete()
 	blend.SetEnable(true)
 	for index := range r.pipelines {
-		if r.pipelines[index] != nil {
+		if r.pipelines[index] != nil || !needed(index) {
 			continue
 		}
 		pipeline := r.context.NewGraphicsPipeline()
 		pipeline.SetSampleCount(samples)
 		pipeline.SetFlags(rhi.QRhiGraphicsPipeline__UsesScissor | rhi.QRhiGraphicsPipeline__UsesStencilRef)
-		pipeline.SetShaderStages([]rhi.QRhiShaderStage{*vs, *fs})
+		stage := vs
+		if scene.Layout(index / 2).Packed() {
+			stage = packedVS
+		}
+		pipeline.SetShaderStages([]rhi.QRhiShaderStage{*stage, *fs})
 		pipeline.SetVertexInputLayout(layouts[index/2])
 		pipeline.SetShaderResourceBindings(r.textures[resourceKey{}].bindings[0])
 		pipeline.SetRenderPassDescriptor(target.RenderPassDescriptor())

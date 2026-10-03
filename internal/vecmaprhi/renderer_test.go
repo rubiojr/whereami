@@ -34,8 +34,10 @@ func TestRenderer(t *testing.T) {
 	testResidentSymbols(t)
 	testDashedLines(t, false)
 	testDashedLines(t, true)
-	testVertexSections(t, false)
-	testVertexSections(t, true)
+	for _, packed := range []bool{false, true} {
+		testVertexSections(t, false, packed)
+		testVertexSections(t, true, packed)
+	}
 }
 
 func testRendererLifetime(t *testing.T, indexed bool) {

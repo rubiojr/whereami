@@ -66,6 +66,48 @@ type OffsetVertex struct {
 // coordinate read as zero.
 type PositionVertex struct{ X, Y float32 }
 
+// Packed layouts store positions in int16 PositionUnits per tile-local unit and
+// offsets in int16 OffsetUnits per unit, half the bytes of float32. MVT
+// coordinates lie on a 1/16 grid at extent 4096, so positions within ±1024 units
+// are exact; extruded lines' offsets are unit directions with miters up to 4,
+// within 1/8192 of their value. Both units are powers of two, so reading a
+// packed vertex back as float32 is exact.
+const (
+	PositionUnits = 32
+	OffsetUnits   = 4096
+)
+
+// PackedPositionVertex is a PositionVertex in PositionUnits.
+type PackedPositionVertex struct{ X, Y int16 }
+
+// PackedOffsetVertex is an OffsetVertex with its position in PositionUnits and
+// its pixel offset in OffsetUnits.
+type PackedOffsetVertex struct{ X, Y, OffsetX, OffsetY int16 }
+
+// PackedDashedVertex is a PackedOffsetVertex with texture coordinate U, the
+// distance along a dashed line, which a dash period needs at full precision.
+// V reads as zero.
+type PackedDashedVertex struct {
+	X, Y, OffsetX, OffsetY int16
+	U                      float32
+}
+
+// PackPosition quantizes a position to PositionUnits, reporting false outside
+// the int16 range.
+func PackPosition(x, y float64) (int16, int16, bool) { return pack(x, y, PositionUnits) }
+
+// PackOffset quantizes an offset to OffsetUnits, reporting false outside the
+// int16 range.
+func PackOffset(x, y float64) (int16, int16, bool) { return pack(x, y, OffsetUnits) }
+
+func pack(x, y, units float64) (int16, int16, bool) {
+	x, y = math.Round(x*units), math.Round(y*units)
+	if !(x >= math.MinInt16 && x <= math.MaxInt16 && y >= math.MinInt16 && y <= math.MaxInt16) {
+		return 0, 0, false
+	}
+	return int16(x), int16(y), true
+}
+
 // Layout names the vertex section of a mesh that a draw reads.
 type Layout uint8
 
@@ -76,7 +118,21 @@ const (
 	OffsetLayout
 	// PositionLayout reads Mesh.Positions.
 	PositionLayout
+	// PackedPositionLayout reads Mesh.PackedPositions.
+	PackedPositionLayout
+	// PackedOffsetLayout reads Mesh.PackedOffsets.
+	PackedOffsetLayout
+	// PackedDashedLayout reads Mesh.PackedDashed.
+	PackedDashedLayout
+	// LayoutCount is the number of layouts.
+	LayoutCount
 )
+
+// Valid reports whether l names a vertex section.
+func (l Layout) Valid() bool { return l < LayoutCount }
+
+// Packed reports whether the layout stores int16 positions and offsets.
+func (l Layout) Packed() bool { return l >= PackedPositionLayout && l < LayoutCount }
 
 // Bytes is the packed size of one vertex of the layout, zero if it is unknown.
 func (l Layout) Bytes() int {
@@ -87,21 +143,30 @@ func (l Layout) Bytes() int {
 		return 16
 	case PositionLayout:
 		return 8
+	case PackedPositionLayout:
+		return 4
+	case PackedOffsetLayout:
+		return 8
+	case PackedDashedLayout:
+		return 12
 	}
 	return 0
 }
 
-// Mesh holds up to three vertex sections. Vertices carries every attribute.
-// Offsets and Positions leave out attributes that are zero for all of their
-// vertices, which are most vertices of a basemap. A draw names its section in
+// Mesh holds up to six vertex sections, one per Layout. Vertices carries every
+// attribute. Offsets and Positions leave out attributes that are zero for all
+// of their vertices, which are most vertices of a basemap, and the packed
+// sections store them in half the bytes. A draw names its section in
 // Draw.Layout, and its indices or vertex range count from the start of that
-// section. A backend packs the sections into one buffer, in the order Vertices,
-// Offsets, Positions.
+// section. A backend packs the sections into one buffer, in Layout order.
 type Mesh struct {
-	ID, Revision uint64
-	Vertices     []Vertex
-	Offsets      []OffsetVertex   `json:",omitempty"`
-	Positions    []PositionVertex `json:",omitempty"`
+	ID, Revision    uint64
+	Vertices        []Vertex
+	Offsets         []OffsetVertex         `json:",omitempty"`
+	Positions       []PositionVertex       `json:",omitempty"`
+	PackedPositions []PackedPositionVertex `json:",omitempty"`
+	PackedOffsets   []PackedOffsetVertex   `json:",omitempty"`
+	PackedDashed    []PackedDashedVertex   `json:",omitempty"`
 	// Optional uint32 indices. Draw.First/Count address this array when set,
 	// otherwise they address the section of the draw. Neither representation
 	// reorders draws.
@@ -117,8 +182,23 @@ func (m Mesh) Len(layout Layout) int {
 		return len(m.Offsets)
 	case PositionLayout:
 		return len(m.Positions)
+	case PackedPositionLayout:
+		return len(m.PackedPositions)
+	case PackedOffsetLayout:
+		return len(m.PackedOffsets)
+	case PackedDashedLayout:
+		return len(m.PackedDashed)
 	}
 	return 0
+}
+
+// largestSection is the length of the mesh's longest vertex section.
+func (m Mesh) largestSection() int {
+	largest := 0
+	for layout := range LayoutCount {
+		largest = max(largest, m.Len(layout))
+	}
+	return largest
 }
 
 // At returns vertex index of a section with every attribute. It panics like a
@@ -131,26 +211,33 @@ func (m Mesh) At(layout Layout, index int) Vertex {
 	case PositionLayout:
 		v := m.Positions[index]
 		return Vertex{X: v.X, Y: v.Y}
+	case PackedPositionLayout:
+		v := m.PackedPositions[index]
+		return Vertex{X: float32(v.X) / PositionUnits, Y: float32(v.Y) / PositionUnits}
+	case PackedOffsetLayout:
+		v := m.PackedOffsets[index]
+		return Vertex{X: float32(v.X) / PositionUnits, Y: float32(v.Y) / PositionUnits,
+			OffsetX: float32(v.OffsetX) / OffsetUnits, OffsetY: float32(v.OffsetY) / OffsetUnits}
+	case PackedDashedLayout:
+		v := m.PackedDashed[index]
+		return Vertex{X: float32(v.X) / PositionUnits, Y: float32(v.Y) / PositionUnits,
+			OffsetX: float32(v.OffsetX) / OffsetUnits, OffsetY: float32(v.OffsetY) / OffsetUnits, U: v.U}
 	}
 	return m.Vertices[index]
 }
 
 // SectionOffset is the byte at which the section of a layout starts in the
-// packed vertex buffer.
+// packed vertex buffer. Every section starts 4-byte aligned.
 func (m Mesh) SectionOffset(layout Layout) uint64 {
-	switch layout {
-	case OffsetLayout:
-		return uint64(len(m.Vertices)) * 24
-	case PositionLayout:
-		return uint64(len(m.Vertices))*24 + uint64(len(m.Offsets))*16
+	var offset uint64
+	for l := range min(layout, LayoutCount) {
+		offset += uint64(m.Len(l)) * uint64(l.Bytes())
 	}
-	return 0
+	return offset
 }
 
 // VertexBytes is the packed size of the vertex buffer.
-func (m Mesh) VertexBytes() uint64 {
-	return uint64(len(m.Vertices))*24 + uint64(len(m.Offsets))*16 + uint64(len(m.Positions))*8
-}
+func (m Mesh) VertexBytes() uint64 { return m.SectionOffset(LayoutCount) }
 
 // BufferBytes is the packed size of the vertex and optional index buffers.
 func (m Mesh) BufferBytes() uint64 { return m.VertexBytes() + uint64(len(m.Indices))*4 }
@@ -166,8 +253,7 @@ func (m Mesh) Validate() error {
 }
 
 func (m Mesh) validateSize() error {
-	count := uint64(len(m.Vertices)) + uint64(len(m.Offsets)) + uint64(len(m.Positions))
-	if m.ID == 0 || count == 0 || m.VertexBytes() > 1<<31-1 || len(m.Indices) > (1<<31-1)/4 {
+	if m.ID == 0 || m.largestSection() == 0 || m.VertexBytes() > 1<<31-1 || len(m.Indices) > (1<<31-1)/4 {
 		return fmt.Errorf("invalid mesh %d", m.ID)
 	}
 	return nil
@@ -187,10 +273,14 @@ func (m Mesh) validateContent() error {
 	for _, v := range m.Positions {
 		largestMagnitude = max(largestMagnitude, magnitude(v.X), magnitude(v.Y))
 	}
+	// Packed positions and offsets are integers; only the distance is a float.
+	for _, v := range m.PackedDashed {
+		largestMagnitude = max(largestMagnitude, magnitude(v.U))
+	}
 	if largestMagnitude >= nonFinite {
 		return fmt.Errorf("non-finite vertex in mesh %d", m.ID)
 	}
-	largest := max(len(m.Vertices), len(m.Offsets), len(m.Positions))
+	largest := m.largestSection()
 	for _, index := range m.Indices {
 		if uint64(index) >= uint64(largest) {
 			return fmt.Errorf("index out of bounds in mesh %d", m.ID)
@@ -297,7 +387,7 @@ func validateTextures(values []Texture) (map[uint64]bool, error) {
 
 func (draw Draw) validate(meshes map[uint64]*Mesh, textures map[uint64]bool) error {
 	mesh, exists := meshes[draw.Mesh]
-	if !exists || draw.Layout > PositionLayout || draw.Count == 0 || draw.Count%3 != 0 || draw.Transform < 0 {
+	if !exists || !draw.Layout.Valid() || draw.Count == 0 || draw.Count%3 != 0 || draw.Transform < 0 {
 		return fmt.Errorf("invalid mesh range or transform")
 	}
 	section, elements := mesh.Len(draw.Layout), mesh.Len(draw.Layout)
@@ -309,7 +399,7 @@ func (draw Draw) validate(meshes map[uint64]*Mesh, textures map[uint64]bool) err
 	}
 	// Mesh.Validate bounds indices by the largest section, which is the section
 	// of every draw of a mesh with one section.
-	if len(mesh.Indices) > 0 && section < max(len(mesh.Vertices), len(mesh.Offsets), len(mesh.Positions)) {
+	if len(mesh.Indices) > 0 && section < mesh.largestSection() {
 		for _, index := range mesh.Indices[draw.First : draw.First+draw.Count] {
 			if uint64(index) >= uint64(section) {
 				return fmt.Errorf("index out of bounds of its vertex section")

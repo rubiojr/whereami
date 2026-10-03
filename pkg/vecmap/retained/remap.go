@@ -78,7 +78,8 @@ func remap(input *scene.Scene, old *fragment, nextID *uint64) (*fragment, int, e
 // an indexed one. Every vertex section must match.
 func sameMesh(a, b *scene.Mesh) bool {
 	return sharedMesh(a, b) || len(a.Indices) == len(b.Indices) && slices.Equal(a.Vertices, b.Vertices) && slices.Equal(a.Offsets, b.Offsets) &&
-		slices.Equal(a.Positions, b.Positions) && slices.Equal(a.Indices, b.Indices)
+		slices.Equal(a.Positions, b.Positions) && slices.Equal(a.PackedPositions, b.PackedPositions) && slices.Equal(a.PackedOffsets, b.PackedOffsets) &&
+		slices.Equal(a.PackedDashed, b.PackedDashed) && slices.Equal(a.Indices, b.Indices)
 }
 
 // sharedMesh reports whether two meshes are the same immutable buffers, as when
@@ -86,6 +87,7 @@ func sameMesh(a, b *scene.Mesh) bool {
 // without comparing their content.
 func sharedMesh(a, b *scene.Mesh) bool {
 	return sameBuffer(a.Vertices, b.Vertices) && sameBuffer(a.Offsets, b.Offsets) && sameBuffer(a.Positions, b.Positions) &&
+		sameBuffer(a.PackedPositions, b.PackedPositions) && sameBuffer(a.PackedOffsets, b.PackedOffsets) && sameBuffer(a.PackedDashed, b.PackedDashed) &&
 		sameBuffer(a.Indices, b.Indices) && (a.Indices == nil) == (b.Indices == nil)
 }
 

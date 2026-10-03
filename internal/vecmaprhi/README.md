@@ -36,6 +36,18 @@ according to the fourth component of the `view` uniform, which carries
 line from sections, alternating between them, and requires every pixel to equal
 the same geometry drawn with full vertices.
 
+The packed sections (`PackedPositions`, `PackedOffsets`, `PackedDashed`) store
+int16 positions in 1/32 tile unit and int16 offsets in 1/4096, with dashed lines'
+distance as float32. Qt 6.11's GL backend reads 16-bit integer vertex formats as
+floats (`glVertexAttribPointer`) while Vulkan reads them as integers, so each
+int16 pair travels as one `SInt` attribute and `shaders/map_packed.vert` unpacks
+it with sign-extending shifts. That shader is compiled without `--qt6`: its GLSL
+120 and 100 es variants have no integer inputs (`make rhi-shaders`). Packed
+layouts take the other six pipelines, which need `QRhi::IntAttributes`; without
+it the adapter refuses packed meshes when staging them. The integration test
+draws the same geometry from packed sections, on both backends without a
+differing pixel.
+
 ## Dashed materials
 
 For `scene.Dashed` the second component of `parameters` is `Material.DashUnit` and

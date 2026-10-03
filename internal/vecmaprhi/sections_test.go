@@ -14,9 +14,11 @@ import (
 
 // testVertexSections renders fills, an extruded line and a dashed line from one
 // mesh whose vertices carry every attribute, and from one that stores them in
-// sections. Draws alternate between the sections. The pictures must be
-// identical, and the sectioned mesh is one upload of fewer bytes.
-func testVertexSections(t *testing.T, indexed bool) {
+// sections, float or packed. Draws alternate between the sections. Float
+// sections must draw the identical picture; packed ones round line directions
+// to 1/4096, which may move a few edge pixels. The sectioned mesh is one upload
+// of fewer bytes.
+func testVertexSections(t *testing.T, indexed, packed bool) {
 	t.Helper()
 	const scale, width = 2.0, 4.0
 	paths := [][]geometry.Point{{{X: 12, Y: 12}, {X: 40, Y: 14}, {X: 44, Y: 36}}}
@@ -46,9 +48,13 @@ func testVertexSections(t *testing.T, indexed bool) {
 	var fullDraws, sectionDraws []scene.Draw
 	// add appends one draw to both meshes. Indices count from the start of the
 	// section; the sectioned mesh orders its index buffer by layout below.
-	var sectionIndices [3][]uint32
-	var sectionFirst [3][]int // draws of each layout, by position in sectionDraws
+	var sectionIndices [scene.LayoutCount][]uint32
+	var sectionFirst [scene.LayoutCount][]int // draws of each layout, by position in sectionDraws
 	add := func(layout scene.Layout, material scene.Material, vertices []scene.Vertex, indices []uint32) {
+		if packed {
+			layout = map[scene.Layout]scene.Layout{scene.FullLayout: scene.PackedDashedLayout, scene.OffsetLayout: scene.PackedOffsetLayout,
+				scene.PositionLayout: scene.PackedPositionLayout}[layout]
+		}
 		count := len(vertices)
 		if indexed {
 			count = len(indices)
@@ -72,7 +78,17 @@ func testVertexSections(t *testing.T, indexed bool) {
 			}
 		}
 		for _, v := range vertices {
+			x, y, ok := scene.PackPosition(float64(v.X), float64(v.Y))
+			require.True(t, ok)
+			dx, dy, ok := scene.PackOffset(float64(v.OffsetX), float64(v.OffsetY))
+			require.True(t, ok)
 			switch layout {
+			case scene.PackedPositionLayout:
+				sections.PackedPositions = append(sections.PackedPositions, scene.PackedPositionVertex{X: x, Y: y})
+			case scene.PackedOffsetLayout:
+				sections.PackedOffsets = append(sections.PackedOffsets, scene.PackedOffsetVertex{X: x, Y: y, OffsetX: dx, OffsetY: dy})
+			case scene.PackedDashedLayout:
+				sections.PackedDashed = append(sections.PackedDashed, scene.PackedDashedVertex{X: x, Y: y, OffsetX: dx, OffsetY: dy, U: v.U})
 			case scene.OffsetLayout:
 				sections.Offsets = append(sections.Offsets, scene.OffsetVertex{X: v.X, Y: v.Y, OffsetX: v.OffsetX, OffsetY: v.OffsetY})
 			case scene.PositionLayout:
@@ -118,9 +134,15 @@ func testVertexSections(t *testing.T, indexed bool) {
 	require.NoError(t, plain.Validate())
 	require.NoError(t, compact.Validate())
 	require.Less(t, sections.BufferBytes(), full.BufferBytes())
-	require.NotEmpty(t, sections.Vertices)
-	require.NotEmpty(t, sections.Offsets)
-	require.NotEmpty(t, sections.Positions)
+	if packed {
+		require.NotEmpty(t, sections.PackedPositions)
+		require.NotEmpty(t, sections.PackedOffsets)
+		require.NotEmpty(t, sections.PackedDashed)
+	} else {
+		require.NotEmpty(t, sections.Vertices)
+		require.NotEmpty(t, sections.Offsets)
+		require.NotEmpty(t, sections.Positions)
+	}
 
 	sin, cos := math.Sincos(12 * math.Pi / 180)
 	transform := scene.Affine{M11: float32(scale * cos), M12: float32(-scale * sin), DX: 20, M21: float32(scale * sin), M22: float32(scale * cos), DY: 4}
@@ -135,7 +157,7 @@ func testVertexSections(t *testing.T, indexed bool) {
 	assert.Equal(t, bytes+sections.BufferBytes(), stats.UploadedBytes)
 
 	colors := map[[3]int]int{}
-	different := 0
+	different, drawn := 0, 0
 	for y := range reference.Height() {
 		for x := range reference.Width() {
 			a, b := reference.PixelColor(x, y), sectioned.PixelColor(x, y)
@@ -144,10 +166,16 @@ func testVertexSections(t *testing.T, indexed bool) {
 			}
 			if a.Red() > 127 || a.Green() > 127 || a.Blue() > 127 {
 				colors[[3]int{a.Red() / 128, a.Green() / 128, a.Blue() / 128}]++
+				drawn++
 			}
 		}
 	}
-	assert.Zero(t, different, "the same vertices draw the same pixels")
+	t.Logf("indexed=%t packed=%t: %d of %d drawn pixels differ", indexed, packed, different, drawn)
+	if packed {
+		assert.LessOrEqual(t, different, drawn/200, "quantized directions move at most a few edge pixels")
+	} else {
+		assert.Zero(t, different, "the same vertices draw the same pixels")
+	}
 	assert.Greater(t, colors[[3]int{0, 1, 0}], 300, "fills are drawn")
 	assert.Greater(t, colors[[3]int{0, 0, 1}], 300)
 	assert.Greater(t, colors[[3]int{1, 0, 0}], 300, "lines are drawn")

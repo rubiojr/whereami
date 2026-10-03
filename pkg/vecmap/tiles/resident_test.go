@@ -552,6 +552,55 @@ func drawnVertices(t *testing.T, f *Fragment) [][]scene.Vertex {
 	return result
 }
 
+// Packed vertices draw the tile within half a packed step, in fewer retained
+// bytes: positions on the MVT grid exactly, baked line outlines and line
+// directions rounded.
+func TestPackedVerticesDrawTheSameTile(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		for _, resident := range []bool{false, true} {
+			build := func(zoom float64, packed bool) *Fragment {
+				p, err := Prepare(residentPBF(), residentStyle(t), PrepareOptions{Tile: testTile, Zoom: zoom, Indexed: indexed,
+					ResidentGeometry: resident, ResidentSymbols: resident, ResidentDashes: resident, CompactVertices: true, PackedVertices: packed})
+				require.NoError(t, err)
+				result, err := p.BuildOwned(prepareAssets(), 1<<20)
+				require.NoError(t, err)
+				return result.Fragment
+			}
+			compact, packed := build(3, false), build(3, true)
+			want, got := drawnVertices(t, compact), drawnVertices(t, packed)
+			require.Len(t, got, len(want))
+			for i := range want {
+				require.Len(t, got[i], len(want[i]))
+				for k := range want[i] {
+					w, g := want[i][k], got[i][k]
+					assert.Equal(t, [2]float32{w.U, w.V}, [2]float32{g.U, g.V}, "draw %d vertex %d", i, k)
+					assert.InDelta(t, w.X, g.X, 1.0/(2*scene.PositionUnits))
+					assert.InDelta(t, w.Y, g.Y, 1.0/(2*scene.PositionUnits))
+					assert.InDelta(t, w.OffsetX, g.OffsetX, 1.0/(2*scene.OffsetUnits))
+					assert.InDelta(t, w.OffsetY, g.OffsetY, 1.0/(2*scene.OffsetUnits))
+				}
+			}
+			assert.Equal(t, compact.Draws, packed.Draws)
+			assert.Equal(t, compact.Symbols, packed.Symbols)
+			assert.Equal(t, compact.Scene.Textures, packed.Scene.Textures)
+			assert.Less(t, packed.RetainedBytes(), compact.RetainedBytes())
+			var positions int
+			for _, mesh := range packed.Scene.Meshes {
+				positions += len(mesh.PackedPositions)
+				assert.Empty(t, mesh.Positions, "every fill packs")
+				assert.Empty(t, mesh.Offsets)
+			}
+			assert.NotZero(t, positions)
+
+			// A style-zoom change keeps the packed stable mesh too.
+			if resident && indexed {
+				next := build(3.0625, true)
+				assert.Equal(t, fragmentMesh(packed, compiler.StableMesh), fragmentMesh(next, compiler.StableMesh))
+			}
+		}
+	}
+}
+
 func TestCompactVerticesDrawTheSameTile(t *testing.T) {
 	for _, indexed := range []bool{false, true} {
 		for _, resident := range []bool{false, true} {
