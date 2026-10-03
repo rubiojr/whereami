@@ -71,6 +71,7 @@ func TestMeasurementSplitsMemoryAndWritesProfiles(t *testing.T) {
 	assert.NotZero(t, costs.peak.rssKiB)
 	assert.NotZero(t, costs.peak.goKiB)
 	assert.LessOrEqual(t, costs.peak.heapObjectKiB, costs.peak.goKiB)
+	assert.Positive(t, costs.peak.at, "when the peak was sampled")
 	assert.NotZero(t, costs.goRuntime.residentBytes)
 	assert.NotZero(t, costs.status["VmRSS"])
 	for _, name := range []string{"cpu.pprof", "heap.pprof"} {

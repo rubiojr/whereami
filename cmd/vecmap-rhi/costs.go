@@ -223,9 +223,10 @@ func readGoRuntime() goRuntime {
 }
 
 // memorySample is resident memory at one moment, split between the Go
-// runtime and everything else.
+// runtime and everything else. at is when, from the start of the measurement.
 type memorySample struct {
 	rssKiB, goKiB, heapObjectKiB uint64
+	at                           time.Duration
 }
 
 func readMemorySample() (memorySample, bool) {
@@ -248,13 +249,14 @@ type measurement struct {
 	cpuProfile *os.File
 	heapPath   string
 	stop, done chan struct{}
+	started    time.Time
 	peak       memorySample // owned by sample until done closes
 	finished   bool
 	err        error
 }
 
 func startMeasurement(cpuPath, heapPath string) (*measurement, error) {
-	m := &measurement{heapPath: heapPath, stop: make(chan struct{}), done: make(chan struct{})}
+	m := &measurement{heapPath: heapPath, stop: make(chan struct{}), done: make(chan struct{}), started: time.Now()}
 	if cpuPath != "" {
 		file, err := os.Create(cpuPath)
 		if err != nil {
@@ -276,6 +278,7 @@ func (m *measurement) sample() {
 	defer ticker.Stop()
 	for {
 		if sample, ok := readMemorySample(); ok && sample.rssKiB > m.peak.rssKiB {
+			sample.at = time.Since(m.started)
 			m.peak = sample
 		}
 		select {
@@ -345,6 +348,6 @@ func (c processCosts) report() {
 	fmt.Printf("threads %s\n", strings.Join(threads, " "))
 	g := c.goRuntime
 	fmt.Printf("go gc_cpu=%s gc_cycles=%d alloc_bytes=%d resident_kib=%d heap_object_kib=%d\n", g.gcCPU.Round(time.Millisecond), g.gcCycles, g.allocBytes, g.residentBytes>>10, g.heapObjectBytes>>10)
-	fmt.Printf("memory rss_kib=%d rss_anon_kib=%d rss_file_kib=%d rss_shmem_kib=%d peak_sample_rss_kib=%d peak_sample_go_kib=%d peak_sample_go_heap_object_kib=%d\n",
-		c.status["VmRSS"], c.status["RssAnon"], c.status["RssFile"], c.status["RssShmem"], c.peak.rssKiB, c.peak.goKiB, c.peak.heapObjectKiB)
+	fmt.Printf("memory rss_kib=%d rss_anon_kib=%d rss_file_kib=%d rss_shmem_kib=%d peak_sample_rss_kib=%d peak_sample_go_kib=%d peak_sample_go_heap_object_kib=%d peak_sample_at=%v\n",
+		c.status["VmRSS"], c.status["RssAnon"], c.status["RssFile"], c.status["RssShmem"], c.peak.rssKiB, c.peak.goKiB, c.peak.heapObjectKiB, c.peak.at.Round(time.Millisecond))
 }

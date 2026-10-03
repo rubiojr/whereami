@@ -38,3 +38,22 @@ func TestEarcutSkipsEmptyHoles(t *testing.T) {
 		t.Fatalf("got %d triangle indices, want 6", len(triangles))
 	}
 }
+
+// A ring's nodes share one allocation and the triangle list is sized once, so a
+// polygon without holes or splits allocates twice however many vertices it has.
+func TestEarcutAllocatesPerRingNotPerNode(t *testing.T) {
+	const vertices = 256
+	data := make([]float64, 0, vertices*2)
+	for index := range vertices {
+		angle := float64(index) * 2 * math.Pi / vertices
+		data = append(data, math.Cos(angle), math.Sin(angle))
+	}
+	allocs := testing.AllocsPerRun(10, func() {
+		if _, err := Earcut(data, nil, 2); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs != 2 {
+		t.Fatalf("got %v allocations, want 2", allocs)
+	}
+}

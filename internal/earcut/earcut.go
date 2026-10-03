@@ -15,7 +15,8 @@ type node struct {
 	y       float64
 	prev    *node
 	next    *node
-	z       *int
+	z       int  // z-order hash, once hashed
+	hashed  bool // z holds the hash
 	prevZ   *node
 	nextZ   *node
 	steiner bool
@@ -43,7 +44,8 @@ func Earcut(data []float64, holeIndices []int, dim int) ([]int, error) {
 		outerLen = len(data)
 	}
 	outerNode := linkedList(data, 0, outerLen, dim, true)
-	triangles := []int{}
+	// A polygon of n vertices and h holes has at most n+2h-2 triangles.
+	triangles := make([]int, 0, max(0, 3*(len(data)/dim+2*len(holeIndices)-2)))
 	if outerNode == nil {
 		return triangles, nil
 	}
@@ -91,13 +93,15 @@ func Earcut(data []float64, holeIndices []int, dim int) ([]int, error) {
 // winding order
 func linkedList(data []float64, start, end, dim int, clockwise bool) *node {
 	var last *node
+	// One allocation holds the ring's nodes; they live as long as the call.
+	nodes := make([]node, max(0, (end-start+dim-1)/dim))
 	if clockwise == (signedArea(data, start, end, dim) > 0.0) {
-		for i := start; i < end; i += dim {
-			last = insertNode(i, data[i], data[i+1], last)
+		for k, i := 0, start; i < end; k, i = k+1, i+dim {
+			last = insertNode(&nodes[k], i, data[i], data[i+1], last)
 		}
 	} else {
-		for i := end - dim; i >= start; i -= dim {
-			last = insertNode(i, data[i], data[i+1], last)
+		for k, i := 0, end-dim; i >= start; k, i = k+1, i-dim {
+			last = insertNode(&nodes[k], i, data[i], data[i+1], last)
 		}
 	}
 	if last != nil && equals(last, last.next) {
@@ -249,7 +253,7 @@ func isEarHashed(ear *node, minX, minY, invSize float64) bool {
 	n := ear.nextZ
 
 	// look for points inside the triangle in both directions
-	for p != nil && *p.z >= minZ && n != nil && *n.z <= maxZ {
+	for p != nil && p.z >= minZ && n != nil && n.z <= maxZ {
 		if p != ear.prev &&
 			p != ear.next &&
 			pointInTriangle(a.x, a.y, b.x, b.y, c.x, c.y, p.x, p.y) &&
@@ -268,7 +272,7 @@ func isEarHashed(ear *node, minX, minY, invSize float64) bool {
 	}
 
 	// look for remaining points in decreasing z-order
-	for p != nil && *p.z >= minZ {
+	for p != nil && p.z >= minZ {
 		if p != ear.prev &&
 			p != ear.next &&
 			pointInTriangle(a.x, a.y, b.x, b.y, c.x, c.y, p.x, p.y) &&
@@ -279,7 +283,7 @@ func isEarHashed(ear *node, minX, minY, invSize float64) bool {
 	}
 
 	// look for remaining points in increasing z-order
-	for n != nil && *n.z <= maxZ {
+	for n != nil && n.z <= maxZ {
 		if n != ear.prev &&
 			n != ear.next &&
 			pointInTriangle(a.x, a.y, b.x, b.y, c.x, c.y, n.x, n.y) &&
@@ -491,9 +495,8 @@ func findHoleBridge(hole, outerNode *node) *node {
 func indexCurve(start *node, minX, minY, invSize float64) {
 	p := start
 	for {
-		if p.z == nil {
-			z := zOrder(p.x, p.y, minX, minY, invSize)
-			p.z = &z
+		if !p.hashed {
+			p.z, p.hashed = zOrder(p.x, p.y, minX, minY, invSize), true
 		}
 		p.prevZ = p.prev
 		p.nextZ = p.next
@@ -537,7 +540,7 @@ func sortLinked(list *node) *node {
 
 			for pSize > 0 || (qSize > 0 && q != nil) {
 
-				if pSize != 0 && (qSize == 0 || q == nil || *p.z <= *q.z) {
+				if pSize != 0 && (qSize == 0 || q == nil || p.z <= q.z) {
 					e = p
 					p = p.nextZ
 					pSize--
@@ -713,10 +716,10 @@ func splitPolygon(a, b *node) *node {
 	return b2
 }
 
-// create a node and optionally link it with previous one (in a circular
+// initialize p and optionally link it with previous one (in a circular
 // doubly linked list)
-func insertNode(i int, x, y float64, last *node) *node {
-	p := newNode(i, x, y)
+func insertNode(p *node, i int, x, y float64, last *node) *node {
+	*p = node{i: i, x: x, y: y}
 
 	if last == nil {
 		p.prev = p
@@ -744,17 +747,7 @@ func removeNode(p *node) {
 }
 
 func newNode(i int, x, y float64) *node {
-	return &node{
-		i:       i,
-		x:       x,
-		y:       y,
-		prev:    nil,
-		next:    nil,
-		z:       nil,
-		prevZ:   nil,
-		nextZ:   nil,
-		steiner: false,
-	}
+	return &node{i: i, x: x, y: y}
 }
 
 func signedArea(data []float64, start, end, dim int) float64 {

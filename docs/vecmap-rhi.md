@@ -571,7 +571,7 @@ Both modes also print `threads` (on-CPU time of the live threads from
 Go's own threads carry the process name), `go` (the runtime's GC CPU estimate,
 cycles, bytes allocated, resident and live heap) and `memory` (current RSS
 split, and the moment of highest RSS sampled every 50 ms with the Go runtime's
-share). `-cpuprofile` and `-memprofile` write Go profiles that end where the
+share and its time, `peak_sample_at`). `-cpuprofile` and `-memprofile` write Go profiles that end where the
 costs are read.
 
 One profiled Coarser 1 OpenGL run after the decoded reuse above: of 6.75 s
@@ -775,6 +775,25 @@ MiB): less garbage, but not a lower peak. Final frames are byte-identical, every
 run had zero late frames, labels and settlement didn't change. Since ev17 began,
 Coarser 1 OpenGL went from 6.16–6.36 s to 3.57–3.69 s, against MapLibre's
 1.20–1.31 s.
+
+##### Earcut allocation and when RSS peaks
+
+Decoding was then the largest allocator (0.9 GB per Coarser 1 trace) and
+Earcut most of its CPU. The port allocated every node of a polygon separately,
+and a second object for each node's z-order hash. Each ring's nodes now share
+one allocation, the hash is a plain field, and the triangle list is sized once
+(a polygon of n vertices and h holes has at most n+2h-2 triangles). Decoding the
+83 corpus tiles takes 250–257 ms against 275–279 ms (interleaved, best of 7) and
+allocates 1.65 million objects instead of 3.61 million. Every one of the 77,192
+corpus polygons triangulates to the same indices, indexed and expanded. Upstream
+earcut's per-point bbox test before `pointInTriangle` made no measurable
+difference here: the ear tests are bound by walking the node lists.
+
+`peak_sample_at` shows that peak RSS is not the load burst: it was sampled 3.5 s
+into the Coarser 1 trace and at its end at Coarser 0. At that moment Go held 330
+MiB of about 480 MiB, and 116 MiB was file-backed libraries, so the RSS gap is Go
+memory that stays resident, mostly fragments kept on the CPU (150 MB at their
+peak), not decoding garbage.
 
 #### Vulkan FIFO stalls in live mode on native Wayland
 
