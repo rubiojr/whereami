@@ -73,7 +73,12 @@ func WorldWraps(camera Camera) []int {
 		}
 		return []int{0}
 	}
-	maximumWrap := min(int(math.Ceil(diagonal/worldPixels))+1, 8)
+	// Wrap zero is the copy of a tile nearest the centre, at most half a
+	// world away, and a tile is no wider than the world. A copy further out
+	// shows only where the viewport reaches it.
+	sin, cos := math.Sincos(camera.Bearing * math.Pi / 180)
+	half := (math.Abs(cos)*camera.Width + math.Abs(sin)*camera.Height) / 2
+	maximumWrap := min(int(math.Ceil(half/worldPixels)), 8)
 	wraps := make([]int, 0, maximumWrap*2+1)
 	for wrap := -maximumWrap; wrap <= maximumWrap; wrap++ {
 		wraps = append(wraps, wrap)

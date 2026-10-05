@@ -203,7 +203,7 @@ func TestCompositionLimits(t *testing.T) {
 	f := baseFragment(0)
 	f.Symbols = make([]Symbol, placement.MaxSymbols)
 	require.NoError(t, s.Apply([]Change{{root, f}}))
-	camera.Width, camera.Height = 1024, 1024
+	camera.Width, camera.Height = 4096, 4096
 	_, err = s.Select([]view.TileID{root}, nil, camera, 0)
 	assert.ErrorIs(t, err, ErrLimit, "reference count rejects before projection")
 }
