@@ -82,6 +82,42 @@ func TestPinnedContinuityCannotBeEvictedForAdmission(t *testing.T) {
 	assert.Equal(t, 1, status.PeakCached)
 }
 
+func TestTilesLoadedTogetherWaitForRoom(t *testing.T) {
+	limits := DefaultLimits()
+	limits.Tiles = 2
+	limits.Workers = 2
+	limits.Parents = false
+	limits.RawBytes = 128
+	p, c := newControlled(t, limits)
+	// The tile on screen is no ancestor of the next ones, so it cannot stand
+	// in for them and stay.
+	r := testRequest(t, view.TileID{Z: 1, X: 0, Y: 1})
+	_, err := p.Submit(r)
+	require.NoError(t, err)
+	nextCall(t, c).reply <- answer{data: tilePBF()}
+	old := nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == 1 })
+	require.True(t, p.Current(1, 1, old))
+	old.Release()
+
+	// Two tiles are wanted, and the one on screen leaves room for one.
+	r.Targets = []view.TileID{{Z: 1, X: 0, Y: 0}, {Z: 1, X: 1, Y: 0}}
+	rev, err := p.Submit(r)
+	require.NoError(t, err)
+	nextCall(t, c).reply <- answer{data: tilePBF()}
+	status := waitStatus(t, p, func(s Status) bool { return s.Revision == rev && s.Cached == 2 && s.Jobs == 0 })
+	assert.Zero(t, status.Failed, "a tile waiting for room has not failed")
+	assert.Positive(t, status.Pending)
+
+	// The other loads by itself once the old tile leaves the screen.
+	nextLease(t, p, func(l *Lease) bool { return l.Revision == rev }).Release()
+	require.True(t, p.Current(2, 1, nil))
+	nextCall(t, c).reply <- answer{data: tilePBF()}
+	nextLease(t, p, func(l *Lease) bool { return len(l.Snapshot.Cover) == 2 }).Release()
+	status = waitStatus(t, p, func(s Status) bool { return s.Pending == 0 })
+	assert.Zero(t, status.Failed)
+	assert.Equal(t, 2, status.PeakCached)
+}
+
 func TestInvalidInputsAndOverflow(t *testing.T) {
 	load := func(context.Context, Key, io.Writer) error { return nil }
 	for _, change := range []func(*Limits){

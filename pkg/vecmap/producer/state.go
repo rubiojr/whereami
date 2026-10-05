@@ -454,8 +454,19 @@ func (s *state) nextJob(now time.Time) (job, bool) {
 	return job{}, false
 }
 
+// roomForTile reports whether the cache can take a tile. Loads under way
+// hold a place each, so tiles requested together cannot outrun the limit.
 func (s *state) roomForTile(tile view.TileID) bool {
-	if s.entries[tile] == nil && len(s.entries) >= s.p.limits.Tiles {
+	if s.entries[tile] != nil {
+		return true
+	}
+	held := len(s.entries)
+	for running := range s.running {
+		if running != tile && s.entries[running] == nil {
+			held++
+		}
+	}
+	if held >= s.p.limits.Tiles {
 		s.errorAt("cache/tiles", ErrLimit)
 		return false
 	}
@@ -504,7 +515,11 @@ func (s *state) loaded(r result) {
 		return
 	}
 	if !s.roomForTile(tile) {
-		s.failures[tile] = failure{attempts: 3}
+		// The cache is full of tiles still on screen. Give the attempt back:
+		// nextJob asks again once there is room.
+		f := s.failures[tile]
+		f.attempts = max(f.attempts-1, 0)
+		s.failures[tile] = f
 		return
 	}
 	// Admission uses the compact length, not the transport reservation. Preserve
